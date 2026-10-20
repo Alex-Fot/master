@@ -32,6 +32,46 @@ define('CSC_DB_VERSION', '2.0');
 // ============================================================
 register_activation_hook(__FILE__, 'csc_plugin_activate');
 function csc_plugin_activate() {
+    csc_run_db_install();
+
+    // ============================================================
+    // РЕГИСТРАЦИЯ КРОН-ЗАДАЧ
+    // ============================================================
+    csc_schedule_crons();
+
+    // --- Защита директории загрузок ---
+    csc_protect_uploads_dir();
+        // Push: установка Service Worker в корень и генерация VAPID
+    do_action('csc_plugin_activate');
+}
+
+/**
+ * Планирование cron-задач плагина (единая точка для активации и апгрейда).
+ */
+if (!function_exists('csc_schedule_crons')) {
+    function csc_schedule_crons() {
+        $crons = [
+            'csc_routing_cron_hook'     => 'csc_every_minute',
+            'csc_reminders_cron_hook'   => 'csc_every_30_minutes',
+            'csc_backup_cron_hook'      => 'daily',
+            'csc_history_cleanup_cron'  => 'daily',
+            'csc_finance_cron_hook'     => 'daily',
+        ];
+        foreach ($crons as $hook => $recurrence) {
+            if (!wp_next_scheduled($hook)) {
+                wp_schedule_event(time() + HOUR_IN_SECONDS, $recurrence, $hook);
+            }
+        }
+    }
+}
+
+/**
+ * ИСПРАВЛЕНО: Создание/обновление таблиц БД теперь вызывается НЕ только при
+ * активации, но и при каждом обновлении версии плагина (см. plugins_loaded ниже).
+ * Логика идентична исходной csc_plugin_activate (часть про БД).
+ */
+if (!function_exists('csc_run_db_install')) {
+function csc_run_db_install() {
     global $wpdb;
     $charset_collate = $wpdb->get_charset_collate();
 
@@ -202,31 +242,42 @@ function csc_plugin_activate() {
     // --- Миграция данных из wp_options в таблицу ---
     csc_migrate_orders_to_table();
 
-    // ============================================================
-    // РЕГИСТРАЦИЯ КРОН-ЗАДАЧ
-    // ============================================================
-    // ИСПРАВЛЕНО: Использование уникального префикса 'csc_' для интервалов во избежание конфликтов с другими плагинами
-    if (!wp_next_scheduled('csc_routing_cron_hook')) {
-        wp_schedule_event(time(), 'csc_every_minute', 'csc_routing_cron_hook');
-    }
-    if (!wp_next_scheduled('csc_reminders_cron_hook')) {
-        wp_schedule_event(time(), 'csc_every_30_minutes', 'csc_reminders_cron_hook');
-    }
-    if (!wp_next_scheduled('csc_backup_cron_hook')) {
-    wp_schedule_event(time(), 'daily', 'csc_backup_cron_hook');
-    }
-	// ИСПРАВЛЕНО: Регистрация крона очистки истории (была только в admin_init)
-    if (!wp_next_scheduled('csc_history_cleanup_cron')) {
-    wp_schedule_event(time(), 'daily', 'csc_history_cleanup_cron');
-    }
-	if (!wp_next_scheduled('csc_finance_cron_hook')) {
-    wp_schedule_event(time(), 'daily', 'csc_finance_cron_hook');
-    }
-
     // --- Защита директории загрузок ---
     csc_protect_uploads_dir();
-	// Push: установка Service Worker в корень и генерация VAPID
-    do_action('csc_plugin_activate');
+
+    do_action('csc_db_installed');
+}
+}
+
+/**
+ * П.1.5: Автоматическая проверка версии БД при загрузке плагина.
+ * Если CSC_DB_VERSION изменился (обновление плагина), миграции/создание
+ * таблиц выполняются автоматически — без повторной активации.
+ * Также подстраховывает планирование кронов (если слетели).
+ */
+add_action('plugins_loaded', 'csc_maybe_check_db_version', 20);
+if (!function_exists('csc_maybe_check_db_version')) {
+    function csc_maybe_check_db_version() {
+        $installed_version = get_option('csc_db_version', '0');
+        if (version_compare($installed_version, CSC_DB_VERSION, '<')) {
+            csc_run_db_install();
+            csc_schedule_crons();
+            // П.1.4: зашифровать секреты (VAPID-ключ и др.), хранившиеся открытым текстом
+            if (function_exists('csc_migrate_encrypt_secrets')) {
+                csc_migrate_encrypt_secrets();
+            }
+            do_action('csc_db_upgraded', $installed_version, CSC_DB_VERSION);
+        } else {
+            // Страховка: если кроны были потеряны (чистка кэша/object cache на хостинге)
+            if (!wp_next_scheduled('csc_routing_cron_hook')) {
+                csc_schedule_crons();
+            }
+            // П.1.4: отложенная миграция секретов (если модуль crypto ещё не был подключён)
+            if (function_exists('csc_migrate_encrypt_secrets') && !get_option('csc_secrets_encrypted', false)) {
+                csc_migrate_encrypt_secrets();
+            }
+        }
+    }
 }
 
 // ============================================================
@@ -437,6 +488,9 @@ require_once CSC_PLUGIN_DIR . 'includes/csc-notification-triggers.php';
 // Web Push уведомления (VAPID)
 require_once CSC_PLUGIN_DIR . 'includes/csc-push.php';
 
+// П.1.6: Публичное событийное API + встроенные слушатели внутренних хуков.
+// Подключается ПОСЛЕДНИМ: зависит от core-functions, order-history, reminders, push.
+require_once CSC_PLUGIN_DIR . 'includes/csc-action-api.php';
 
 // Копирование при активации
 register_activation_hook(__FILE__, 'csc_activate_service_worker');

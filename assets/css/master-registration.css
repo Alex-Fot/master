@@ -1,0 +1,896 @@
+/**
+Custom Service Calculator - Master Registration CSS
+Version: 7.0 (полная переработка дизайна, исправлены все критические баги)
+*/
+
+:root {
+    --csc-primary: #6366f1;
+    --csc-primary-dark: #4f46e5;
+    --csc-primary-light: #818cf8;
+    --csc-success: #10b981;
+    --csc-error: #ef4444;
+    --csc-warning: #f59e0b;
+    --csc-bg: #f8fafc;
+    --csc-card-bg: #ffffff;
+    --csc-text: #1e293b;
+    --csc-text-secondary: #64748b;
+    --csc-border: #e2e8f0;
+    --csc-border-focus: #cbd5e1;
+    --csc-radius: 12px;
+    --csc-radius-sm: 8px;
+    --csc-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+    --csc-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    --csc-transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ============================================================
+   ЦЕНТРИРОВАНИЕ КОНТЕЙНЕРА (ИСПРАВЛЕНО: растягивание на десктопе)
+   ============================================================ */
+.csc-registration-page {
+    min-height: 100vh;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    padding: 40px 20px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+}
+
+.csc-registration-container {
+    width: 100%;
+    max-width: 760px; /* ИСПРАВЛЕНО: ограничение ширины на десктопе */
+    margin: 0 auto;
+    background: var(--csc-card-bg);
+    border-radius: var(--csc-radius);
+    box-shadow: var(--csc-shadow-lg);
+    padding: 48px;
+    position: relative;
+}
+
+.csc-registration-header {
+    text-align: center;
+    margin-bottom: 48px;
+}
+
+.csc-registration-title {
+    font-size: 36px;
+    font-weight: 800;
+    color: var(--csc-text);
+    margin: 0 0 12px;
+    letter-spacing: -0.5px;
+}
+
+.csc-registration-subtitle {
+    color: var(--csc-text-secondary);
+    font-size: 16px;
+    margin: 0;
+    line-height: 1.6;
+}
+
+/* === ПРОГРЕСС-ИНДИКАТОР ПОЛНОТЫ КАРТОЧКИ === */
+.csc-profile-completeness {
+    background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+    border: 1px solid var(--csc-border);
+    border-radius: var(--csc-radius);
+    padding: 24px;
+    margin-bottom: 32px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.csc-completeness-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 14px;
+}
+
+.csc-completeness-label {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--csc-text);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+}
+
+.csc-completeness-value {
+    font-size: 22px;
+    font-weight: 800;
+    color: var(--csc-primary);
+}
+
+.csc-completeness-bar {
+    width: 100%;
+    height: 14px;
+    background: var(--csc-border);
+    border-radius: 7px;
+    overflow: hidden;
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.csc-completeness-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--csc-primary) 0%, var(--csc-primary-dark) 100%);
+    border-radius: 7px;
+    transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1), background 0.4s ease;
+    box-shadow: 0 2px 4px rgba(99, 102, 241, 0.3);
+    position: relative;
+}
+
+.csc-completeness-fill::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(
+        90deg,
+        transparent 0%,
+        rgba(255, 255, 255, 0.3) 50%,
+        transparent 100%
+    );
+    animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+}
+
+/* Прогресс бар шагов */
+.csc-registration-progress {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 48px;
+    gap: 0;
+}
+
+.csc-progress-step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    position: relative;
+    flex-shrink: 0;
+}
+
+.csc-progress-step-number {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: var(--csc-border);
+    color: var(--csc-text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 16px;
+    transition: var(--csc-transition);
+    position: relative;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.csc-progress-step.active .csc-progress-step-number {
+    background: var(--csc-primary);
+    color: white;
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+    transform: scale(1.1);
+}
+
+.csc-progress-step.completed .csc-progress-step-number {
+    background: var(--csc-success);
+    color: white;
+    font-size: 0; /* Скрываем цифру */
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+}
+
+.csc-progress-step.completed .csc-progress-step-number::after {
+    content: '✓';
+    font-size: 20px;
+    font-weight: 700;
+}
+
+.csc-progress-step-label {
+    font-size: 12px;
+    color: var(--csc-text-secondary);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.csc-progress-step.active .csc-progress-step-label {
+    color: var(--csc-primary);
+    font-weight: 700;
+}
+
+.csc-progress-line {
+    flex: 1;
+    max-width: 80px;
+    height: 2px;
+    background: var(--csc-border);
+    margin: 0 12px;
+    flex-shrink: 1;
+}
+
+/* КРИТИЧНО: СКРЫТИЕ НЕАКТИВНЫХ ШАГОВ (УПРОЩЕНО) */
+.csc-form-step {
+    display: none !important;
+}
+
+.csc-form-step.active {
+    display: block !important;
+    animation: cscFadeIn 0.4s ease !important;
+}
+}
+
+@keyframes fadeIn {
+    from { 
+        opacity: 0; 
+        transform: translateY(20px); 
+    }
+    to { 
+        opacity: 1; 
+        transform: translateY(0); 
+    }
+}
+
+/* Соглашение */
+.csc-agreement-box {
+    max-height: 320px;
+    overflow-y: auto;
+    border: 2px solid var(--csc-border);
+    border-radius: var(--csc-radius);
+    padding: 24px;
+    margin-bottom: 24px;
+    background: var(--csc-bg);
+    scrollbar-width: thin;
+    scrollbar-color: var(--csc-border) transparent;
+}
+
+.csc-agreement-box::-webkit-scrollbar {
+    width: 8px;
+}
+
+.csc-agreement-box::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.csc-agreement-box::-webkit-scrollbar-thumb {
+    background: var(--csc-border);
+    border-radius: 4px;
+}
+
+.csc-agreement-content h3,
+.csc-agreement-content h4 {
+    margin-top: 24px;
+    margin-bottom: 12px;
+    color: var(--csc-text);
+    font-weight: 700;
+}
+
+.csc-agreement-content p {
+    margin-bottom: 12px;
+    line-height: 1.7;
+    color: var(--csc-text-secondary);
+}
+
+/* ============================================================
+   СОВРЕМЕННЫЙ ДИЗАЙН ПОЛЕЙ ВВОДА
+   ============================================================ */
+.csc-form-group {
+    margin-bottom: 24px;
+}
+
+.csc-form-group label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: var(--csc-text);
+    font-size: 14px;
+}
+
+.csc-form-group input[type="text"],
+.csc-form-group input[type="tel"],
+.csc-form-group input[type="email"],
+.csc-form-group input[type="number"],
+.csc-form-group input[type="time"],
+.csc-form-group select,
+.csc-form-group textarea {
+    width: 100%;
+    padding: 14px 16px;
+    border: 2px solid var(--csc-border);
+    border-radius: var(--csc-radius-sm);
+    font-size: 15px;
+    font-weight: 500;
+    transition: var(--csc-transition);
+    background: var(--csc-card-bg);
+    color: var(--csc-text);
+    box-sizing: border-box;
+}
+
+.csc-form-group input::placeholder,
+.csc-form-group textarea::placeholder {
+    color: var(--csc-text-secondary);
+    opacity: 0.6;
+}
+
+.csc-form-group input:hover,
+.csc-form-group select:hover,
+.csc-form-group textarea:hover {
+    border-color: var(--csc-border-focus);
+}
+
+.csc-form-group input:focus,
+.csc-form-group select:focus,
+.csc-form-group textarea:focus {
+    outline: none;
+    border-color: var(--csc-primary);
+    box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.1);
+}
+
+/* Стилизация select[multiple] */
+.csc-form-group select[multiple] {
+    min-height: 140px;
+    padding: 12px;
+}
+
+.csc-form-group select[multiple] option {
+    padding: 10px 12px;
+    margin-bottom: 4px;
+    border-radius: 6px;
+}
+
+.csc-form-group select[multiple] option:checked {
+    background: linear-gradient(90deg, var(--csc-primary), var(--csc-primary-light));
+    color: white;
+}
+
+.csc-form-group small {
+    display: block;
+    margin-top: 6px;
+    color: var(--csc-text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.csc-form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+}
+
+/* ============================================================
+   СОВРЕМЕННЫЙ ДИЗАЙН ЧЕКБОКСОВ И РАДИО
+   ============================================================ */
+.csc-checkbox-label {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    cursor: pointer;
+    user-select: none;
+    padding: 16px;
+    border: 2px solid var(--csc-border);
+    border-radius: var(--csc-radius-sm);
+    transition: var(--csc-transition);
+    background: var(--csc-card-bg);
+}
+
+.csc-checkbox-label:hover {
+    border-color: var(--csc-primary-light);
+    background: rgba(99, 102, 241, 0.02);
+}
+
+.csc-checkbox-label input[type="checkbox"] {
+    width: 22px;
+    height: 22px;
+    margin-top: 2px;
+    accent-color: var(--csc-primary);
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.csc-checkbox-text {
+    line-height: 1.6;
+    color: var(--csc-text);
+    font-weight: 500;
+}
+
+.csc-radio-group {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.csc-radio-label {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+    user-select: none;
+    padding: 14px 16px;
+    border: 2px solid var(--csc-border);
+    border-radius: var(--csc-radius-sm);
+    transition: var(--csc-transition);
+    background: var(--csc-card-bg);
+}
+
+.csc-radio-label:hover {
+    border-color: var(--csc-primary-light);
+}
+
+.csc-radio-label input[type="radio"] {
+    width: 20px;
+    height: 20px;
+    accent-color: var(--csc-primary);
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+/* ============================================================
+   СОВРЕМЕННЫЙ ДИЗАЙН ЗАГРУЗКИ ФАЙЛОВ
+   ============================================================ */
+.csc-file-upload {
+    border: 3px dashed var(--csc-border);
+    border-radius: var(--csc-radius);
+    padding: 40px;
+    text-align: center;
+    cursor: pointer;
+    transition: var(--csc-transition);
+    position: relative;
+    background: var(--csc-bg);
+}
+
+.csc-file-upload:hover {
+    border-color: var(--csc-primary);
+    background: rgba(99, 102, 241, 0.04);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.15);
+}
+
+.csc-file-upload input[type="file"] {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.csc-file-upload-icon {
+    font-size: 48px;
+    display: block;
+    margin-bottom: 12px;
+    filter: grayscale(0.3);
+}
+
+.csc-file-upload-text {
+    color: var(--csc-text-secondary);
+    font-weight: 600;
+    font-size: 15px;
+}
+
+.csc-file-preview {
+    margin-top: 16px;
+}
+
+/* Расписание */
+.csc-schedule-info {
+    background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+    border: 2px solid #bfdbfe;
+    border-radius: var(--csc-radius);
+    padding: 20px;
+    margin-bottom: 24px;
+}
+
+.csc-schedule-info p {
+    margin: 0 0 8px;
+    color: #1e40af;
+    font-weight: 500;
+}
+
+.csc-schedule-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.csc-schedule-day {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 18px;
+    border: 2px solid var(--csc-border);
+    border-radius: var(--csc-radius-sm);
+    flex-wrap: wrap;
+    transition: var(--csc-transition);
+    background: var(--csc-card-bg);
+}
+
+.csc-schedule-day:hover {
+    border-color: var(--csc-primary-light);
+}
+
+.csc-schedule-times {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-left: auto;
+}
+
+.csc-time-input {
+    padding: 10px 14px;
+    border: 2px solid var(--csc-border);
+    border-radius: var(--csc-radius-sm);
+    font-size: 14px;
+    font-weight: 600;
+    transition: var(--csc-transition);
+}
+
+.csc-time-input:focus {
+    outline: none;
+    border-color: var(--csc-primary);
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+/* ============================================================
+   СОВРЕМЕННЫЙ ДИЗАЙН КНОПОК
+   ============================================================ */
+.csc-form-actions {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    margin-top: 40px;
+    padding-top: 32px;
+    border-top: 2px solid var(--csc-border);
+}
+
+.csc-btn {
+    padding: 16px 32px;
+    border: none;
+    border-radius: var(--csc-radius-sm);
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: var(--csc-transition);
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    user-select: none;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    position: relative;
+    overflow: hidden;
+}
+
+.csc-btn::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.3);
+    transform: translate(-50%, -50%);
+    transition: width 0.6s, height 0.6s;
+}
+
+.csc-btn:hover::before {
+    width: 300px;
+    height: 300px;
+}
+
+.csc-btn-primary {
+    background: linear-gradient(135deg, var(--csc-primary) 0%, var(--csc-primary-dark) 100%);
+    color: white;
+    box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
+}
+
+.csc-btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(99, 102, 241, 0.5);
+}
+
+.csc-btn-primary:active {
+    transform: translateY(0);
+}
+
+.csc-btn-secondary {
+    background: var(--csc-border);
+    color: var(--csc-text);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.csc-btn-secondary:hover {
+    background: #cbd5e1;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.csc-btn-success {
+    background: linear-gradient(135deg, var(--csc-success) 0%, #059669 100%);
+    color: white;
+    box-shadow: 0 4px 14px rgba(16, 185, 129, 0.4);
+}
+
+.csc-btn-success:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(16, 185, 129, 0.5);
+}
+
+.csc-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none !important;
+}
+
+/* ============================================================
+   БЛОКИ УСПЕХА И ОШИБОК (ИСПРАВЛЕНО: перемещены в начало формы)
+   ============================================================ */
+.csc-registration-success,
+.csc-registration-error {
+    display: none;
+    text-align: center;
+    padding: 48px 32px;
+    border-radius: var(--csc-radius);
+    margin-bottom: 32px;
+    animation: fadeIn 0.5s ease;
+}
+
+.csc-registration-error {
+    background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+    border: 2px solid #fecaca;
+}
+
+.csc-registration-success {
+    background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+    border: 2px solid #bbf7d0;
+}
+
+.csc-success-icon,
+.csc-error-icon {
+    font-size: 72px;
+    margin-bottom: 24px;
+    display: block;
+    filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.1));
+}
+
+.csc-registration-success h2 {
+    color: var(--csc-success);
+    margin: 0 0 16px;
+    font-size: 28px;
+    font-weight: 800;
+}
+
+.csc-registration-error h2 {
+    color: var(--csc-error);
+    margin: 0 0 16px;
+    font-size: 28px;
+    font-weight: 800;
+}
+
+.csc-registration-success p,
+.csc-registration-error p {
+    color: var(--csc-text-secondary);
+    line-height: 1.7;
+    margin: 8px 0;
+    font-size: 15px;
+}
+
+/* Спиннер */
+.csc-spinner {
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    border: 3px solid rgba(255,255,255,0.3);
+    border-radius: 50%;
+    border-top-color: white;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* ============================================================
+   КАРТА ЗОНЫ ОБСЛУЖИВАНИЯ
+   ============================================================ */
+#csc-reg-map {
+    width: 100%;
+    height: 340px;
+    border-radius: var(--csc-radius);
+    border: 2px solid var(--csc-border);
+    background: #e2e8f0;
+    z-index: 1; 
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.csc-form-step .leaflet-container {
+    z-index: 1;
+}
+.csc-form-step .leaflet-top,
+.csc-form-step .leaflet-bottom {
+    z-index: 500;
+}
+
+/* Ползунок радиуса */
+#csc-reg-radius {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 10px;
+    border-radius: 5px;
+    background: linear-gradient(90deg, var(--csc-primary) 0%, #c7d2fe 100%);
+    outline: none;
+    cursor: pointer;
+    margin: 12px 0;
+}
+
+#csc-reg-radius::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--csc-primary);
+    border: 4px solid #ffffff;
+    box-shadow: 0 3px 8px rgba(99, 102, 241, 0.5);
+    cursor: grab;
+    transition: var(--csc-transition);
+}
+
+#csc-reg-radius::-webkit-slider-thumb:hover {
+    transform: scale(1.15);
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.6);
+}
+
+#csc-reg-radius::-webkit-slider-thumb:active {
+    cursor: grabbing;
+    transform: scale(1.1);
+}
+
+#csc-reg-radius::-moz-range-thumb {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--csc-primary);
+    border: 4px solid #ffffff;
+    box-shadow: 0 3px 8px rgba(99, 102, 241, 0.5);
+    cursor: grab;
+}
+
+#csc-reg-radius::-moz-range-track {
+    height: 10px;
+    border-radius: 5px;
+    background: #c7d2fe;
+}
+
+#csc-reg-radius::-moz-range-progress {
+    height: 10px;
+    border-radius: 5px;
+    background: var(--csc-primary);
+}
+
+#csc-reg-radius-value {
+    font-weight: 800;
+    color: var(--csc-primary);
+    font-size: 18px;
+}
+
+label[for="csc-reg-radius"] {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-weight: 600;
+}
+
+#csc-geocode-address-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 20px;
+    border: 2px solid var(--csc-primary);
+    border-radius: var(--csc-radius-sm);
+    background: var(--csc-card-bg);
+    color: var(--csc-primary);
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: var(--csc-transition);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+#csc-geocode-address-btn:hover:not(:disabled) {
+    background: var(--csc-primary);
+    color: white;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+}
+
+#csc-geocode-address-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+#csc-reg-service-address {
+    margin-bottom: 8px;
+}
+
+/* ============================================================
+   АДАПТИВНОСТЬ
+   ============================================================ */
+@media (max-width: 768px) {
+    .csc-registration-page {
+        padding: 20px 12px;
+    }
+    
+    .csc-registration-container {
+        padding: 28px 20px;
+    }
+    
+    .csc-registration-title {
+        font-size: 28px;
+    }
+    
+    .csc-form-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .csc-progress-line {
+        max-width: 40px;
+        margin: 0 8px;
+    }
+    
+    .csc-form-actions {
+        flex-direction: column;
+    }
+    
+    .csc-btn {
+        width: 100%;
+    }
+    
+    #csc-reg-map {
+        height: 280px;
+    }
+    
+    #csc-geocode-address-btn {
+        width: 100%;
+    }
+    
+    .csc-schedule-day {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .csc-schedule-times {
+        margin-top: 12px;
+        margin-left: 0;
+        width: 100%;
+    }
+    
+    .csc-completeness-label {
+        font-size: 11px;
+    }
+    
+    .csc-completeness-value {
+        font-size: 18px;
+    }
+}
+
+@media (max-width: 600px) {
+    .csc-profile-completeness {
+        padding: 18px;
+    }
+    
+    .csc-completeness-bar {
+        height: 12px;
+    }
+}
