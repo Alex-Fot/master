@@ -38,13 +38,58 @@ return $clean;
 }
 
 // ============================================================
-// 1. ОБРАБОТЧИК ОТПРАВКИ ОТЗЫВА
+// 1a. ЗАЩИТА ОТ ПЕРЕБОРА (BRUTE-FORCE) ПОПЫТОК ОЦЕНИТЬ ЗАКАЗ
+// ============================================================
+/**
+ * Не более 10 неудачных попыток отправки отзыва на один телефон за 15 минут.
+ * Позволяет закрыть уязвимость перебора номеров заказов чужими телефонами.
+ *
+ * @param string $phone Нормализованный телефон
+ * @return bool true — попытка разрешена, false — лимит исчерпан
+ */
+if (!function_exists('csc_check_review_rate_limit')) {
+    function csc_check_review_rate_limit($phone) {
+        if (empty($phone)) return false;
+        $key = 'csc_review_attempts_' . md5($phone);
+        $data = get_transient($key);
+
+        $max_attempts = 10;
+        $window = 15 * MINUTE_IN_SECONDS;
+
+        if (!$data) {
+            set_transient($key, ['attempts' => 1, 'start_time' => time()], $window);
+            return true;
+        }
+
+        $attempts = (int)($data['attempts'] ?? 0);
+        if ($attempts >= $max_attempts) {
+            return false;
+        }
+
+        set_transient($key, ['attempts' => $attempts + 1, 'start_time' => $data['start_time'] ?? time()], $window);
+        return true;
+    }
+}
+
+/**
+ * Сброс счётчика неудачных попыток после успешной отправки отзыва.
+ */
+if (!function_exists('csc_reset_review_rate_limit')) {
+    function csc_reset_review_rate_limit($phone) {
+        if (empty($phone)) return;
+        delete_transient('csc_review_attempts_' . md5($phone));
+    }
+}
+
+// ============================================================
+// 1b. ОБРАБОТЧИК ОТПРАВКИ ОТЗЫВА
 // ============================================================
 if (!function_exists('csc_submit_review_handler_pro')) {
     function csc_submit_review_handler_pro() {
-        // ИСПРАВЛЕНО: проверка nonce для защиты от CSRF
-        if (!empty($_POST['_wpnonce'])) {
-            check_ajax_referer('csc_cabinet_nonce', '_wpnonce', false);
+        // УСИЛЕНО (2.5): nonce обязателен всегда, запрос без токена отклоняется
+        if (empty($_POST['_wpnonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_wpnonce'])), 'csc_cabinet_nonce')) {
+            wp_send_json_error(['message' => 'Сессия устарела. Обновите страницу и попробуйте снова.'], 403);
+            return;
         }
 
         // Очистка ключей массива $_POST от HTML-сущностей WordPress (&amp; → &)
@@ -69,14 +114,21 @@ if (!function_exists('csc_submit_review_handler_pro')) {
         // 1. Получение и нормализация данных из очищенного массива
         $raw_phone = sanitize_text_field($clean_post['phone'] ?? '');
         $phone = function_exists('csc_normalize_phone') ? csc_normalize_phone($raw_phone) : csc_normalize_phone_fallback($raw_phone);
-        $order_number = sanitize_text_field($clean_post['order_number'] ?? '');
+        $order_number = preg_replace('/[^A-Za-z0-9\-_]/', '', (string)($clean_post['order_number'] ?? ''));
         $rating = intval($clean_post['rating'] ?? 0);
-        $comment = sanitize_textarea_field($clean_post['comment'] ?? '');
+        $comment = mb_substr(trim(sanitize_textarea_field($clean_post['comment'] ?? '')), 0, 1000);
 
         // Проверка обязательных данных
         if (!$phone || !$order_number) {
             error_log('[CSC_REVIEWS] Review submit failed: missing phone or order_number.');
             wp_send_json_error(['message' => 'Сбой передачи данных. Обновите страницу и попробуйте снова.']);
+            return;
+        }
+
+        // УСИЛЕНО (2.5): лимит попыток — защита от перебора чужих заказов
+        if (!csc_check_review_rate_limit($phone)) {
+            error_log('[CSC_REVIEWS] Review rate limit exceeded for phone hash: ' . md5($phone));
+            wp_send_json_error(['message' => 'Слишком много попыток. Подождите 15 минут и попробуйте снова.'], 429);
             return;
         }
 
@@ -137,6 +189,8 @@ if (!function_exists('csc_submit_review_handler_pro')) {
             $max_photos = 10;
             $max_size = 5 * 1024 * 1024; // 5 МБ
             $allowed_types = ['jpg', 'jpeg', 'png', 'heic', 'webp'];
+            // УСИЛЕНО (2.5): реальные MIME-типы изображений, которым соответствуют разрешённые расширения
+            $allowed_mimes = ['image/jpeg', 'image/pjpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'application/octet-stream'];
 
             for ($i = 0; $i < $file_count; $i++) {
                 if ($i >= $max_photos) break;
@@ -149,6 +203,26 @@ if (!function_exists('csc_submit_review_handler_pro')) {
                 $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
                 if (!in_array($ext, $allowed_types)) continue;
                 if ($file_size > $max_size) continue;
+                if ($file_size <= 0 || !is_uploaded_file($tmp_name)) continue;
+
+                // УСИЛЕНО (2.5): проверка содержимого файла, а не только расширения
+                $detected_mime = '';
+                if (function_exists('finfo_open')) {
+                    $finfo = finfo_open(FILEINFO_MIME_TYPE);
+                    if ($finfo) {
+                        $detected_mime = (string)finfo_file($finfo, $tmp_name);
+                        finfo_close($finfo);
+                    }
+                } elseif (function_exists('mime_content_type')) {
+                    $detected_mime = (string)@mime_content_type($tmp_name);
+                }
+                if ($detected_mime && !in_array($detected_mime, $allowed_mimes, true)) continue;
+
+                // jpg/png/webp дополнительно проверяем через getimagesize (защита от поддельных картинок)
+                if (in_array($ext, ['jpg', 'jpeg', 'png', 'webp'], true)) {
+                    $img_info = @getimagesize($tmp_name);
+                    if ($img_info === false || empty($img_info[0]) || empty($img_info[1])) continue;
+                }
 
                 $unique_name = 'review_' . time() . '_' . $i . '_' . wp_generate_password(8, false) . '.' . $ext;
                 $dest_path = $review_dir . '/' . $unique_name;
@@ -172,6 +246,9 @@ if (!function_exists('csc_submit_review_handler_pro')) {
         $all_orders[$order_number]['review'] = $review_data;
         csc_update_order($order_number, $all_orders[$order_number]);
         csc_cache_delete_orders();
+
+        // УСИЛЕНО (2.5): успех — сбрасываем счётчик неудачных попыток для телефона
+        csc_reset_review_rate_limit($phone);
 
         // === ДОБАВЛЕН ХУК ПОСЛЕ СОХРАНЕНИЯ ОТЗЫВА ===
         do_action('csc_review_submitted', $order_number, [

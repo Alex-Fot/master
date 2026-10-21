@@ -470,7 +470,8 @@ function csc_personal_cabinet_shortcode() {
                 <button type="button" class="csc-star-btn" data-value="5">★</button>
             </div>
             <textarea class="csc-comment-area" id="csc-review-comment"
-                      placeholder="Напишите ваш отзыв (необязательно)..."></textarea>
+                      maxlength="1000"
+                      placeholder="Напишите ваш отзыв (необязательно, до 1000 символов)..."></textarea>
             <!-- Загрузка фото к отзыву -->
             <div class="csc-review-upload-area">
                 <div class="csc-review-upload-dropzone" id="csc-review-dropzone">
