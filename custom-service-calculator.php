@@ -466,101 +466,10 @@ function csc_load_textdomain() {
     load_plugin_textdomain('csc', false, dirname(plugin_basename(__FILE__)) . '/languages/');
 }
 
-add_action('wp_ajax_csc_submit_review', 'csc_submit_review_handler');
-add_action('wp_ajax_nopriv_csc_submit_review', 'csc_submit_review_handler');
-
-if (!function_exists('csc_submit_review_handler')) {
-function csc_submit_review_handler() {
-    // ИСПРАВЛЕНО: nonce проверяется только если передан (не блокируем при кэше)
-    if (!empty($_POST['_wpnonce'])) {
-        check_ajax_referer('csc_cabinet_nonce', '_wpnonce', false);
-    }
-    
-    $order_number = sanitize_text_field($_POST['order_number'] ?? '');
-    $phone = csc_normalize_phone(sanitize_text_field($_POST['phone'] ?? ''));
-    $rating = intval($_POST['rating'] ?? 0);
-    $comment = sanitize_textarea_field($_POST['comment'] ?? '');
-    
-    if (empty($order_number) || empty($phone)) {
-        wp_send_json_error(['message' => 'Не указаны обязательные данные']);
-        return;
-    }
-    
-    if ($rating < 1 || $rating > 5) {
-        wp_send_json_error(['message' => 'Рейтинг должен быть от 1 до 5']);
-        return;
-    }
-    
-    // Защита: проверяем принадлежность заявки указанному телефону
-    $order = csc_get_order($order_number);
-    if (!$order) {
-        wp_send_json_error(['message' => 'Заявка не найдена']);
-        return;
-    }
-    
-    $order_phone = csc_normalize_phone($order['phone'] ?? '');
-    if ($order_phone !== $phone) {
-        wp_send_json_error(['message' => 'Нет доступа к этой заявке']);
-        return;
-    }
-    
-    // Проверка статуса
-    $status = mb_strtolower($order['status'] ?? '');
-    if ($status !== 'выполнено' && $status !== 'завершено') {
-        wp_send_json_error(['message' => 'Отзыв можно оставить только для выполненной заявки']);
-        return;
-    }
-    
-    // Проверка: отзыв уже оставлен?
-    if (!empty($order['review']) && !empty($order['review']['rating'])) {
-        wp_send_json_error(['message' => 'Вы уже оставили отзыв для этой заявки']);
-        return;
-    }
-    
-    // === СОХРАНЕНИЕ ОТЗЫВА ===
-    $order['review'] = [
-        'rating'  => $rating,
-        'comment' => $comment,
-        'date'    => current_time('mysql')
-    ];
-    
-    csc_update_order($order_number, $order);
-    
-    // Сброс кэша
-    if (function_exists('csc_cache_delete_orders')) {
-        csc_cache_delete_orders();
-    }
-    
-    // Уведомления
-    if (function_exists('csc_log_notification')) {
-        csc_log_notification(
-            $order_number, 'customer', $phone, 'web', 
-            '⭐ Отзыв оставлен', 
-            "Оценка: {$rating}/5. Комментарий: " . ($comment ?: '(без комментария)')
-        );
-    }
-    
-    // Telegram админу
-    $s = get_option('csc_main_settings', []);
-    $tg_token = function_exists('csc_get_telegram_token') 
-        ? csc_get_telegram_token() 
-        : ($s['telegram_token'] ?? '');
-    $admin_chat = $s['telegram_chat_id'] ?? '';
-    
-    if ($tg_token && $admin_chat) {
-        $review_msg = "⭐ <b>НОВЫЙ ОТЗЫВ #{$order_number}</b>\n";
-        $review_msg .= "Оценка: <b>{$rating}/5</b>\n";
-        if ($comment) $review_msg .= "Комментарий: <i>" . esc_html($comment) . "</i>\n";
-        $review_msg .= "Клиент: " . esc_html($phone);
-        
-        wp_remote_post("https://api.telegram.org/bot{$tg_token}/sendMessage", [
-            'body' => ['chat_id' => $admin_chat, 'text' => $review_msg, 'parse_mode' => 'HTML']
-        ]);
-    }
-    
-    wp_send_json_success(['message' => 'Спасибо за ваш отзыв!']);
-}
-}
+// ОБРАБОТЧИК ОТЗЫВОВ: единственный хук wp_ajax_csc_submit_review
+// регистрируется в includes/csc-reviews.php (csc_submit_review_handler_pro).
+// Старый дубль csc_submit_review_handler удалён (3.4) — он перекрывал
+// новую защиту (nonce, rate-limit, фото) из-за раннего require этого файла.
 
 /**
  * Парсинг данных заказа из таблицы 1_cc_orders
