@@ -84,7 +84,7 @@ $s = get_option('csc_main_settings', []);
 $travel_time = intval($s['travel_time'] ?? 0);
 $ranges = [];
 foreach ($all_orders as $o) {
-if (($o['status'] ?? '') === 'отменено') continue;
+if (($o['status'] ?? '') === CSC_STATUS_CANCELLED) continue;
 if (($o['date'] ?? '') !== $date) continue;
 $mid = $o['master_id'] ?? 'master_default';
 $start_time = $o['time'] ?? '';
@@ -235,7 +235,7 @@ if (!isset($all_orders[$order_number])) {
 wp_send_json_error(['message' => 'Заказ не найден']);
 }
 $order = $all_orders[$order_number];
-if (($order['status'] ?? '') === 'отменено') {
+if (($order['status'] ?? '') === CSC_STATUS_CANCELLED) {
 wp_send_json_error(['message' => 'Заказ отменён и не может быть изменён']);
 }
 $master_id = $order['master_id'] ?? 'master_default';
@@ -414,7 +414,7 @@ $child_order = [
 'total' => $added_price,
 'services' => $services_display,
 'master_id' => $master_id,
-'status' => 'в работе',
+'status' => CSC_STATUS_PROCESSING,
 'created_at' => current_time('mysql'),
 'is_child' => true,
 'additional_items' => $clean_items
@@ -477,7 +477,7 @@ if (!isset($all_orders[$order_number])) {
 wp_die('Заказ не найден.', 'Ошибка', ['response' => 404]);
 }
 $order = $all_orders[$order_number];
-if (($order['status'] ?? '') === 'отменено') {
+if (($order['status'] ?? '') === CSC_STATUS_CANCELLED) {
 wp_die('Заказ отменён и не может быть изменён.', 'Ошибка', ['response' => 403]);
 }
 $services = function_exists('csc_get_items') ? csc_get_items() : [];

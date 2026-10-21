@@ -292,14 +292,14 @@ if (!function_exists('csc_format_order_history')) {
 
         $status_labels = [
             ''                  => '(создание)',
-            'ожидает'           => 'Ожидает',
-            'поиск мастера'     => 'Поиск мастера',
-            'ожидает оплаты'    => 'Ожидает оплаты',
-            'в работе'          => 'В работе',
-            'выполнено'         => 'Выполнено',
-            'отменено'          => 'Отменено',
-            'нет мастеров'      => 'Нет мастеров',
-            'ошибка: время поиска истекло' => 'Ошибка: время поиска истекло',
+            CSC_STATUS_PENDING           => 'Ожидает',
+            CSC_STATUS_SEARCHING => 'Поиск мастера',
+            CSC_STATUS_AWAITING_PAYMENT => 'Ожидает оплаты',
+            CSC_STATUS_PROCESSING => 'В работе',
+            CSC_STATUS_COMPLETED         => 'Выполнено',
+            CSC_STATUS_CANCELLED          => 'Отменено',
+            CSC_STATUS_NO_MASTERS => 'Нет мастеров',
+            CSC_STATUS_ROUTING_TIMEOUT => 'Ошибка: время поиска истекло',
         ];
         
         $financial_statuses = [
@@ -320,6 +320,11 @@ if (!function_exists('csc_format_order_history')) {
         foreach ($raw_history as $entry) {
             $from = $entry['from_status'] ?? '';
             $to = $entry['to_status'] ?? '';
+            // 3.5: нормализация старых кириллических статусов в истории к латинским ключам
+            if (function_exists('csc_status_normalize')) {
+                if ($from !== '' && strpos($from, 'financial:') !== 0) $from = csc_status_normalize($from);
+                if ($to !== ''   && strpos($to, 'financial:')   !== 0) $to   = csc_status_normalize($to);
+            }
             $role = $entry['changed_by'] ?? 'system';
             
             $role_label = $role_labels[$role] ?? $role;

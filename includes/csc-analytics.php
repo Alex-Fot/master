@@ -494,10 +494,10 @@ RESPONSIVE
             <label class="csc-filter-label" for="filter-status">Статус заказа</label>
             <select id="filter-status" class="csc-filter-input">
                 <option value="all">Все статусы (кроме отмененных)</option>
-                <option value="выполнено">Только Выполненные (Фактическая выручка)</option>
-                <option value="в работе">В работе</option>
-                <option value="ожидает">Ожидают подтверждения / оплаты</option>
-                <option value="отменено">Отмененные</option>
+                <option value="completed">Только Выполненные (Фактическая выручка)</option>
+                <option value="processing">В работе</option>
+                <option value="pending">Ожидают подтверждения / оплаты</option>
+                <option value="cancelled">Отмененные</option>
             </select>
         </div>
         <button type="button" class="csc-btn-apply" id="csc-apply-filters-btn">Применить</button>
@@ -1421,7 +1421,7 @@ function cscFetchDataForExport(startDate, endDate, onlyCompleted) {
         start_date: startDate,
         end_date: endDate,
         master_id: 'all',
-        status: onlyCompleted ? 'выполнено' : 'all'
+        status: onlyCompleted ? CSC_STATUS_COMPLETED : 'all'
     });
 
     var conversionParams = new URLSearchParams({

@@ -25,7 +25,10 @@ if (!defined('ABSPATH')) exit;
 define('CSC_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('CSC_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('CSC_PLUGIN_VERSION', '9.0');
-define('CSC_DB_VERSION', '2.0');
+define('CSC_DB_VERSION', '2.1'); // 2.1: UPDATE-миграция статусов на латинские ключи (3.5)
+
+// 3.5: Словарь статусов — константы нужны уже в хуке активации (csc_migrate_statuses_to_latin)
+require_once plugin_dir_path(__FILE__) . 'includes/csc-status-i18n.php';
 
 // ============================================================
 // ХУК АКТИВАЦИИ
@@ -69,7 +72,7 @@ function csc_plugin_activate() {
         completion_files TEXT,
         master_id VARCHAR(100) NOT NULL DEFAULT '',
         current_candidate VARCHAR(100) DEFAULT NULL,
-        status VARCHAR(50) NOT NULL DEFAULT 'ожидает',
+        status VARCHAR(50) NOT NULL DEFAULT 'pending',
         routing_status VARCHAR(50) NOT NULL DEFAULT '',
         rejected_by TEXT,
         accepted_by VARCHAR(100) DEFAULT NULL,
@@ -202,6 +205,9 @@ function csc_plugin_activate() {
     // --- Миграция данных из wp_options в таблицу ---
     csc_migrate_orders_to_table();
 
+    // --- 3.5: UPDATE-миграция кириллических статусов в латинские ключи (одноразово) ---
+    csc_migrate_statuses_to_latin();
+
     // ============================================================
     // РЕГИСТРАЦИЯ КРОН-ЗАДАЧ
     // ============================================================
@@ -266,6 +272,71 @@ function csc_add_custom_cron_intervals($schedules) {
 }
 
 // ============================================================
+// 3.5: UPDATE-МИГРАЦИЯ СТАТУСОВ ЗАКАЗОВ НА ЛАТИНСКИЕ КЛЮЧИ
+// ============================================================
+if (!function_exists('csc_migrate_statuses_to_latin')) {
+    /**
+     * Одноразовый перевод кириллических статусов в латинские ключи
+     * в таблицах csc_orders (status) и csc_order_history (from_status/to_status).
+     * Флаг: csc_statuses_latin_migrated. Безопасно повторять (UPDATE не трогает латинские значения).
+     */
+    function csc_migrate_statuses_to_latin() {
+        global $wpdb;
+        if (get_option('csc_statuses_latin_migrated', false)) return;
+
+        $map = [
+            'ожидает'                    => CSC_STATUS_PENDING,
+            'поиск мастера'              => CSC_STATUS_SEARCHING,
+            'ожидает оплаты'             => CSC_STATUS_AWAITING_PAYMENT,
+            'в работе'                   => CSC_STATUS_PROCESSING,
+            'выполнено'                  => CSC_STATUS_COMPLETED,
+            'завершено'                  => CSC_STATUS_COMPLETED,
+            'отменено'                   => CSC_STATUS_CANCELLED,
+            'нет мастеров'               => CSC_STATUS_NO_MASTERS,
+            'ошибка: время поиска истекло' => CSC_STATUS_ROUTING_TIMEOUT,
+        ];
+
+        $tables = [
+            $wpdb->prefix . 'csc_orders'        => ['status'],
+            $wpdb->prefix . 'csc_order_history' => ['from_status', 'to_status'],
+        ];
+
+        foreach ($tables as $table => $columns) {
+            // Таблица может ещё не существовать (первая активация) — проверяем наличие
+            if ($wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table)) !== $table) continue;
+            foreach ($columns as $col) {
+                foreach ($map as $old => $new) {
+                    $wpdb->query($wpdb->prepare(
+                        "UPDATE {$table} SET {$col} = %s WHERE {$col} = %s",
+                        $new, $old
+                    ));
+                }
+            }
+        }
+
+        // Миграция legacy-статусов из опций (до переноса в таблицу), если они ещё не перенесены
+        $all_orders = get_option('csc_all_orders', []);
+        if (!empty($all_orders)) {
+            $changed = false;
+            foreach ($all_orders as $num => &$o) {
+                if (!isset($o['status'])) continue;
+                $normalized = csc_status_normalize($o['status']);
+                if ($normalized !== $o['status']) {
+                    $o['status'] = $normalized;
+                    $changed = true;
+                }
+            }
+            unset($o);
+            if ($changed) update_option('csc_all_orders', $all_orders);
+        }
+
+        delete_option('csc_cache_all_orders'); // сброс кэча заказов после миграции (на случай если он option-based)
+        if (function_exists('csc_cache_delete_orders')) csc_cache_delete_orders(); // transient-кэш списка заказов
+        update_option('csc_statuses_latin_migrated', true, false);
+    }
+}
+
+// ============================================================
 // МИГРАЦИЯ ЗАКАЗОВ ИЗ wp_options В ТАБЛИЦУ
 // ============================================================
 // ИСПРАВЛЕНО: Обертка function_exists для предотвращения Fatal Error при дублировании в csc-core-functions.php
@@ -309,7 +380,7 @@ if (!function_exists('csc_migrate_orders_to_table')) {
                 'completion_files'   => is_string($o['completion_files'] ?? null) ? $o['completion_files'] : wp_json_encode($o['completion_files'] ?? []),
                 'master_id'          => $o['master_id'] ?? '',
                 'current_candidate'  => $o['current_candidate'] ?? null,
-                'status'             => $o['status'] ?? 'ожидает',
+                'status'             => $o['status'] ?? CSC_STATUS_PENDING,
                 'routing_status'     => $o['routing_status'] ?? '',
                 'rejected_by'        => is_string($o['rejected_by'] ?? null) ? $o['rejected_by'] : wp_json_encode($o['rejected_by'] ?? []),
                 'accepted_by'        => $o['accepted_by'] ?? null,
@@ -335,7 +406,7 @@ if (!function_exists('csc_migrate_orders_to_table')) {
             $wpdb->insert($wpdb->prefix . 'csc_order_history', [
                 'order_number' => $order_number,
                 'from_status'  => '',
-                'to_status'    => $o['status'] ?? 'ожидает',
+                'to_status'    => $o['status'] ?? CSC_STATUS_PENDING,
                 'changed_by'   => 'system',
                 'changed_by_id'=> '',
                 'reason'       => 'Миграция из опций при обновлении плагина',
@@ -392,6 +463,10 @@ function csc_protect_uploads_dir() {
 // ============================================================
 // ПОДКЛЮЧЕНИЕ МОДУЛЕЙ
 // ============================================================
+// 3.5: единый словарь статусов (константы + нормализация) — подключается первым,
+// до csc-core-functions.php и остальных модулей, использующих CSC_STATUS_*.
+require_once CSC_PLUGIN_DIR . 'includes/csc-status-i18n.php';
+
 require_once CSC_PLUGIN_DIR . 'includes/csc-core-functions.php';
 require_once CSC_PLUGIN_DIR . 'includes/csc-admin-pages.php';
 require_once CSC_PLUGIN_DIR . 'includes/csc-calculator-shortcode.php';

@@ -842,11 +842,13 @@ function renderOrders(orders, meta) {
     html += '</tr></thead><tbody>';
 
     orders.forEach(o => {
-        const isCancelled = o.cancelled_at || (o.status || '').toLowerCase() === 'отменено';
-        const statusText  = ((o.status || 'ожидает') + '').toLowerCase();
-        let statusClass = '';
+        const STATUS_LABELS = { pending:'Ожидает', searching:'Поиск мастера', awaiting_payment:'Ожидает оплаты', processing:'В работе', completed:'Выполнено', cancelled:'Отменено', no_masters:'Нет мастеров', routing_timeout:'Ошибка: время поиска истекло' };
+        const rawStatus = ((o.status || 'pending') + '').toLowerCase();
+        const statusText = STATUS_LABELS[rawStatus] || rawStatus;
+        const isCancelled = !!o.cancelled_at || rawStatus === 'cancelled';
+                let statusClass = '';
         if (isCancelled) statusClass = 'cancelled';
-        else if (statusText === 'ожидает оплаты') statusClass = 'pending-pay';
+        else if (rawStatus === 'awaiting_payment') statusClass = 'pending-pay';
 
         const expired = isOrderExpired(o);
         let actionBtn = '';
@@ -859,7 +861,7 @@ function renderOrders(orders, meta) {
             } else {
                 actionBtn = '<span class="csc-order-expired">срок действий истёк</span>';
             }
-        } else if (statusText === 'выполнено' || statusText === 'завершено') {
+        } else if (rawStatus === 'completed') {
             if (o.review && o.review.rating) {
                 actionBtn = '<div class="csc-rating-display">⭐ ' + escapeHtml(o.review.rating) + '/5</div>';
             } else {
@@ -881,7 +883,7 @@ function renderOrders(orders, meta) {
         html += '<tr>';
         html += '<td>' + escapeHtml(o.order_number) + '</td>';
         html += '<td>' + escapeHtml(o.date || '') + ' ' + escapeHtml(o.time || '') + '</td>';
-        html += '<td><span class="csc-order-status ' + statusClass + '">' + escapeHtml(isCancelled ? 'отменено' : statusText) + '</span></td>';
+        html += '<td><span class="csc-order-status ' + statusClass + '">' + escapeHtml(statusText) + '</span></td>';
         html += '<td>' + (parseFloat(o.total) || 0).toLocaleString('ru-RU') + ' ₽</td>';
         html += '<td>' + actionBtn + '</td>';
         html += '</tr>';

@@ -75,10 +75,11 @@
 
     function mapStatus(status) {
         const s = (status || '').toLowerCase();
-        if (s === 'отменено') return 'cancelled';
-        if (s === 'выполнено') return 'completed';
-        if (s === 'в работе') return 'active';
-        if (s === 'ожидает' || s === 'поиск мастера' || s === 'ожидает оплаты') return 'waiting';
+        if (s === 'cancelled' || s === 'отменено') return 'cancelled';
+        if (s === 'completed' || s === 'выполнено' || s === 'завершено') return 'completed';
+        if (s === 'processing' || s === 'в работе') return 'active';
+        if (s === 'pending' || s === 'searching' || s === 'awaiting_payment' || s === 'no_masters' || s === 'routing_timeout'
+            || s === 'ожидает' || s === 'поиск мастера' || s === 'ожидает оплаты' || s === 'нет мастеров') return 'waiting';
         return 'waiting';
     }
 

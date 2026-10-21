@@ -1347,11 +1347,11 @@ function csc_orders_admin_page() {
         if (isset($all_orders[$ord_num])) {
             $old_status = $all_orders[$ord_num]['status'] ?? '';
             $all_orders[$ord_num]['status'] = $new_status;
-            if ($new_status === 'отменено') {
+            if ($new_status === CSC_STATUS_CANCELLED) {
                 $all_orders[$ord_num]['routing_status'] = 'cancelled';
                 $all_orders[$ord_num]['cancelled_at'] = current_time('mysql');
             }
-            if (in_array($new_status, ['в работе', 'выполнено']) && ($all_orders[$ord_num]['routing_status'] ?? '') === 'searching') {
+            if (in_array($new_status, [CSC_STATUS_PROCESSING, CSC_STATUS_COMPLETED]) && ($all_orders[$ord_num]['routing_status'] ?? '') === 'searching') {
                 $all_orders[$ord_num]['routing_status'] = 'manual_override';
             }
             csc_update_order($ord_num, $all_orders[$ord_num]);
@@ -1443,10 +1443,10 @@ function csc_orders_admin_page() {
         <div style="width: 1px; height: 24px; background: #ddd; margin: 0 5px;"></div>
         <select id="csc-bulk-status" style="height: 30px; padding: 0 8px;">
             <option value="">— Изменить статус на —</option>
-            <option value="ожидает">Ожидает</option>
-            <option value="в работе">В работе</option>
-            <option value="выполнено">Выполнено</option>
-            <option value="отменено">Отменено</option>
+            <option value="pending">Ожидает</option>
+            <option value="processing">В работе</option>
+            <option value="completed">Выполнено</option>
+            <option value="cancelled">Отменено</option>
         </select>
         <button type="button" class="button button-primary" id="csc-bulk-apply">Применить</button>
         <span id="csc-bulk-result" style="margin-left: 10px; font-weight: 500; color: #666;"></span>
@@ -1502,10 +1502,10 @@ function csc_orders_admin_page() {
                         <?php wp_nonce_field('csc_update_status_' . $o['order_number'], '_csc_status_nonce'); ?>
                         <input type="hidden" name="order_number" value="<?php echo esc_attr($o['order_number']); ?>">
                         <select name="new_status" style="font-size: 12px; height: 28px;">
-                            <option value="ожидает" <?php selected($o['status'] ?? '', 'ожидает'); ?>>Ожидает</option>
-                            <option value="в работе" <?php selected($o['status'] ?? '', 'в работе'); ?>>В работе</option>
-                            <option value="выполнено" <?php selected($o['status'] ?? '', 'выполнено'); ?>>Выполнено</option>
-                            <option value="отменено" <?php selected($o['status'] ?? '', 'отменено'); ?>>Отменено</option>
+                            <option value="pending" <?php selected($o['status'] ?? '', CSC_STATUS_PENDING); ?>>Ожидает</option>
+                            <option value="processing" <?php selected($o['status'] ?? '', CSC_STATUS_PROCESSING); ?>>В работе</option>
+                            <option value="completed" <?php selected($o['status'] ?? '', CSC_STATUS_COMPLETED); ?>>Выполнено</option>
+                            <option value="cancelled" <?php selected($o['status'] ?? '', CSC_STATUS_CANCELLED); ?>>Отменено</option>
                         </select>
                         <button type="submit" name="csc_update_status" class="button button-small">OK</button>
                     </form>
@@ -1605,9 +1605,9 @@ function csc_orders_admin_page() {
 
             // Для зависших статусов — перезапуск маршрутизации, а не напоминание
             var restartStatuses = [
-                'нет мастеров',
-                'поиск мастера',
-                'ошибка: время поиска истекло',
+                CSC_STATUS_NO_MASTERS,
+                CSC_STATUS_SEARCHING,
+                CSC_STATUS_ROUTING_TIMEOUT,
                 'timeout_global'
             ];
             var isRestart = restartStatuses.indexOf(orderStatus) !== -1;
@@ -1677,7 +1677,7 @@ function csc_orders_admin_page() {
         var events = [
             <?php
             foreach ($all_orders as $o) {
-                if (($o['status'] ?? '') === 'отменено') continue;
+                if (($o['status'] ?? '') === CSC_STATUS_CANCELLED) continue;
                 $mid = $o['master_id'] ?? 'master_default';
                 $color = isset($masters[$mid]) ? $masters[$mid]['color'] : '#3788d8';
                 $start = ($o['date'] ?? '') . 'T' . ($o['time'] ?? '');

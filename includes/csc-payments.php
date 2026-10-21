@@ -237,7 +237,7 @@ if (!function_exists('csc_create_payment')) {
         // Проверка что заказ не отменён и не оплачен
         $status = $order['status'] ?? '';
         $payment_status = $order['payment_status'] ?? 'no_payment_required';
-        if (in_array($status, ['отменено', 'выполнено'], true)) {
+        if (in_array($status, [CSC_STATUS_CANCELLED, CSC_STATUS_COMPLETED], true)) {
             return ['success' => false, 'error' => 'Заказ в статусе ' . $status];
         }
         if ($payment_status === 'paid') {
@@ -338,7 +338,7 @@ if (!function_exists('csc_create_payment')) {
         $order['payment_transaction_id'] = $transaction_id;
         $order['paid_amount'] = 0;
         $order['remaining_amount'] = floatval($order['total'] ?? 0);
-        $order['status'] = 'ожидает оплаты';
+        $order['status'] = CSC_STATUS_AWAITING_PAYMENT;
 
         csc_update_order($order_number, $order);
 
@@ -347,7 +347,7 @@ if (!function_exists('csc_create_payment')) {
             csc_log_status_change(
                 $order_number,
                 $status,
-                'ожидает оплаты',
+                CSC_STATUS_AWAITING_PAYMENT,
                 'system',
                 'payment',
                 'Создан платёж ' . $payment_id . ' на сумму ' . number_format($amount, 2, '.', ' ') . ' ₽'
@@ -561,15 +561,15 @@ if (!function_exists('csc_update_order_payment_status')) {
                 // Если полная оплата — меняем статус заказа и запускаем маршрутизацию
                 if ($order['remaining_amount'] <= 0) {
                     $order['payment_status'] = 'paid';
-                    if ($old_status === 'ожидает оплаты') {
-                        $order['status'] = 'поиск мастера';
+                    if ($old_status === CSC_STATUS_AWAITING_PAYMENT) {
+                        $order['status'] = CSC_STATUS_SEARCHING;
 
                         // Логирование перехода статуса
                         if (function_exists('csc_log_status_change')) {
                             csc_log_status_change(
                                 $order_number,
-                                'ожидает оплаты',
-                                'поиск мастера',
+                                CSC_STATUS_AWAITING_PAYMENT,
+                                CSC_STATUS_SEARCHING,
                                 'system',
                                 'payment',
                                 'Оплата получена. Запуск маршрутизации.'
@@ -971,7 +971,7 @@ if (!function_exists('csc_check_pending_payments')) {
                 $order = csc_get_order($order_number);
                 if ($order && ($order['payment_status'] ?? '') === 'pending') {
                     $order['payment_status'] = 'unpaid';
-                    $order['status'] = 'отменено';
+                    $order['status'] = CSC_STATUS_CANCELLED;
                     $order['cancelled_at'] = current_time('mysql');
                     $order['cancel_reason'] = 'Оплата не была завершена в течение 24 часов';
                     csc_update_order($order_number, $order);
@@ -979,8 +979,8 @@ if (!function_exists('csc_check_pending_payments')) {
                     if (function_exists('csc_log_status_change')) {
                         csc_log_status_change(
                             $order_number,
-                            'ожидает оплаты',
-                            'отменено',
+                            CSC_STATUS_AWAITING_PAYMENT,
+                            CSC_STATUS_CANCELLED,
                             'system',
                             'payment_cron',
                             'Платёж не был завершён в течение 24 часов'

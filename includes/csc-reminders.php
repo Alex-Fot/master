@@ -231,7 +231,7 @@ if (!function_exists('csc_send_due_reminders')) {
 
             $results = $wpdb->get_results($wpdb->prepare(
                 "SELECT * FROM {$table}
-                 WHERE status NOT IN ('отменено', 'выполнено')
+                 WHERE status NOT IN (CSC_STATUS_CANCELLED, CSC_STATUS_COMPLETED)
                  AND (reminder_sent IS NULL OR reminder_sent = 0)
                  AND date != ''
                  AND time != ''
@@ -283,7 +283,7 @@ if (!function_exists('csc_send_due_reminders')) {
 
             foreach ($all_orders as $order_number => $order) {
                 $status = $order['status'] ?? '';
-                if (in_array($status, ['отменено', 'выполнено'])) continue;
+                if (in_array($status, [CSC_STATUS_CANCELLED, CSC_STATUS_COMPLETED])) continue;
                 if (!empty($order['reminder_sent'])) continue;
 
                 $order_date = $order['date'] ?? '';
@@ -531,7 +531,7 @@ if (!function_exists('csc_admin_send_reminder')) {
         // ИСПРАВЛЕНО: для зависших статусов — перезапуск маршрутизации,
         // а НЕ отправка напоминания о времени (мастера ведь нет).
         // ============================================================
-        $restart_statuses = ['нет мастеров', 'поиск мастера', 'ошибка: время поиска истекло', 'timeout_global'];
+        $restart_statuses = [CSC_STATUS_NO_MASTERS, CSC_STATUS_SEARCHING, CSC_STATUS_ROUTING_TIMEOUT, 'timeout_global'];
 
         if (in_array($status, $restart_statuses, true)) {
             if (!function_exists('csc_admin_restart_routing')) {
@@ -587,7 +587,7 @@ if (!function_exists('csc_admin_send_reminder')) {
         // КОНЕЦ ВЕТКИ ПЕРЕЗАПУСКА
         // ============================================================
 
-        if (in_array($status, ['отменено', 'выполнено'])) {
+        if (in_array($status, [CSC_STATUS_CANCELLED, CSC_STATUS_COMPLETED])) {
             error_log("[CSC_REMINDERS] Заказ #{$order_number} в статусе '{$status}', напоминание не отправляется.");
             return false;
         }

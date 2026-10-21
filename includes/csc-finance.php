@@ -2938,7 +2938,7 @@ if (!function_exists('csc_finance_bridge_tg_completed')) {
 add_action('csc_order_status_changed', 'csc_finance_bridge_status_changed', 10, 6);
 if (!function_exists('csc_finance_bridge_status_changed')) {
     function csc_finance_bridge_status_changed($order_number, $from_status, $to_status, $changed_by = 'system', $changed_by_id = '', $reason = '') {
-        if ($to_status !== 'выполнено') return;
+        if ($to_status !== CSC_STATUS_COMPLETED) return;
         $order = function_exists('csc_get_order') ? csc_get_order($order_number) : null;
         if (!$order) return;
         do_action('csc_order_completed_finance', $order_number, $order);
@@ -2987,7 +2987,7 @@ if (!function_exists('csc_finance_retroactive_migration')) {
 
         foreach ($all_orders as $order_number => $order) {
             $status = $order['status'] ?? '';
-            if (!in_array($status, ['выполнено', 'завершено', 'Выполнено'])) continue;
+            if (!in_array($status, [CSC_STATUS_COMPLETED])) continue;
 
             $master_id = $order['master_id'] ?? '';
             if (empty($master_id)) continue;

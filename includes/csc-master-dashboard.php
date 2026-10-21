@@ -797,14 +797,14 @@ if (!function_exists('csc_handle_master_orders')) {
         // Сортировка: ожидание → в работе → выполнено → отменено, затем по дате
         uasort($my_orders, function($a, $b) {
             $status_order = [
-                'поиск мастера' => 0, 
-                'ожидает' => 0, 
-                'ожидает оплаты' => 0,
-                'в работе' => 1, 
-                'выполнено' => 2, 
-                'завершено' => 2,
+                CSC_STATUS_SEARCHING => 0, 
+                CSC_STATUS_PENDING => 0, 
+                CSC_STATUS_AWAITING_PAYMENT => 0,
+                CSC_STATUS_PROCESSING => 1, 
+                CSC_STATUS_COMPLETED => 2, 
+                CSC_STATUS_COMPLETED => 2,
                 'completed' => 2,
-                'отменено' => 3,
+                CSC_STATUS_CANCELLED => 3,
                 'cancelled' => 3,
             ];
             $s_a = $status_order[$a['status'] ?? ''] ?? 99;
@@ -860,7 +860,7 @@ if (!function_exists('csc_handle_master_action')) {
             return new WP_Error('forbidden', 'Not your order', ['status' => 403]);
         }
 
-        $old_status = $order['status'] ?? 'ожидает';
+        $old_status = $order['status'] ?? CSC_STATUS_PENDING;
         $customer_phone = function_exists('csc_normalize_phone')
             ? csc_normalize_phone($order['phone'] ?? '')
             : preg_replace('/[^0-9]/', '', $order['phone'] ?? '');
@@ -868,34 +868,34 @@ if (!function_exists('csc_handle_master_action')) {
         // Обработка действий
         if ($action === 'accept') {
             $order['master_id'] = $mid;
-            $order['status'] = 'в работе';
+            $order['status'] = CSC_STATUS_PROCESSING;
             $order['started_at'] = current_time('mysql');
             $order['routing_status'] = 'assigned';
             $order['current_candidate'] = null;
             $order['offer_time'] = null;
             $order['tg_message_id'] = null;
-            do_action('csc_order_status_changed', $order_number, $old_status, 'в работе', 'master', $mid, '');
+            do_action('csc_order_status_changed', $order_number, $old_status, CSC_STATUS_PROCESSING, 'master', $mid, '');
             
         } elseif ($action === 'complete') {
-            $order['status'] = 'выполнено';
+            $order['status'] = CSC_STATUS_COMPLETED;
             $order['completed_at'] = current_time('mysql');
             $order['routing_status'] = 'completed';
-            do_action('csc_order_status_changed', $order_number, $old_status, 'выполнено', 'master', $mid, '');
+            do_action('csc_order_status_changed', $order_number, $old_status, CSC_STATUS_COMPLETED, 'master', $mid, '');
             
         } elseif ($action === 'start') {
-            $order['status'] = 'в работе';
+            $order['status'] = CSC_STATUS_PROCESSING;
             $order['started_at'] = current_time('mysql');
-            do_action('csc_order_status_changed', $order_number, $old_status, 'в работе', 'master', $mid, '');
+            do_action('csc_order_status_changed', $order_number, $old_status, CSC_STATUS_PROCESSING, 'master', $mid, '');
             
         } elseif ($action === 'cancel') {
             $reason = sanitize_text_field($request->get_param('reason') ?? '');
-            $order['status'] = 'отменено';
+            $order['status'] = CSC_STATUS_CANCELLED;
             $order['canceled_at'] = current_time('mysql');
             $order['cancel_reason'] = $reason;
             if (isset($order['routing_status'])) {
                 $order['routing_status'] = 'canceled';
             }
-            do_action('csc_order_status_changed', $order_number, $old_status, 'отменено', 'master', $mid, $reason);
+            do_action('csc_order_status_changed', $order_number, $old_status, CSC_STATUS_CANCELLED, 'master', $mid, $reason);
             
         } else {
             return new WP_Error('bad_request', 'Unknown action', ['status' => 400]);
@@ -1041,11 +1041,11 @@ if (!function_exists('csc_handle_master_stats')) {
             $status = $order['status'] ?? '';
             $total = floatval($order['total'] ?? 0);
 
-            if ($status === 'поиск мастера' || $status === 'ожидает') {
+            if ($status === CSC_STATUS_SEARCHING || $status === CSC_STATUS_PENDING) {
                 $stats['pending']++;
-            } elseif ($status === 'в работе') {
+            } elseif ($status === CSC_STATUS_PROCESSING) {
                 $stats['active']++;
-            } elseif ($status === 'выполнено') {
+            } elseif ($status === CSC_STATUS_COMPLETED) {
                 $stats['completed']++;
                 // ИСПРАВЛЕНО: используем master_income вместо total
                 $income = floatval($order['master_income'] ?? 0);
@@ -1053,7 +1053,7 @@ if (!function_exists('csc_handle_master_stats')) {
                     // Фолбэк: если master_income не указан
                     $income = max(0, $total - floatval($order['commission'] ?? 0));
                 }
-            } elseif ($status === 'отменено') {
+            } elseif ($status === CSC_STATUS_CANCELLED) {
                 $stats['cancelled']++;
             }
 
@@ -1104,8 +1104,8 @@ if (!function_exists('csc_handle_upload_completion')) {
                 return new WP_Error('bad_request', 'Необходимо приложить фото или видео отчёт', ['status' => 400]);
             }
 
-            $old_status = $order['status'] ?? 'в работе';
-            $order['status'] = 'выполнено';
+            $old_status = $order['status'] ?? CSC_STATUS_PROCESSING;
+            $order['status'] = CSC_STATUS_COMPLETED;
             $order['completed_at'] = current_time('mysql');
             $order['routing_status'] = 'completed';
 
@@ -1120,7 +1120,7 @@ if (!function_exists('csc_handle_upload_completion')) {
                 csc_log_status_change(
                     $order_number,
                     $old_status,
-                    'выполнено',
+                    CSC_STATUS_COMPLETED,
                     'master',
                     $mid,
                     'Выполнено с отчётом (' . count($completion_files) . ' файл(ов))'
@@ -1653,7 +1653,7 @@ if (!function_exists('csc_handle_master_balance')) {
             $order_master_income = max(0, $order_total - $order_commission);
 
             // Статусная аналитика
-            if ($status === 'выполнено' || $status === 'completed' || $status === 'завершено') {
+            if ($status === CSC_STATUS_COMPLETED || $status === 'completed' || $status === CSC_STATUS_COMPLETED) {
                 $completed_count++;
                 $total_earned       += $order_master_income;
                 $master_income_total += $order_master_income;
@@ -1684,10 +1684,10 @@ if (!function_exists('csc_handle_master_balance')) {
                     'order_number'=> $order_num,
                     'icon'        => '✅',
                 ];
-            } elseif ($status === 'в работе') {
+            } elseif ($status === CSC_STATUS_PROCESSING) {
                 $active_count++;
                 $pending_amount += $order_master_income;
-            } elseif ($status === 'отменено' || $status === 'cancelled') {
+            } elseif ($status === CSC_STATUS_CANCELLED || $status === 'cancelled') {
                 $cancelled_count++;
             }
         }
@@ -1717,7 +1717,7 @@ if (!function_exists('csc_handle_master_balance')) {
             foreach ($payouts as $p) {
                 $p_amount = floatval($p['amount'] ?? 0);
                 $p_status = $p['status'] ?? '';
-                if ($p_status === 'completed' || $p_status === 'выплачено') {
+                if ($p_status === 'completed' || $p_status === 'выплачено') { // 'выплачено' — legacy-статус выплаты (не статус заказа)
                     $total_payout += $p_amount;
                     $transactions[] = [
                         'type'        => 'payout',

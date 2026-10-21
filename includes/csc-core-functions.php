@@ -88,7 +88,8 @@ if (!function_exists('csc_db_row_to_order_array')) {
             'completion_files'    => json_decode($row['completion_files'] ?? '[]', true) ?: [],
             'master_id'           => $row['master_id'] ?? '',
             'current_candidate'   => $row['current_candidate'] ?? null,
-            'status'              => $row['status'] ?? 'ожидает',
+            // 3.5: нормализация при чтении — старые кириллические статусы приводятся к латинским ключам
+            'status'              => function_exists('csc_status_normalize') ? csc_status_normalize($row['status'] ?? CSC_STATUS_PENDING) : ($row['status'] ?? CSC_STATUS_PENDING),
             'routing_status'      => $row['routing_status'] ?? '',
             'rejected_by'         => json_decode($row['rejected_by'] ?? '[]', true) ?: [],
             'accepted_by'         => $row['accepted_by'] ?? null,
@@ -148,7 +149,7 @@ if (!function_exists('csc_order_array_to_db_row')) {
             'completion_files'    => wp_json_encode($order['completion_files'] ?? []),
             'master_id'           => $order['master_id'] ?? '',
             'current_candidate'   => $order['current_candidate'] ?? null,
-            'status'              => $order['status'] ?? 'ожидает',
+            'status'              => $order['status'] ?? CSC_STATUS_PENDING,
             'routing_status'      => $order['routing_status'] ?? '',
             'rejected_by'         => wp_json_encode($order['rejected_by'] ?? []),
             'accepted_by'         => $order['accepted_by'] ?? null,
@@ -747,7 +748,7 @@ $all_orders[] = $order;
 $busy = [];
 $busy_all = [];
 foreach ($all_orders as $order) {
-if (($order['status'] ?? '') === 'отменено') continue;
+if (($order['status'] ?? '') === CSC_STATUS_CANCELLED) continue;
 $order_start_str = ($order['date'] ?? '') . ' ' . ($order['time'] ?? '00:00');
 try {
 $dt_start = new DateTime($order_start_str, $tz);
