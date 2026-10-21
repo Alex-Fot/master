@@ -138,7 +138,7 @@ add_action('wp_ajax_csc_save_city', 'csc_save_city_ajax');
 if (!function_exists('csc_save_city_ajax')) {
     function csc_save_city_ajax() {
         if (!current_user_can('manage_options')) wp_send_json_error(['message' => 'Доступ запрещен']);
-        if (!check_ajax_referer('csc_cities_nonce', '_wpnonce', false)) wp_send_json_error(['message' => 'Ошибка безопасности']);
+        csc_verify_ajax_nonce('csc_cities_nonce');
         
         $city_key = sanitize_title($_POST['city_key'] ?? '');
         $name = sanitize_text_field($_POST['name'] ?? '');
@@ -199,7 +199,7 @@ add_action('wp_ajax_csc_delete_city', 'csc_delete_city_ajax');
 if (!function_exists('csc_delete_city_ajax')) {
     function csc_delete_city_ajax() {
         if (!current_user_can('manage_options')) wp_send_json_error(['message' => 'Доступ запрещен']);
-        if (!check_ajax_referer('csc_cities_nonce', '_wpnonce', false)) wp_send_json_error(['message' => 'Ошибка безопасности']);
+        csc_verify_ajax_nonce('csc_cities_nonce');
         
         $city_key = sanitize_title($_POST['city_key'] ?? '');
         if (empty($city_key)) wp_send_json_error(['message' => 'ID города не указан']);
@@ -220,7 +220,7 @@ add_action('wp_ajax_csc_save_zone', 'csc_save_zone_ajax');
 if (!function_exists('csc_save_zone_ajax')) {
     function csc_save_zone_ajax() {
         if (!current_user_can('manage_options')) wp_send_json_error(['message' => 'Доступ запрещен']);
-        if (!check_ajax_referer('csc_cities_nonce', '_wpnonce', false)) wp_send_json_error(['message' => 'Ошибка безопасности']);
+        csc_verify_ajax_nonce('csc_cities_nonce');
         
         $city_key = sanitize_title($_POST['city_key'] ?? '');
         $zone_id = sanitize_key($_POST['zone_id'] ?? '');
@@ -290,7 +290,7 @@ add_action('wp_ajax_csc_delete_zone', 'csc_delete_zone_ajax');
 if (!function_exists('csc_delete_zone_ajax')) {
     function csc_delete_zone_ajax() {
         if (!current_user_can('manage_options')) wp_send_json_error(['message' => 'Доступ запрещен']);
-        if (!check_ajax_referer('csc_cities_nonce', '_wpnonce', false)) wp_send_json_error(['message' => 'Ошибка безопасности']);
+        csc_verify_ajax_nonce('csc_cities_nonce');
         
         // ИСПРАВЛЕНО: sanitize_text_field вместо sanitize_title (сохраняет регистр)
         $city_key = sanitize_text_field($_POST['city_key'] ?? '');
@@ -322,7 +322,7 @@ add_action('wp_ajax_csc_bulk_delete_zones', 'csc_bulk_delete_zones_ajax');
 if (!function_exists('csc_bulk_delete_zones_ajax')) {
     function csc_bulk_delete_zones_ajax() {
         if (!current_user_can('manage_options')) wp_send_json_error(['message' => 'Доступ запрещен']);
-        if (!check_ajax_referer('csc_cities_nonce', '_wpnonce', false)) wp_send_json_error(['message' => 'Ошибка безопасности']);
+        csc_verify_ajax_nonce('csc_cities_nonce');
         
         $city_key = sanitize_title($_POST['city_key'] ?? '');
         $zone_ids = $_POST['zone_ids'] ?? [];
@@ -358,7 +358,7 @@ add_action('wp_ajax_csc_sort_zones', 'csc_sort_zones_ajax');
 if (!function_exists('csc_sort_zones_ajax')) {
     function csc_sort_zones_ajax() {
         if (!current_user_can('manage_options')) wp_send_json_error(['message' => 'Доступ запрещен']);
-        if (!check_ajax_referer('csc_cities_nonce', '_wpnonce', false)) wp_send_json_error(['message' => 'Ошибка безопасности']);
+        csc_verify_ajax_nonce('csc_cities_nonce');
         
         $city_key = sanitize_title($_POST['city_key'] ?? '');
         $zone_order = $_POST['zone_order'] ?? [];
@@ -391,7 +391,7 @@ add_action('wp_ajax_csc_export_cities', 'csc_export_cities_ajax');
 if (!function_exists('csc_export_cities_ajax')) {
     function csc_export_cities_ajax() {
         if (!current_user_can('manage_options')) wp_send_json_error(['message' => 'Доступ запрещен']);
-        if (!check_ajax_referer('csc_cities_nonce', '_wpnonce', false)) wp_send_json_error(['message' => 'Ошибка безопасности']);
+        csc_verify_ajax_nonce('csc_cities_nonce');
         
         $cities = csc_get_cities();
         
@@ -410,7 +410,7 @@ add_action('wp_ajax_csc_import_cities', 'csc_import_cities_ajax');
 if (!function_exists('csc_import_cities_ajax')) {
     function csc_import_cities_ajax() {
         if (!current_user_can('manage_options')) wp_send_json_error(['message' => 'Доступ запрещен']);
-        if (!check_ajax_referer('csc_cities_nonce', '_wpnonce', false)) wp_send_json_error(['message' => 'Ошибка безопасности']);
+        csc_verify_ajax_nonce('csc_cities_nonce');
         
         $json_data = $_POST['json_data'] ?? '';
         $import_mode = sanitize_text_field($_POST['import_mode'] ?? 'merge'); // merge или replace
@@ -1279,7 +1279,7 @@ add_action('wp_ajax_csc_get_cities_ajax', 'csc_get_cities_ajax');
 if (!function_exists('csc_get_cities_ajax')) {
     function csc_get_cities_ajax() {
         if (!current_user_can('manage_options')) wp_send_json_error(['message' => 'Доступ запрещен']);
-        if (!check_ajax_referer('csc_cities_nonce', '_wpnonce', false)) wp_send_json_error(['message' => 'Ошибка безопасности']);
+        csc_verify_ajax_nonce('csc_cities_nonce');
         $city_key = sanitize_title($_GET['city_key'] ?? '');
         $cities = csc_get_cities();
         if (!isset($cities[$city_key])) wp_send_json_error(['message' => 'Город не найден']);

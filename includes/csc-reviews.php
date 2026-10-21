@@ -42,10 +42,8 @@ return $clean;
 // ============================================================
 if (!function_exists('csc_submit_review_handler_pro')) {
     function csc_submit_review_handler_pro() {
-        // ИСПРАВЛЕНО: проверка nonce для защиты от CSRF
-        if (!empty($_POST['_wpnonce'])) {
-            check_ajax_referer('csc_cabinet_nonce', '_wpnonce', false);
-        }
+        // SECURITY v9.1: принудительная CSRF-проверка
+        csc_verify_ajax_nonce('csc_cabinet_nonce');
 
         // Очистка ключей массива $_POST от HTML-сущностей WordPress (&amp; → &)
         $clean_post = [];

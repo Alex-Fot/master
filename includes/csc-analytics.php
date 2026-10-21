@@ -30,7 +30,7 @@ add_action('wp_ajax_csc_get_conversion_data', 'csc_get_conversion_data_handler')
 
 function csc_get_conversion_data_handler() {
     if (!current_user_can('manage_options')) wp_send_json_error(['message' => 'Доступ запрещен']);
-    if (!check_ajax_referer('csc_analytics_nonce', '_ajax_nonce', false)) wp_send_json_error(['message' => 'Ошибка безопасности']);
+    csc_verify_ajax_nonce('csc_analytics_nonce', '_ajax_nonce');
 
     $start_date = sanitize_text_field($_POST['start_date'] ?? date('Y-m-01'));
     $end_date = sanitize_text_field($_POST['end_date'] ?? date('Y-m-t'));
@@ -103,7 +103,7 @@ add_action('wp_ajax_csc_get_zones_coverage_data', 'csc_get_zones_coverage_data_h
 
 function csc_get_zones_coverage_data_handler() {
     if (!current_user_can('manage_options')) wp_send_json_error(['message' => 'Доступ запрещен']);
-    if (!check_ajax_referer('csc_analytics_nonce', '_ajax_nonce', false)) wp_send_json_error(['message' => 'Ошибка безопасности']);
+    csc_verify_ajax_nonce('csc_analytics_nonce', '_ajax_nonce');
     if (!function_exists('csc_get_cities')) wp_send_json_error(['message' => 'Функция csc_get_cities не найдена']);
     
     // Кэш карты на 1 час (данные городов меняются редко)

@@ -1567,9 +1567,7 @@ if (!function_exists('csc_save_master_token_ajax')) {
         if (!current_user_can('manage_options')) {
             wp_send_json_error(['message' => 'Доступ запрещен']);
         }
-        if (!check_ajax_referer('csc_masters_action', '_wpnonce', false)) {
-            wp_send_json_error(['message' => 'Ошибка безопасности']);
-        }
+        csc_verify_ajax_nonce('csc_masters_action');
 
         $mid = sanitize_text_field($_POST['mid'] ?? '');
         $token = sanitize_text_field($_POST['token'] ?? '');
@@ -1607,9 +1605,7 @@ if (!function_exists('csc_moderate_master_ajax')) {
         if (!current_user_can('manage_options')) {
             wp_send_json_error(array('message' => 'Доступ запрещен'));
         }
-        if (!check_ajax_referer('csc_masters_action', '_wpnonce', false)) {
-            wp_send_json_error(array('message' => 'Ошибка безопасности'));
-        }
+        csc_verify_ajax_nonce('csc_masters_action');
 
         $mid = sanitize_text_field($_POST['mid'] ?? '');
         $action = sanitize_text_field($_POST['moderation_action'] ?? '');
@@ -1794,9 +1790,7 @@ if (!function_exists('csc_bulk_approve_masters_ajax')) {
         if (!current_user_can('manage_options')) {
             wp_send_json_error(array('message' => 'Доступ запрещен'));
         }
-        if (!check_ajax_referer('csc_masters_action', '_wpnonce', false)) {
-            wp_send_json_error(array('message' => 'Ошибка безопасности'));
-        }
+        csc_verify_ajax_nonce('csc_masters_action');
 
         $masters = csc_get_masters(true);
         $approved_count = 0;
@@ -1859,9 +1853,7 @@ if (!function_exists('csc_get_master_details_ajax')) {
         if (!current_user_can('manage_options')) {
             wp_send_json_error(array('message' => 'Доступ запрещен'));
         }
-        if (!check_ajax_referer('csc_masters_action', '_wpnonce', false)) {
-            wp_send_json_error(array('message' => 'Ошибка безопасности'));
-        }
+        csc_verify_ajax_nonce('csc_masters_action');
 
         $mid = sanitize_text_field($_POST['mid'] ?? '');
         if (empty($mid)) {

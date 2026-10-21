@@ -464,6 +464,7 @@ require_once CSC_PLUGIN_DIR . 'includes/csc-master-moderation.php';
 // ============================================================
 // УЛУЧШЕНИЕ №1: Шифрование токена бота
 require_once CSC_PLUGIN_DIR . 'includes/csc-crypto.php';
+require_once CSC_PLUGIN_DIR . 'includes/csc-security.php'; // Принудительная CSRF-защита (csc_verify_ajax_nonce)
 
 // УЛУЧШЕНИЕ №2: Напоминания клиенту и мастеру
 require_once CSC_PLUGIN_DIR . 'includes/csc-reminders.php';
@@ -525,10 +526,8 @@ add_action('wp_ajax_nopriv_csc_submit_review', 'csc_submit_review_handler');
 
 if (!function_exists('csc_submit_review_handler')) {
 function csc_submit_review_handler() {
-    // ИСПРАВЛЕНО: nonce проверяется только если передан (не блокируем при кэше)
-    if (!empty($_POST['_wpnonce'])) {
-        check_ajax_referer('csc_cabinet_nonce', '_wpnonce', false);
-    }
+    // SECURITY v9.1: принудительная CSRF-проверка (строго, кроме явного soft-mode)
+    csc_verify_ajax_nonce('csc_cabinet_nonce');
     
     $order_number = sanitize_text_field($_POST['order_number'] ?? '');
     $phone = csc_normalize_phone(sanitize_text_field($_POST['phone'] ?? ''));
@@ -731,6 +730,15 @@ function csc_parse_order_data($order) {
     return $data;
 }
 
-function csc_generate_auth_token($phone) {
-    return hash('sha256', $phone . wp_salt('nonce'));
+/**
+ * SECURITY v9.1 (пункт 2.4): генерация СЛУЧАЙНОГО токена клиента/заявки.
+ * Старая реализация hash('sha256', $phone . wp_salt('nonce')) удалена:
+ *  - токен был детерминирован от телефона (перебор при утечке БД);
+ *  - соль 'nonce' ротируется каждые 12-24 ч, делая токены невалидными.
+ * Новый токен: 32 криптографически случайных символа, хранится в заявке.
+ */
+if (!function_exists('csc_generate_auth_token')) {
+    function csc_generate_auth_token($phone = '') {
+        return wp_generate_password(32, false, false);
+    }
 }

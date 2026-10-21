@@ -48,7 +48,7 @@ add_action('wp_ajax_csc_get_order_routing_logs', 'csc_get_order_routing_logs_han
 if (!function_exists('csc_get_order_routing_logs_handler')) {
     function csc_get_order_routing_logs_handler() {
         if (!current_user_can('manage_options')) wp_send_json_error(['message' => 'Доступ запрещен']);
-        if (!check_ajax_referer('csc_order_logs_nonce', '_ajax_nonce', false)) wp_send_json_error(['message' => 'Ошибка безопасности']);
+        csc_verify_ajax_nonce('csc_order_logs_nonce', '_ajax_nonce');
         
         $order_number = sanitize_text_field($_POST['order_number'] ?? '');
         if (!$order_number) wp_send_json_error(['message' => 'Не указан номер заказа']);
@@ -103,9 +103,7 @@ if (!function_exists('csc_admin_manual_backup_ajax')) {
         if (!current_user_can('manage_options')) {
             wp_send_json_error(['message' => 'Доступ запрещён']);
         }
-        if (!check_ajax_referer('csc_admin_nonce', 'nonce', false)) {
-            wp_send_json_error(['message' => 'Ошибка безопасности']);
-        }
+        csc_verify_ajax_nonce('csc_admin_nonce', 'nonce');
         if (!function_exists('csc_admin_manual_backup')) {
             wp_send_json_error(['message' => 'Модуль бэкапа не подключён']);
         }
@@ -127,9 +125,7 @@ if (!function_exists('csc_admin_send_reminder_ajax')) {
         if (!current_user_can('manage_options')) {
             wp_send_json_error(['message' => 'Доступ запрещён']);
         }
-        if (!check_ajax_referer('csc_admin_nonce', 'nonce', false)) {
-            wp_send_json_error(['message' => 'Ошибка безопасности']);
-        }
+        csc_verify_ajax_nonce('csc_admin_nonce', 'nonce');
         $order_number = sanitize_text_field($_POST['order_number'] ?? '');
         if (!$order_number) {
             wp_send_json_error(['message' => 'Не указан номер заказа']);
@@ -156,9 +152,7 @@ if (!function_exists('csc_bulk_update_prices_ajax')) {
         if (!current_user_can('manage_options')) {
             wp_send_json_error(['message' => 'Доступ запрещён']);
         }
-        if (!check_ajax_referer('csc_save_items_action', '_wpnonce', false)) {
-            wp_send_json_error(['message' => 'Ошибка безопасности']);
-        }
+        csc_verify_ajax_nonce('csc_save_items_action');
 
         $percent = floatval($_POST['percent'] ?? 0);
         $scope = sanitize_text_field($_POST['scope'] ?? 'all'); // all, section, selected

@@ -745,11 +745,8 @@ add_action('wp_ajax_nopriv_csc_get_user_orders', 'csc_get_user_orders_handler');
 
 if (!function_exists('csc_get_user_orders_handler')) {
     function csc_get_user_orders_handler() {
-        // ИСПРАВЛЕНО: Убрана проверка nonce для операции чтения (публичная операция)
-        // Nonce проверяется только если передан (для совместимости)
-        if (!empty($_POST['_wpnonce'])) {
-            check_ajax_referer('csc_cabinet_nonce', '_wpnonce', false);
-        }
+        // SECURITY v9.1: принудительная CSRF-проверка
+        csc_verify_ajax_nonce('csc_cabinet_nonce');
         
         $phone = function_exists('csc_normalize_phone') 
             ? csc_normalize_phone(sanitize_text_field($_POST['phone'] ?? ''))
@@ -883,9 +880,8 @@ add_action('wp_ajax_nopriv_csc_cancel_order', 'csc_cancel_order_handler');
 
 if (!function_exists('csc_cancel_order_handler')) {
     function csc_cancel_order_handler() {
-        if (!check_ajax_referer('csc_cabinet_nonce', '_wpnonce', false)) {
-            wp_send_json_error(['message' => 'Ошибка безопасности. Обновите страницу.']);
-        }
+        // SECURITY v9.1: принудительная CSRF-проверка
+        csc_verify_ajax_nonce('csc_cabinet_nonce');
         
         $num = sanitize_text_field($_POST['order_number'] ?? '');
         $reason = sanitize_text_field($_POST['reason'] ?? '');
@@ -912,6 +908,15 @@ if (!function_exists('csc_cancel_order_handler')) {
         
         if (empty($phone) || $order_phone !== $phone) {
             wp_send_json_error(['message' => 'Нет доступа к этой заявке']);
+            return;
+        }
+
+        // SECURITY v9.1 (IDOR fix): отмена возможна только держателю токена заявки
+        $submitted_token = sanitize_text_field($_POST['auth_token'] ?? '');
+        $stored_token = (string)($order['auth_token'] ?? '');
+        if ($stored_token === '' || strlen($stored_token) < 16 || !hash_equals($stored_token, $submitted_token)) {
+            error_log('[CSC_SECURITY] cancel_order denied without valid auth_token for order ' . $num);
+            wp_send_json_error(['message' => 'Для подтверждения отмены обновите список заявок в личном кабинете.']);
             return;
         }
         
@@ -1030,9 +1035,8 @@ add_action('wp_ajax_nopriv_csc_export_orders_csv', 'csc_export_orders_csv_handle
 
 if (!function_exists('csc_export_orders_csv_handler')) {
     function csc_export_orders_csv_handler() {
-        if (!check_ajax_referer('csc_cabinet_nonce', '_wpnonce', false)) {
-            wp_die('Ошибка безопасности');
-        }
+        // SECURITY v9.1: принудительная CSRF-проверка
+        csc_verify_ajax_nonce('csc_cabinet_nonce', '_wpnonce', 'Ошибка безопасности');
         
         $phone = function_exists('csc_normalize_phone') 
             ? csc_normalize_phone(sanitize_text_field($_GET['phone'] ?? ''))
@@ -1041,14 +1045,22 @@ if (!function_exists('csc_export_orders_csv_handler')) {
         if (!$phone) {
             wp_die('Не указан телефон');
         }
+
+        // SECURITY v9.1 (IDOR fix): экспорт только держателю токена клиента
+        $export_token = sanitize_text_field($_GET['auth_token'] ?? '');
+        if (empty($export_token)) {
+            wp_die('Требуется токен доступа. Откройте личный кабинет и повторите экспорт.');
+        }
         
         // ИСПРАВЛЕНО: Использование унифицированной функции чтения
         $all = function_exists('csc_get_all_orders') ? csc_get_all_orders() : get_option('csc_all_orders', []);
-        $user_orders = array_filter($all, function($o) use ($phone) {
+        $user_orders = array_filter($all, function($o) use ($phone, $export_token) {
             $o_phone = function_exists('csc_normalize_phone') 
                 ? csc_normalize_phone($o['phone'] ?? '')
                 : ($o['phone'] ?? '');
-            return $o_phone === $phone;
+            if ($o_phone !== $phone) return false;
+            $t = (string)($o['auth_token'] ?? '');
+            return $t !== '' && strlen($t) >= 16 && hash_equals($t, $export_token);
         });
         
         if (empty($user_orders)) {
@@ -1095,9 +1107,7 @@ if (!function_exists('csc_get_analytics_data_handler')) {
             wp_send_json_error(['message' => 'Доступ запрещен']);
         }
         
-        if (!check_ajax_referer('csc_analytics_nonce', '_ajax_nonce', false)) {
-            wp_send_json_error(['message' => 'Ошибка безопасности (nonce)']);
-        }
+        csc_verify_ajax_nonce('csc_analytics_nonce', '_ajax_nonce'); // SECURITY v9.1: принудительно
 
         // ============================================================
         // 2. ВАЛИДАЦИЯ ВХОДНЫХ ДАННЫХ
@@ -1387,9 +1397,7 @@ if (!function_exists('csc_bulk_update_status_handler')) {
             wp_send_json_error(['message' => 'Доступ запрещен']);
         }
         
-        if (!check_ajax_referer('csc_bulk_nonce', '_ajax_nonce', false)) {
-            wp_send_json_error(['message' => 'Ошибка безопасности (nonce)']);
-        }
+        csc_verify_ajax_nonce('csc_bulk_nonce', '_ajax_nonce'); // SECURITY v9.1: принудительно
         
         $order_numbers = array_map('sanitize_text_field', $_POST['order_numbers'] ?? []);
         $new_status = sanitize_text_field($_POST['new_status'] ?? '');
@@ -1505,12 +1513,20 @@ add_action('wp_ajax_csc_push_subscribe', 'csc_ajax_push_subscribe');
 
 if (!function_exists('csc_ajax_push_subscribe')) {
     function csc_ajax_push_subscribe() {
-        // Nonce проверяется только если передан (кабинет клиента).
-        // Кабинет мастера использует token-авторизацию и может не передавать nonce.
-        if (!empty($_POST['_wpnonce'])) {
-            if (!check_ajax_referer('csc_cabinet_nonce', '_wpnonce', false)) {
-                wp_send_json_error(['message' => 'Ошибка безопасности. Обновите страницу.']);
+        // SECURITY v9.1: клиент обязан прислать валидный nonce; мастер — nonce из дашборда
+        // или пару mid+dashboard_token (авторизация кабинета мастера).
+        $has_valid_nonce = isset($_POST['_wpnonce']) && wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_wpnonce'])), 'csc_cabinet_nonce');
+        $master_authorized = false;
+        if (!$has_valid_nonce) {
+            $user_type_chk = sanitize_key($_POST['user_type'] ?? '');
+            $mid_chk = sanitize_text_field($_POST['user_id'] ?? '');
+            $mtoken_chk = sanitize_text_field($_POST['master_token'] ?? '');
+            if ($user_type_chk === 'master' && $mid_chk !== '' && $mtoken_chk !== '' && function_exists('csc_verify_master_dashboard_token')) {
+                $master_authorized = csc_verify_master_dashboard_token($mid_chk, $mtoken_chk);
             }
+        }
+        if (!$has_valid_nonce && !$master_authorized) {
+            wp_send_json_error(['message' => 'Ошибка безопасности. Обновите страницу.'], 403);
         }
         
         $sub_json = wp_unslash($_POST['subscription'] ?? '');
@@ -1553,12 +1569,19 @@ add_action('wp_ajax_csc_mark_read', 'csc_ajax_mark_read');
 
 if (!function_exists('csc_ajax_mark_read')) {
     function csc_ajax_mark_read() {
-        // Nonce проверяется только если передан (кабинет клиента).
-        // Кабинет мастера вызывает этот эндпоинт без nonce.
-        if (!empty($_POST['_wpnonce'])) {
-            if (!check_ajax_referer('csc_cabinet_nonce', '_wpnonce', false)) {
-                wp_send_json_error(['message' => 'Ошибка безопасности. Обновите страницу.']);
+        // SECURITY v9.1: nonce обязателен; допуск без nonce — только мастеру с валидной парой mid+token
+        $has_valid_nonce = isset($_POST['_wpnonce']) && wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_wpnonce'])), 'csc_cabinet_nonce');
+        $master_authorized = false;
+        if (!$has_valid_nonce) {
+            $type_chk = sanitize_key($_POST['type'] ?? '');
+            $id_chk = sanitize_text_field($_POST['id'] ?? '');
+            $mtoken_chk = sanitize_text_field($_POST['master_token'] ?? '');
+            if ($type_chk === 'master' && $id_chk !== '' && $mtoken_chk !== '' && function_exists('csc_verify_master_dashboard_token')) {
+                $master_authorized = csc_verify_master_dashboard_token($id_chk, $mtoken_chk);
             }
+        }
+        if (!$has_valid_nonce && !$master_authorized) {
+            wp_send_json_error(['message' => 'Ошибка безопасности. Обновите страницу.'], 403);
         }
         
         $type = sanitize_key($_POST['type'] ?? '');
@@ -1587,9 +1610,7 @@ if (!function_exists('csc_ajax_get_notifications')) {
             wp_send_json_error(['message' => 'Доступ запрещен']);
         }
         
-        if (!check_ajax_referer('csc_order_logs_nonce', '_wpnonce', false)) {
-            wp_send_json_error(['message' => 'Ошибка безопасности']);
-        }
+        csc_verify_ajax_nonce('csc_order_logs_nonce'); // SECURITY v9.1: принудительно
         
         $order = sanitize_text_field($_POST['order_number'] ?? '');
         if (!$order) {
@@ -1613,9 +1634,7 @@ if (!function_exists('csc_ajax_clear_push_subs')) {
             wp_send_json_error('Access denied');
         }
         
-        if (!check_ajax_referer('csc_admin_nonce', 'nonce', false)) {
-            wp_send_json_error('Security check failed');
-        }
+        csc_verify_ajax_nonce('csc_admin_nonce', 'nonce'); // SECURITY v9.1: принудительно
         
         global $wpdb;
         $keys = $wpdb->get_col("SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE 'csc_push_subs_%'");
@@ -1638,9 +1657,8 @@ add_action('wp_ajax_csc_get_customer_notifications', 'csc_get_customer_notificat
 
 if (!function_exists('csc_get_customer_notifications_ajax')) {
     function csc_get_customer_notifications_ajax() {
-        if (!check_ajax_referer('csc_cabinet_nonce', '_wpnonce', false)) {
-            wp_send_json_error(['message' => 'Ошибка безопасности']);
-        }
+        // SECURITY v9.1: принудительная CSRF-проверка
+        csc_verify_ajax_nonce('csc_cabinet_nonce');
         
         $phone = sanitize_text_field($_POST['phone'] ?? '');
         $phone_norm = function_exists('csc_normalize_phone') 
@@ -1687,9 +1705,8 @@ add_action('wp_ajax_csc_mark_customer_notifications_read', 'csc_mark_customer_no
 
 if (!function_exists('csc_mark_customer_notifications_read_ajax')) {
     function csc_mark_customer_notifications_read_ajax() {
-        if (!check_ajax_referer('csc_cabinet_nonce', '_wpnonce', false)) {
-            wp_send_json_error(['message' => 'Ошибка безопасности']);
-        }
+        // SECURITY v9.1: принудительная CSRF-проверка
+        csc_verify_ajax_nonce('csc_cabinet_nonce');
         
         $phone = sanitize_text_field($_POST['phone'] ?? '');
         $phone_norm = function_exists('csc_normalize_phone') 

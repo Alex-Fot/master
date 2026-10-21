@@ -359,7 +359,8 @@
     async function ajaxCall(action, data = {}) {
         const fd = new FormData();
         fd.append('action', action);
-        if (CONFIG.nonce) fd.append('_wpnonce', CONFIG.nonce);
+        if (CONFIG.nonce) fd.append('_wpnonce', CONFIG.nonce); // SECURITY v9.1: CSRF nonce
+        if (CONFIG.token) fd.append('master_token', CONFIG.token); // SECURITY v9.1: fallback-авторизация мастера
         
         Object.keys(data).forEach(key => {
             const val = data[key];
@@ -415,7 +416,7 @@
             updateBadges();
 
             // Помечаем уведомления о заказах как прочитанные
-            ajaxCall('csc_mark_read', { type: 'master', id: CONFIG.mid }).catch(() => {});
+            ajaxCall('csc_mark_read', { type: 'master', id: CONFIG.mid, master_token: CONFIG.token }).catch(() => {});
         } catch (e) {
             console.error('Load orders error:', e);
             if (!STATE.isFirstLoad) {

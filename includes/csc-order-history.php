@@ -411,9 +411,7 @@ if (!function_exists('csc_get_order_history_ajax_handler')) {
         if (!current_user_can('manage_options')) {
             wp_send_json_error(['message' => 'Доступ запрещен']);
         }
-        if (!check_ajax_referer('csc_order_logs_nonce', '_wpnonce', false)) {
-            wp_send_json_error(['message' => 'Ошибка безопасности']);
-        }
+        csc_verify_ajax_nonce('csc_order_logs_nonce');
 
         $order_number = sanitize_text_field($_POST['order_number'] ?? '');
         if (empty($order_number)) {
@@ -518,9 +516,7 @@ if (!function_exists('csc_export_order_history_csv_ajax')) {
         if (!current_user_can('manage_options')) {
             wp_die('Доступ запрещен');
         }
-        if (!check_ajax_referer('csc_order_logs_nonce', '_wpnonce', false)) {
-            wp_die('Ошибка безопасности');
-        }
+        csc_verify_ajax_nonce('csc_order_logs_nonce');
 
         $order_number = sanitize_text_field($_GET['order_number'] ?? '');
         if (empty($order_number)) {

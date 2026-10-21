@@ -108,9 +108,7 @@ add_action('wp_ajax_nopriv_csc_check_upsell_time', 'csc_check_upsell_time_handle
 
 if (!function_exists('csc_check_upsell_time_handler')) {
 function csc_check_upsell_time_handler() {
-if (!check_ajax_referer('csc_upsell_nonce', '_wpnonce', false)) {
-wp_send_json_error(['message' => 'Ошибка безопасности']);
-}
+csc_verify_ajax_nonce('csc_upsell_nonce'); // SECURITY v9.1: принудительно (403 при провале)
 $action_type = sanitize_text_field($_POST['type'] ?? '');
 $order_number = sanitize_text_field($_POST['order_number'] ?? '');
 $token = sanitize_text_field($_POST['token'] ?? '');
@@ -215,9 +213,7 @@ add_action('wp_ajax_nopriv_csc_save_order_upsell', 'csc_save_order_upsell_handle
 
 if (!function_exists('csc_save_order_upsell_handler')) {
 function csc_save_order_upsell_handler() {
-if (!check_ajax_referer('csc_upsell_nonce', '_wpnonce', false)) {
-wp_send_json_error(['message' => 'Ошибка безопасности']);
-}
+csc_verify_ajax_nonce('csc_upsell_nonce'); // SECURITY v9.1: принудительно (403 при провале)
 $order_number = sanitize_text_field($_POST['order_number'] ?? '');
 $token = sanitize_text_field($_POST['token'] ?? '');
 $mode = sanitize_text_field($_POST['mode'] ?? 'extend');

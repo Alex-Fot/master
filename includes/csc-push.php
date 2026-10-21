@@ -618,9 +618,7 @@ if (!function_exists('csc_push_test_send_ajax')) {
         if (!current_user_can('manage_options')) {
             wp_send_json_error(['message' => 'Доступ запрещён']);
         }
-        if (!check_ajax_referer('csc_admin_nonce', '_wpnonce', false)) {
-            wp_send_json_error(['message' => 'Ошибка безопасности']);
-        }
+        csc_verify_ajax_nonce('csc_admin_nonce'); // SECURITY v9.1: принудительно
         
         global $wpdb;
         $subs_options = $wpdb->get_results("SELECT option_name, option_value FROM {$wpdb->options} WHERE option_name LIKE 'csc_push_subs_master_%'");

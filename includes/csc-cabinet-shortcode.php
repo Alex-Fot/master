@@ -802,6 +802,8 @@ document.getElementById('csc-login-form').addEventListener('submit', function(e)
             const phoneNorm = phoneRaw.replace(/[^0-9]/g, '');
             markNotificationsRead(phoneNorm);
             initPushSubscription(phoneNorm);
+            // SECURITY v9.1: сохраняем клиентский токен для отмены/экспорта
+            CSC_CLIENT_TOKEN = (res.data && res.data.auth_token) ? String(res.data.auth_token) : '';
             renderOrders(res.data.orders, res.data);
             // Инициализация клиентских уведомлений после первого успешного входа
             if (!CSC_CLIENT_NOTIFICATIONS.phone) {
@@ -822,6 +824,9 @@ document.getElementById('csc-login-form').addEventListener('submit', function(e)
 // ============================================================
 // РЕНДЕР ТАБЛИЦЫ ЗАЯВОК
 // ============================================================
+// SECURITY v9.1: токен доступа клиента (выдаётся сервером при поиске заявок)
+let CSC_CLIENT_TOKEN = '';
+
 function renderOrders(orders, meta) {
     // [ИСПРАВЛЕНО #5] Помечаем кабинет как авторизованный — показываем кнопку уведомлений
     const cabinetEl = document.getElementById('csc-cabinet');
@@ -890,7 +895,8 @@ function renderOrders(orders, meta) {
 
     if (filterMode === 'all' && orders.length > 0) {
         const phoneNorm = (orders[0].phone || '').replace(/[^0-9]/g, '');
-        html += '<a href="' + AJAX_URL + '?action=csc_export_orders_csv&phone=' + encodeURIComponent(phoneNorm) + '&_wpnonce=' + encodeURIComponent(NONCE) + '" target="_blank" class="csc-export-btn">📥 Экспорт в CSV</a>';
+        const exportToken = CSC_CLIENT_TOKEN || ((orders[0].auth_token || '').toString());
+        html += '<a href="' + AJAX_URL + '?action=csc_export_orders_csv&phone=' + encodeURIComponent(phoneNorm) + '&auth_token=' + encodeURIComponent(exportToken) + '&_wpnonce=' + encodeURIComponent(NONCE) + '" target="_blank" class="csc-export-btn">📥 Экспорт в CSV</a>';
     }
     html += '</div>';
     resultDiv.innerHTML = html;
@@ -928,6 +934,7 @@ function cancelOrder(orderNum) {
     fd.append('order_number', orderNum);
     fd.append('reason', reason.trim());
     fd.append('phone', phoneRaw);
+    fd.append('auth_token', CSC_CLIENT_TOKEN); // SECURITY v9.1: подтверждение владения заявкой
     fd.append('_wpnonce', NONCE);
 
     fetch(AJAX_URL, { method: 'POST', body: fd })

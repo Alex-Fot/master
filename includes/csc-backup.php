@@ -1072,9 +1072,7 @@ if (!function_exists('csc_manual_backup_ajax_handler')) {
             wp_send_json_error(['message' => 'Доступ запрещён']);
         }
 
-        if (!check_ajax_referer('csc_admin_nonce', 'nonce', false)) {
-            wp_send_json_error(['message' => 'Ошибка безопасности']);
-        }
+        csc_verify_ajax_nonce('csc_admin_nonce', 'nonce');
 
         $result = csc_admin_manual_backup();
 
@@ -1398,9 +1396,7 @@ if (!function_exists('csc_export_financial_statement_ajax')) {
             wp_send_json_error(['message' => 'Доступ запрещён']);
         }
 
-        if (!check_ajax_referer('csc_admin_nonce', 'nonce', false)) {
-            wp_send_json_error(['message' => 'Ошибка безопасности']);
-        }
+        csc_verify_ajax_nonce('csc_admin_nonce', 'nonce');
 
         $start_date = sanitize_text_field($_POST['start_date'] ?? date('Y-m-01'));
         $end_date = sanitize_text_field($_POST['end_date'] ?? date('Y-m-d'));
@@ -1433,9 +1429,7 @@ if (!function_exists('csc_export_financial_statement_csv_ajax')) {
             wp_die('Доступ запрещён');
         }
 
-        if (!check_ajax_referer('csc_admin_nonce', 'nonce', false)) {
-            wp_die('Ошибка безопасности');
-        }
+        csc_verify_ajax_nonce('csc_admin_nonce', 'nonce');
 
         $start_date = sanitize_text_field($_POST['start_date'] ?? date('Y-m-01'));
         $end_date = sanitize_text_field($_POST['end_date'] ?? date('Y-m-d'));

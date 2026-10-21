@@ -2603,9 +2603,7 @@ if (!function_exists('csc_finance_generate_invoice_ajax')) {
         if (!current_user_can('manage_options')) {
             wp_send_json_error(['message' => 'Доступ запрещён']);
         }
-        if (!check_ajax_referer('csc_finance_nonce', '_wpnonce', false)) {
-            wp_send_json_error(['message' => 'Ошибка безопасности']);
-        }
+        csc_verify_ajax_nonce('csc_finance_nonce');
 
         $order_number = sanitize_text_field($_POST['order_number'] ?? '');
         $notes = sanitize_textarea_field($_POST['notes'] ?? '');
@@ -2637,9 +2635,7 @@ if (!function_exists('csc_finance_view_invoice_ajax')) {
         if (!current_user_can('manage_options')) {
             wp_send_json_error(['message' => 'Доступ запрещён']);
         }
-        if (!check_ajax_referer('csc_finance_nonce', '_wpnonce', false)) {
-            wp_send_json_error(['message' => 'Ошибка безопасности']);
-        }
+        csc_verify_ajax_nonce('csc_finance_nonce');
 
         $invoice_id = intval($_POST['invoice_id'] ?? 0);
         if ($invoice_id <= 0) {
@@ -2669,9 +2665,7 @@ if (!function_exists('csc_finance_update_invoice_status_ajax')) {
         if (!current_user_can('manage_options')) {
             wp_send_json_error(['message' => 'Доступ запрещён']);
         }
-        if (!check_ajax_referer('csc_finance_nonce', '_wpnonce', false)) {
-            wp_send_json_error(['message' => 'Ошибка безопасности']);
-        }
+        csc_verify_ajax_nonce('csc_finance_nonce');
 
         $invoice_id = intval($_POST['invoice_id'] ?? 0);
         $new_status = sanitize_key($_POST['status'] ?? '');
@@ -2699,9 +2693,7 @@ if (!function_exists('csc_finance_export_statement_ajax')) {
         if (!current_user_can('manage_options')) {
             wp_die('Доступ запрещён');
         }
-        if (!check_ajax_referer('csc_finance_nonce', '_wpnonce', false)) {
-            wp_die('Ошибка безопасности');
-        }
+        csc_verify_ajax_nonce('csc_finance_nonce');
 
         $start_date = sanitize_text_field($_GET['start_date'] ?? date('Y-m-01'));
         $end_date = sanitize_text_field($_GET['end_date'] ?? date('Y-m-d'));
