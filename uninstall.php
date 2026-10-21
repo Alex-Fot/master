@@ -17,6 +17,8 @@
  * - Добавлено удаление всех транзиентов плагина, включая токены, кэши, блокировки и лимиты
  * - Добавлена очистка всех крон-задач плагина, включая будущие финансовые и кассовые
  * - Добавлена поддержка очистки данных в режиме WordPress Multisite
+ * - Включено удаление файлов плагина при деинсталляции:
+ *   wp-content/uploads/csc-uploads (фото отзывов, файлы мастеров) и wp-content/uploads/csc-backups (бэкапы)
  */
 
 // Защита: файл выполняется только при реальном удалении плагина
@@ -132,45 +134,34 @@ if (!function_exists('csc_uninstall_cleanup')) {
         wp_clear_scheduled_hook('csc_ledger_cron_hook');
 
         // ============================================================
-        // 4. ОЧИСТКА ЗАГРУЖЕННЫХ ФАЙЛОВ (ОПЦИОНАЛЬНО)
+        // 4. ОЧИСТКА ЗАГРУЖЕННЫХ ФАЙЛОВ
         // ============================================================
-        // По умолчанию пользовательские файлы (фото/видео клиентов) НЕ удаляются,
-        // чтобы избежать потери данных при ошибочной деинсталляции.
-        // Раскомментируйте блок ниже, если хотите удалять файлы при удалении плагина.
-        /*
+        // Удаляем все файлы, созданные плагином: загрузки клиентов/мастеров
+        // (wp-content/uploads/csc-uploads) и бэкапы (wp-content/uploads/csc-backups).
         $upload_dir = wp_upload_dir();
-        $csc_dir = $upload_dir['basedir'] . '/csc-uploads';
-        if (is_dir($csc_dir)) {
+
+        $csc_dirs_to_remove = [
+            $upload_dir['basedir'] . '/csc-uploads',
+            $upload_dir['basedir'] . '/csc-backups',
+        ];
+
+        foreach ($csc_dirs_to_remove as $dir) {
+            if (!is_dir($dir)) {
+                continue;
+            }
             $files = new RecursiveIteratorIterator(
-                new RecursiveDirectoryIterator($csc_dir, RecursiveDirectoryIterator::SKIP_DOTS),
+                new RecursiveDirectoryIterator($dir, RecursiveDirectoryIterator::SKIP_DOTS),
                 RecursiveIteratorIterator::CHILD_FIRST
             );
             foreach ($files as $file) {
                 if ($file->isDir()) {
-                    rmdir($file->getRealPath());
+                    @rmdir($file->getRealPath());
                 } else {
-                    unlink($file->getRealPath());
+                    @unlink($file->getRealPath());
                 }
             }
-            rmdir($csc_dir);
+            @rmdir($dir);
         }
-        // Также удаляем директорию бэкапов
-        $backup_dir = $upload_dir['basedir'] . '/csc-backups';
-        if (is_dir($backup_dir)) {
-            $files = new RecursiveIteratorIterator(
-                new RecursiveDirectoryIterator($backup_dir, RecursiveDirectoryIterator::SKIP_DOTS),
-                RecursiveIteratorIterator::CHILD_FIRST
-            );
-            foreach ($files as $file) {
-                if ($file->isDir()) {
-                    rmdir($file->getRealPath());
-                } else {
-                    unlink($file->getRealPath());
-                }
-            }
-            rmdir($backup_dir);
-        }
-        */
 
         // ============================================================
         // 5. УДАЛЕНИЕ ТРАНЗИЕНТОВ (временные данные)
