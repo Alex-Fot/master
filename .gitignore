@@ -45,3 +45,5 @@ package-lock.json
 # === WordPress-специфика: локальные артефакты, не относящиеся к плагину ===
 wp-cli.local.yml
 .phpunit.result.cache
+
+
