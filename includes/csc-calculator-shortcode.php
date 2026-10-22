@@ -1808,13 +1808,6 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('csc-progress-close').classList.remove('visible');
     }
 
-    function cscSetProgressStep(stepNum, state) {
-        const stepEl = document.getElementById('csc-step-' + stepNum);
-        if (!stepEl) return;
-        stepEl.classList.remove('active', 'completed', 'error');
-        if (state) stepEl.classList.add(state);
-    }
-
     function cscProgressStepActive(stepNum) {
         document.querySelectorAll('.csc-progress-step').forEach(step => {
             const sNum = parseInt(step.getAttribute('data-step'));
