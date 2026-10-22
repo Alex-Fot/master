@@ -1,0 +1,116 @@
+# Translation of Custom Service Calculator.
+# Copyright (C) 2026 Александр Федотов
+# This file is distributed under the same license as the Custom Service Calculator plugin.
+msgid ""
+msgstr ""
+"Language: ru_RU\n"
+"Project-Id-Version: Custom Service Calculator 9.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-10-23 00:00+0000\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"POT-Version: 1\n"
+"Language-Team: \n"
+"X-Generator: manual\n"
+"Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
+
+msgid "В работе"
+msgstr "В работе"
+
+msgid "Время вышло или заказ забрал другой мастер."
+msgstr "Время вышло или заказ забрал другой мастер."
+
+msgid "Вы отказались от заказа."
+msgstr "Вы отказались от заказа."
+
+msgid "Вы отклонили заказ."
+msgstr "Вы отклонили заказ."
+
+msgid "Вы приняли заказ!"
+msgstr "Вы приняли заказ!"
+
+msgid "Вы приняли этот заказ."
+msgstr "Вы приняли этот заказ."
+
+msgid "Выполнено"
+msgstr "Выполнено"
+
+msgid "Доступ запрещён"
+msgstr "Доступ запрещён"
+
+msgid "Заказ #%s успешно выполнен!"
+msgstr "Заказ #%s успешно выполнен!"
+
+msgid "Заказ выполнен"
+msgstr "Заказ выполнен"
+
+msgid "Заказ закреплен за вами!"
+msgstr "Заказ закреплен за вами!"
+
+msgid "Заказ не найден"
+msgstr "Заказ не найден"
+
+msgid "Заказ нельзя принять"
+msgstr "Заказ нельзя принять"
+
+msgid "Кабинет мастера"
+msgstr "Кабинет мастера"
+
+msgid "Неизвестная команда"
+msgstr "Неизвестная команда"
+
+msgid "Нет мастеров"
+msgstr "Нет мастеров"
+
+msgid "Ожидает"
+msgstr "Ожидает"
+
+msgid "Ожидает оплаты"
+msgstr "Ожидает оплаты"
+
+msgid "Отклонить"
+msgstr "Отклонить"
+
+msgid "Открыть кабинет"
+msgstr "Открыть кабинет"
+
+msgid "Отличная работа."
+msgstr "Отличная работа."
+
+msgid "Отменено"
+msgstr "Отменено"
+
+msgid "Ошибка: Заказ %s больше не существует."
+msgstr "Ошибка: Заказ %s больше не существует."
+
+msgid "Ошибка: время поиска истекло"
+msgstr "Ошибка: время поиска истекло"
+
+msgid "Перейти в кабинет"
+msgstr "Перейти в кабинет"
+
+msgid "Поздно! Заказ уже передан или отменен."
+msgstr "Поздно! Заказ уже передан или отменен."
+
+msgid "Поиск мастера"
+msgstr "Поиск мастера"
+
+msgid "Предложение больше не актуально."
+msgstr "Предложение больше не актуально."
+
+msgid "Принять"
+msgstr "Принять"
+
+msgid "Расширить заказ"
+msgstr "Расширить заказ"
+
+msgid "Статус изменен на Выполнено!"
+msgstr "Статус изменен на Выполнено!"
+
+msgid "Статус уже изменен."
+msgstr "Статус уже изменен."
+
+msgid "У вас есть 5 минут на принятие решения."
+msgstr "У вас есть 5 минут на принятие решения."
+

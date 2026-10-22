@@ -6,6 +6,8 @@
  * Author: Александр Федотов
  * Requires PHP: 7.4
  * Requires at least: 6.0
+ * Text Domain: csc
+ * Domain Path: /languages
  *
  * ИСПРАВЛЕНО / ДОБАВЛЕНО:
  * - Создание таблиц: wp_csc_orders, wp_csc_order_history, wp_csc_notifications
@@ -537,7 +539,7 @@ function csc_deactivate_service_worker() {
 // ============================================================
 // ЗАГРУЗКА ТЕКСТ-ДОМЕНА
 // ============================================================
-add_action('init', 'csc_load_textdomain');
+add_action('plugins_loaded', 'csc_load_textdomain', 5); // до init: строки нужны уже в cron/ajax/telegram-хуках
 function csc_load_textdomain() {
     load_plugin_textdomain('csc', false, dirname(plugin_basename(__FILE__)) . '/languages/');
 }
