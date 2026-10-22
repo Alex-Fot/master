@@ -27,7 +27,7 @@ if (!defined('ABSPATH')) exit;
 define('CSC_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('CSC_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('CSC_PLUGIN_VERSION', '9.0');
-define('CSC_DB_VERSION', '2.1'); // 2.1: UPDATE-миграция статусов на латинские ключи (3.5)
+define('CSC_DB_VERSION', '2.2'); // 2.2: перенос миграций БД в admin_init — колонки создаются при ОБНОВЛЕНИИ плагина, а не только при активации
 
 // 3.5: Словарь статусов — константы нужны уже в хуке активации (csc_migrate_statuses_to_latin)
 require_once plugin_dir_path(__FILE__) . 'includes/csc-status-i18n.php';
@@ -155,55 +155,12 @@ function csc_plugin_activate() {
     dbDelta($sql_history);
 
     // ============================================================
-    // МИГРАЦИЯ: Добавление колонок для существующих таблиц
+    // МИГРАЦИЯ: Добавление колонок/индексов для существующих таблиц
+    // ИСПРАВЛЕНО: логика вынесена в csc_run_db_migrations() и вызывается
+    // как отсюда (активация), так и из admin_init (при ОБНОВЛЕНИИ плагина).
+    // Функция идемпотентна: проверяет наличие колонок/индексов перед ALTER.
     // ============================================================
-    // ИСПРАВЛЕНО: Запрос SHOW COLUMNS выполняется только один раз
-    $existing_columns = $wpdb->get_col("SHOW COLUMNS FROM $table_orders", 0);
-
-    if (!in_array('city', $existing_columns)) {
-        $wpdb->query("ALTER TABLE $table_orders ADD COLUMN city VARCHAR(100) NOT NULL DEFAULT '' AFTER comment");
-    }
-    if (!in_array('city_name', $existing_columns)) {
-        $wpdb->query("ALTER TABLE $table_orders ADD COLUMN city_name VARCHAR(255) NOT NULL DEFAULT '' AFTER city");
-    }
-    if (!in_array('zone', $existing_columns)) {
-        $wpdb->query("ALTER TABLE $table_orders ADD COLUMN zone VARCHAR(100) NOT NULL DEFAULT '' AFTER city_name");
-    }
-    if (!in_array('completion_files', $existing_columns)) {
-        $wpdb->query("ALTER TABLE $table_orders ADD COLUMN completion_files TEXT AFTER files");
-    }
-
-    // Индекс на город для фильтрации при маршрутизации
-    $index_exists_city = $wpdb->get_results("SHOW INDEX FROM $table_orders WHERE Key_name = 'idx_city'");
-    if (empty($index_exists_city)) {
-        $wpdb->query("ALTER TABLE $table_orders ADD INDEX idx_city (city)");
-    }
-
-    // ============================================================
-    // ИНДЕКС НА phone + created_at (ускорение ЛК)
-    // ============================================================
-    $index_exists = $wpdb->get_results("SHOW INDEX FROM $table_orders WHERE Key_name = 'idx_phone_created'");
-    if (empty($index_exists)) {
-        $wpdb->query("ALTER TABLE $table_orders ADD INDEX idx_phone_created (phone, created_at)");
-    }
-	
-    // ============================================================
-    // НОВОЕ 5.0: КОЛОНКИ ГЕОДАННЫХ ДЛЯ КЛИЕНТОВ
-    // ============================================================
-    if (!in_array('client_lat', $existing_columns)) {
-        $wpdb->query("ALTER TABLE $table_orders ADD COLUMN client_lat DECIMAL(10,7) DEFAULT NULL AFTER address");
-    }
-    if (!in_array('client_lng', $existing_columns)) {
-        $wpdb->query("ALTER TABLE $table_orders ADD COLUMN client_lng DECIMAL(10,7) DEFAULT NULL AFTER client_lat");
-    }
-    if (!in_array('geocode_status', $existing_columns)) {
-        $wpdb->query("ALTER TABLE $table_orders ADD COLUMN geocode_status VARCHAR(20) NOT NULL DEFAULT '' AFTER client_lng");
-    }
-	if (!in_array('routing_circle', $existing_columns)) {
-    $wpdb->query("ALTER TABLE $table_orders ADD COLUMN routing_circle TINYINT(1) NOT NULL DEFAULT 1 AFTER routing_attempts");
-    }
-
-    update_option('csc_db_version', CSC_DB_VERSION, false);
+    csc_run_db_migrations();
 
     // --- Миграция данных из wp_options в таблицу ---
     csc_migrate_orders_to_table();
@@ -467,6 +424,8 @@ function csc_protect_uploads_dir() {
 // ============================================================
 // ПОДКЛЮЧЕНИЕ МОДУЛЕЙ
 // ============================================================
+require_once CSC_PLUGIN_DIR . 'includes/csc-db-migrations.php';
+
 // 3.5: единый словарь статусов (константы + нормализация) — подключается первым,
 // до csc-core-functions.php и остальных модулей, использующих CSC_STATUS_*.
 require_once CSC_PLUGIN_DIR . 'includes/csc-status-i18n.php';
