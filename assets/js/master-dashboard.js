@@ -2115,32 +2115,65 @@
         }
         if (!confirm('Удалить все уведомления? Это действие необратимо.')) return;
 
+        // ИСПРАВЛЕНО: убрана «тихая» подмена очистки отметкой «прочитано».
+        // Фолбэк на mark-read допускается ТОЛЬКО при явном ответе сервера,
+        // что эндпоинт не поддерживается (404 или success:false), и всегда
+        // сопровождается честным предупреждением пользователя.
+        // Ошибки авторизации (401/403) и серверные ошибки (5xx) фолбэка НЕ получают.
+        let statusCode = null;
+
         try {
-            // Пытаемся вызвать эндпоинт очистки
             const data = await apiCall('notifications/clear');
-            if (data.success) {
+            if (data && data.success) {
                 STATE.notifications = [];
                 STATE.unreadNotifCount = 0;
                 STATE.knownNotifIds = new Set();
                 updateNotifBadge();
                 renderNotifications();
                 showToast('success', 'Очищено', 'Все уведомления удалены');
-            } else {
-                // Если эндпоинт не реализован — помечаем все как прочитанные (фолбэк)
-                showToast('info', 'Информация', 'Сервер не поддерживает очистку. Помечаем как прочитанные.', 3000);
-                markAllNotificationsRead();
+                return;
             }
+            // Сервер вернул HTTP 200, но success:false — эндпоинт не выполнил очистку
+            statusCode = 200;
         } catch (e) {
-            // Если эндпоинт 404 — помечаем как прочитанные
             const statusMatch = (e.message || '').match(/HTTP (\d{3})/);
-            if (statusMatch && parseInt(statusMatch[1], 10) === 404) {
-                showToast('info', 'Информация', 'Очистка недоступна. Помечаем как прочитанные.', 3000);
-                markAllNotificationsRead();
-            } else {
-                console.warn('Clear notifications error:', e);
-                showToast('error', 'Ошибка', 'Не удалось очистить уведомления');
-            }
+            statusCode = statusMatch ? parseInt(statusMatch[1], 10) : null;
         }
+
+        // Разбор кода ответа — вместо прежней единой тихой подмены
+        if (statusCode === 401 || statusCode === 403) {
+            // Ошибка авторизации: ничего локально не меняем, предлагаем перезайти
+            console.error('[CSC] Clear notifications: auth error HTTP ' + statusCode);
+            showToast('error', 'Нет доступа',
+                'Сессия истекла или токен недействителен. Обновите страницу и повторите попытку.', 5000);
+            return;
+        }
+
+        if (statusCode !== null && statusCode >= 500) {
+            // Серверная ошибка: данные на сервере не тронуты, предупреждаем явно
+            console.error('[CSC] Clear notifications: server error HTTP ' + statusCode);
+            showToast('error', 'Ошибка сервера',
+                'Не удалось удалить уведомления на сервере (HTTP ' + statusCode + '). Попробуйте позже.', 5000);
+            return;
+        }
+
+        if (statusCode === 404) {
+            // Эндпоинт действительно отсутствует — единственный допустимый случай фолбэка
+            console.warn('[CSC] Clear endpoint not available (404). Falling back to mark-as-read.');
+            showToast('warning', 'Очистка недоступна',
+                'Сервер не поддерживает удаление уведомлений. Уведомления будут только помечены как прочитанные, а не удалены.', 6000);
+            await markAllNotificationsRead();
+            return;
+        }
+
+        // Иные ситуации (success:false, сетевые ошибки без кода и т.п.) —
+        // показываем точную причину, не подменяя действие молча
+        const reason = statusCode
+            ? 'Сервер отклонил запрос (HTTP ' + statusCode + ')'
+            : 'Сервер не подтвердил удаление';
+        console.warn('[CSC] Clear notifications failed:', reason);
+        showToast('error', 'Не удалось очистить',
+            reason + '. Уведомления не удалены. Попробуйте ещё раз.', 6000);
     }
 
     /**

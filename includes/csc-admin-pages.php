@@ -361,13 +361,34 @@ function csc_add_admin_menu() {
 // ============================================================
 // 3. СТРАНИЦА ГЛАВНЫХ НАСТРОЕК
 // ============================================================
+
+/**
+ * Разбор токена, присланного из формы админки (модуль csc-crypto.php).
+ * - Пустая строка или значение-маска (содержит '*') => оставить ранее сохранённый токен.
+ * - Иначе => зашифровать новый токен перед записью в БД.
+ *
+ * @param string $submitted Сырое значение из $_POST['telegram_token']
+ * @return string Значение для записи в опцию (зашифрованное либо открытое при недоступности OpenSSL)
+ */
+if (!function_exists('csc_resolve_submitted_token')) {
+    function csc_resolve_submitted_token($submitted) {
+        $old = get_option('csc_main_settings', []);
+        $old_token = is_array($old) ? ($old['telegram_token'] ?? '') : '';
+        // Поле не тронуто (пусто) или прислана маска — оставляем хранимый токен как есть
+        if ($submitted === '' || strpos($submitted, '*') !== false) {
+            return $old_token;
+        }
+        return function_exists('csc_prepare_token_for_storage')
+            ? csc_prepare_token_for_storage($submitted)
+            : $submitted;
+    }
+}
+
 function csc_main_settings_page() {
     if ($_POST && wp_verify_nonce($_POST['_wpnonce'], 'csc_main_settings_action')) {
         $settings = [
             // УЛУЧШЕНИЕ №1: Шифрование токена при сохранении
-            'telegram_token'    => function_exists('csc_prepare_token_for_storage')
-                                    ? csc_prepare_token_for_storage(sanitize_text_field($_POST['telegram_token'] ?? ''))
-                                    : sanitize_text_field($_POST['telegram_token'] ?? ''),
+            'telegram_token'    => csc_resolve_submitted_token(sanitize_text_field($_POST['telegram_token'] ?? '')),
             'telegram_chat_id'  => sanitize_text_field($_POST['telegram_chat_id'] ?? ''),
             'work_hours_start'  => intval($_POST['work_hours_start']),
             'work_hours_end'    => intval($_POST['work_hours_end']),
@@ -406,10 +427,15 @@ function csc_main_settings_page() {
     $s = get_option('csc_main_settings', []);
     $templates = isset($s['templates']) ? $s['templates'] : [];
 
-    // УЛУЧШЕНИЕ №1: расшифрованный токен для отображения в поле
-    $display_token = function_exists('csc_get_telegram_token')
-        ? csc_get_telegram_token()
-        : ($s['telegram_token'] ?? '');
+    // УЛУЧШЕНИЕ №1: в HTML админки показываем ТОЛЬКО маскированный токен,
+    // полный токен больше не светится в source-code страницы.
+    // Пустое поле при сохранении = «не менять текущий токен» (см. csc_resolve_submitted_token).
+    $raw_stored   = $s['telegram_token'] ?? '';
+    $display_token = '';
+    if (!empty($raw_stored)) {
+        $plain_for_mask = function_exists('csc_decrypt_token') ? csc_decrypt_token($raw_stored) : $raw_stored;
+        $display_token = function_exists('csc_mask_token') ? csc_mask_token($plain_for_mask) : $plain_for_mask;
+    }
     ?>
     <div class="wrap">
     <h1>Основные настройки калькулятора</h1>
@@ -422,8 +448,8 @@ function csc_main_settings_page() {
                 <tr>
                     <th>Бот Токен:</th>
                     <td>
-                        <input type="text" name="telegram_token" value="<?php echo esc_attr($display_token); ?>" class="regular-text">
-                        <p class="description">Токен шифруется перед сохранением в базу данных (AES-256-GCM).</p>
+                        <input type="text" name="telegram_token" value="" placeholder="<?php echo esc_attr($display_token ? ('Текущий: ' . $display_token) : '1234567890:AAH...'); ?>" class="regular-text" autocomplete="off">
+                        <p class="description">Токен шифруется перед сохранением в БД (AES-256-GCM).<?php if ($display_token): ?> Текущий: <code><?php echo esc_html($display_token); ?></code>. Оставьте поле пустым, чтобы не менять токен.<?php endif; ?></p>
                     </td>
                 </tr>
                 <tr>

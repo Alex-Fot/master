@@ -247,6 +247,7 @@ function csc_plugin_deactivate() {
     wp_clear_scheduled_hook('csc_routing_cron_hook');
     wp_clear_scheduled_hook('csc_reminders_cron_hook');
     wp_clear_scheduled_hook('csc_backup_cron_hook');
+    wp_clear_scheduled_hook('csc_history_cleanup_cron'); // ИСПРАВЛЕНО: очистка крона истории при деактивации
     wp_clear_scheduled_hook('csc_finance_cron_hook');
 
     // Push: удаление SW из корня

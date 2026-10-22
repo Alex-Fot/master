@@ -57,42 +57,12 @@ if (!function_exists('csc_tg_log')) {
     }
 }
 
-/**
- * ИСПРАВЛЕНО: кэшированный запрос списка мастеров.
- * Делегирует в единую реализацию из csc-order-routing.php
- * для устранения дублирования и рассинхронизации кэшей.
- */
-if (!function_exists('csc_get_masters_cached')) {
-    function csc_get_masters_cached($force_refresh = false) {
-        $cache_key = 'csc_masters_list_v2';
-        $masters = wp_cache_get($cache_key);
-        
-        if ($force_refresh || false === $masters) {
-            // Используем сортировку по рейтингу если доступна (единая логика)
-            if (function_exists('csc_get_masters_sorted_by_rating')) {
-                $masters = csc_get_masters_sorted_by_rating();
-            } elseif (function_exists('csc_get_masters')) {
-                $masters = csc_get_masters();
-            } else {
-                $masters = [];
-            }
-            wp_cache_set($cache_key, $masters, '', HOUR_IN_SECONDS);
-        }
-        
-        return $masters;
-    }
-}
-
-/**
- * ИСПРАВЛЕНО: кэшированный запрос списка заказов.
- * Использует единую функцию csc_get_all_orders() из csc-core-functions.php.
- * Обёртка для обратной совместимости.
- */
-if (!function_exists('csc_get_orders_cached')) {
-    function csc_get_orders_cached($force_refresh = false) {
-        return csc_get_all_orders($force_refresh);
-    }
-}
+// ============================================================
+// ИСПРАВЛЕНО: дубли функций csc_get_masters_cached() и csc_get_orders_cached()
+// удалены. Единые реализации находятся в includes/csc-order-routing.php
+// (загружается из ядра сразу после этого файла, вызовы идут внутри обработчиков
+// событий — к моменту выполнения order-routing уже загружен).
+// ============================================================
 
 /**
  * Отправка запроса в Telegram API с повторными попытками
@@ -322,7 +292,10 @@ if (!function_exists('csc_register_telegram_webhook')) {
 if (!function_exists('csc_tg_send_offer_to_master')) {
     function csc_tg_send_offer_to_master($order_number, $master_chat_id, $message_text) {
         $s = get_option('csc_main_settings', []);
-        $tg_token = $s['telegram_token'] ?? '';
+        // ИСПРАВЛЕНО: расшифровка токена через csc_get_telegram_token() (модуль csc-crypto.php)
+        $tg_token = function_exists('csc_get_telegram_token')
+            ? csc_get_telegram_token()
+            : ($s['telegram_token'] ?? '');
         
         if (!$tg_token || !$master_chat_id) {
             csc_tg_log('send_failed', ['reason' => 'missing_config', 'order' => $order_number]);
@@ -467,7 +440,10 @@ if (!function_exists('csc_handle_telegram_webhook')) {
         $from_user = $callback['from'] ?? [];
         
         $s = get_option('csc_main_settings', []);
-        $tg_token = $s['telegram_token'] ?? '';
+        // ИСПРАВЛЕНО: расшифровка токена через csc_get_telegram_token() (модуль csc-crypto.php)
+        $tg_token = function_exists('csc_get_telegram_token')
+            ? csc_get_telegram_token()
+            : ($s['telegram_token'] ?? '');
         
         $answer_callback = function($text, $show_alert = false) use ($tg_token, $callback_id) {
             csc_tg_api_request('answerCallbackQuery', [
@@ -884,11 +860,24 @@ if (!function_exists('csc_check_telegram_webhook')) {
  */
 add_action('update_option_csc_main_settings', 'csc_on_telegram_settings_saved', 10, 3);
 function csc_on_telegram_settings_saved($old_value, $new_value, $option) {
-    $old_token = $old_value['telegram_token'] ?? '';
-    $new_token = $new_value['telegram_token'] ?? '';
-    
+    static $running = false;
+    // Защита от рекурсии: миграция шифрования тоже обновляет эту опцию
+    if ($running) return;
+
+    $old_token = is_array($old_value) ? ($old_value['telegram_token'] ?? '') : '';
+    $new_token = is_array($new_value) ? ($new_value['telegram_token'] ?? '') : '';
+
+    // Значения в БД зашифрованы (AES-256-GCM) — сравниваем открытые токены,
+    // иначе миграция открытого токена в зашифрованный ложно сработает как смена токена
+    if (function_exists('csc_decrypt_token')) {
+        $old_token = csc_decrypt_token($old_token);
+        $new_token = csc_decrypt_token($new_token);
+    }
+
     // Если токен изменился — переустанавливаем webhook
     if ($old_token !== $new_token && !empty($new_token)) {
+        $running = true;
         csc_setup_telegram_webhook();
+        $running = false;
     }
 }
