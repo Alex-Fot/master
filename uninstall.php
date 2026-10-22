@@ -14,7 +14,9 @@
  *   - {prefix}csc_fiscal_receipts
  * - Добавлено удаление опций городов, модерации, регистрации мастеров, шифрования, миграций
  * - Добавлено удаление динамических опций уведомлений мастеров и платёжных данных
+ * - Добавлено удаление ВСЕХ опций плагина массовым запросом LIKE 'csc\_%' (гарантия чистоты БД)
  * - Добавлено удаление всех транзиентов плагина, включая токены, кэши, блокировки и лимиты
+ *   (включая «осиротевшие» rows таймаутов без парных транзиентов)
  * - Добавлена очистка всех крон-задач плагина, включая будущие финансовые и кассовые
  * - Добавлена поддержка очистки данных в режиме WordPress Multisite
  * - Включено удаление файлов плагина при деинсталляции:
@@ -56,7 +58,7 @@ if (!function_exists('csc_uninstall_cleanup')) {
         // 2. УДАЛЕНИЕ ВСЕХ ОПЦИЙ ПЛАГИНА
         // ============================================================
 
-        // Основные настройки (включая модерацию, города, шифрование, миграции)
+        // Явный список ключевых настроек (документирует состав данных плагина).
         $csc_options = [
             'csc_all_orders',
             'csc_main_settings',
@@ -101,20 +103,18 @@ if (!function_exists('csc_uninstall_cleanup')) {
             }
         }
 
-        // Удаление опций с динамическими префиксами
-        // Счётчики, пуш-подписки, брони, уведомления мастеров
-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'csc_order_counter_%'");
-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'csc_push_subs_%'");
-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'csc_booked_ranges_%'");
-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'csc_master_notifications_%'");
-        // Динамические платёжные данные (добавлено в 2.0)
-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'csc_transactions_%'");
-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'csc_invoices_%'");
-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'csc_fiscal_receipts_%'");
-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'csc_ledger_%'");
-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'csc_payment_%'");
-        // Опции модерации
-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'csc_moderation_%'");
+        // ГАРАНТИЙНАЯ ОЧИСТКА: все опции с префиксом csc_ одним запросом.
+        // Покрывает динамические ключи (csc_push_subs_*, csc_in_cabinet_*,
+        // csc_master_notifications_*, csc_order_counter_*, платёжные csc_*),
+        // любые будущие опции и явные ключи из списка выше — независимо от
+        // регистра/кодировки имени. Подчёркивания экранированы, чтобы LIKE
+        // не воспринимал '_' как односимвольный wildcard.
+        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'csc\\_%'");
+
+        // Site-опции мультисайта (wp_sitemeta) с префиксом csc_
+        if (is_multisite()) {
+            $wpdb->query("DELETE FROM {$wpdb->base_prefix}sitemeta WHERE meta_key LIKE 'csc\\_%'");
+        }
 
         // ============================================================
         // 3. УДАЛЕНИЕ CRON-ЗАДАЧ
@@ -169,17 +169,36 @@ if (!function_exists('csc_uninstall_cleanup')) {
         // ============================================================
         // 5. УДАЛЕНИЕ ТРАНЗИЕНТОВ (временные данные)
         // ============================================================
-        // Обычные транзиенты
-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_csc_%'");
-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_timeout_csc_%'");
+        // Универсальная очистка: любые транзиенты, чьё имя начинается с csc_
+        // (купоны, токены ЛК, geocache, лимиты входа/отзывов, рейтинги, кэши
+        // заказов/услуг, webhook-события и все будущие), плюс парные им rows
+        // '_transient_timeout_csc_*'. Завершение '%' покрывает и имена вида
+        // 'csc_<hash>' (md5/sha токенов), где после префикса нет подчёркивания.
+        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '\\_transient\\_csc\\_%'");
+        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '\\_transient\\_timeout\\_csc\\_%'");
+
         // Site-транзиенты (актуально для Multisite)
-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_site_transient_csc_%'");
-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_site_transient_timeout_csc_%'");
+        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '\\_site\\_transient\\_csc\\_%'");
+        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '\\_site\\_transient\\_timeout\\_csc\\_%'");
+
+        // «Осиротевшие» rows таймаутов: WordPress хранит срок жизни транзиента
+        // в отдельной записи '_transient_timeout_*', которая может пережить сам
+        // транзиент (например, удалён через delete_transient до истечения срока).
+        // Удаляем оставшиеся timeout-записи без парного транзиента.
+        $wpdb->query(
+            "DELETE t FROM {$wpdb->options} t
+             LEFT JOIN {$wpdb->options} o
+               ON o.option_name = CONCAT('_transient_', SUBSTRING(t.option_name, 21))
+             WHERE t.option_name LIKE '\\_transient\\_timeout\\_csc\\_%'
+               AND o.option_name IS NULL"
+        );
 
         // ============================================================
         // 6. УДАЛЕНИЕ ПОЛЬЗОВАТЕЛЬСКИХ РОЛЕЙ И CAPABILITIES
         // ============================================================
-        // Раскомментируйте и адаптируйте, если плагин регистрировал кастомные роли
+        // Плагин НЕ регистрирует собственные роли и capabilities (проверено
+        // по коду: add_role/add_cap в модулях отсутствуют). Блок оставлен как
+        // заготовка на будущее — раскомментируйте, если роли появятся:
         /*
         remove_role('csc_master');
         remove_role('csc_manager');
