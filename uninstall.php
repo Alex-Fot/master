@@ -119,19 +119,22 @@ if (!function_exists('csc_uninstall_cleanup')) {
         // ============================================================
         // 3. УДАЛЕНИЕ CRON-ЗАДАЧ
         // ============================================================
-        // Базовые хуки
-        wp_clear_scheduled_hook('csc_routing_cron_hook');
-        wp_clear_scheduled_hook('csc_reminders_cron_hook');
-        wp_clear_scheduled_hook('csc_backup_cron_hook');
-        wp_clear_scheduled_hook('csc_history_cleanup_cron');
+        // Список соответствует реальным хукам, регистрируемым плагином
+        // (см. custom-service-calculator.php csc_plugin_activate/deactivate).
+        $csc_cron_hooks = [
+            'csc_routing_cron_hook',       // маршрутизация заказов (каждую минуту)
+            'csc_reminders_cron_hook',     // напоминания (каждые 30 минут)
+            'csc_backup_cron_hook',        // резервные копии (ежедневно)
+            'csc_history_cleanup_cron',    // очистка истории заказов (ежедневно)
+            'csc_finance_cron_hook',       // финансовый ежедневный cron
+            'csc_webhook_cleanup_cron',    // очистка webhook-событий (ежедневно)
+            'csc_payment_check_cron',      // проверка статусов платежей (каждые 5 минут)
+            'csc_payment_stuck_notify_cron', // уведомления о зависших платежах (ежечасно)
+        ];
 
-        // Финансовые и кассовые хуки (добавлено в 2.0)
-        // ПРОВЕРЬТЕ ИМЕНА ХУКОВ: они должны совпадать с теми, что использовались в плагине
-        wp_clear_scheduled_hook('csc_financial_cron_hook');
-        wp_clear_scheduled_hook('csc_fiscal_cron_hook');
-        wp_clear_scheduled_hook('csc_invoices_cron_hook');
-        wp_clear_scheduled_hook('csc_transactions_cron_hook');
-        wp_clear_scheduled_hook('csc_ledger_cron_hook');
+        foreach ($csc_cron_hooks as $csc_cron_hook) {
+            wp_clear_scheduled_hook($csc_cron_hook);
+        }
 
         // ============================================================
         // 4. ОЧИСТКА ЗАГРУЖЕННЫХ ФАЙЛОВ
