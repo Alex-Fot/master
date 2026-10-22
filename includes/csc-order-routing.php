@@ -79,7 +79,7 @@ if (!function_exists('csc_check_routing_backup_queue')) {
         $all_orders = csc_get_all_orders(true);
 
         foreach ($backup_queue as $num => $entry) {
-            $order_exists = isset($all_orders[$num]) && ($all_orders[$num]['status'] ?? '') !== 'отменено';
+            $order_exists = isset($all_orders[$num]) && ($all_orders[$num]['status'] ?? '') !== CSC_STATUS_CANCELLED;
             $should_retry = ($now - $entry['last_attempt']) >= $retry_interval_seconds;
             $under_max_attempts = $entry['attempts_count'] < $max_attempts;
 
@@ -276,7 +276,7 @@ if (!function_exists('csc_is_master_free_at')) {
         }
 
         foreach ($all_orders as $order) {
-            if (($order['status'] ?? '') === 'отменено') continue;
+            if (($order['status'] ?? '') === CSC_STATUS_CANCELLED) continue;
             if (($order['master_id'] ?? '') !== $master_id) continue;
             if (($order['date'] ?? '') !== $date) continue;
 
@@ -439,7 +439,7 @@ if (!function_exists('csc_route_order_to_next')) {
         $routing_started = (int)($order['routing_started_at'] ?? time());
         if (time() - $routing_started > CSC_ROUTING_GLOBAL_TIMEOUT) {
             $all_orders[$order_number]['routing_status'] = 'timeout_global';
-            $all_orders[$order_number]['status'] = 'ошибка: время поиска истекло';
+            $all_orders[$order_number]['status'] = CSC_STATUS_ROUTING_TIMEOUT;
             csc_update_order($order_number, $all_orders[$order_number]);
             csc_cache_delete_orders();
 
@@ -630,7 +630,7 @@ if (!function_exists('csc_route_order_to_next')) {
         
             // Оба круга исчерпаны — уведомляем администратора
             $all_orders[$order_number]['routing_status'] = 'no_masters';
-            $all_orders[$order_number]['status'] = 'нет мастеров';
+            $all_orders[$order_number]['status'] = CSC_STATUS_NO_MASTERS;
             csc_update_order($order_number, $all_orders[$order_number]);
             csc_cache_delete_orders();
         
@@ -776,7 +776,7 @@ if (!function_exists('csc_admin_restart_routing')) {
         $all_orders[$order_number]['tg_message_id'] = null;
         $all_orders[$order_number]['routing_started_at'] = time();
         $all_orders[$order_number]['routing_attempts'] = 0;
-        $all_orders[$order_number]['status'] = 'ожидает';   // возвращаем в «Ожидают» мастеру
+        $all_orders[$order_number]['status'] = CSC_STATUS_PENDING;   // возвращаем в «Ожидают» мастеру
 
         csc_update_order($order_number, $all_orders[$order_number]);
 
@@ -849,7 +849,7 @@ if (!function_exists('csc_routing_accept_order')) {
         if (!isset($all_orders[$order_number])) return false;
 
         $all_orders[$order_number]['routing_status'] = 'assigned';
-        $all_orders[$order_number]['status'] = 'в работе';
+        $all_orders[$order_number]['status'] = CSC_STATUS_PROCESSING;
         $all_orders[$order_number]['accepted_by'] = $master_id;
         $all_orders[$order_number]['accepted_at'] = current_time('mysql');
         $all_orders[$order_number]['rejected_by'] = [];

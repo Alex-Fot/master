@@ -88,7 +88,8 @@ if (!function_exists('csc_db_row_to_order_array')) {
             'completion_files'    => json_decode($row['completion_files'] ?? '[]', true) ?: [],
             'master_id'           => $row['master_id'] ?? '',
             'current_candidate'   => $row['current_candidate'] ?? null,
-            'status'              => $row['status'] ?? 'ожидает',
+            // 3.5: нормализация при чтении — старые кириллические статусы приводятся к латинским ключам
+            'status'              => function_exists('csc_status_normalize') ? csc_status_normalize($row['status'] ?? CSC_STATUS_PENDING) : ($row['status'] ?? CSC_STATUS_PENDING),
             'routing_status'      => $row['routing_status'] ?? '',
             'rejected_by'         => json_decode($row['rejected_by'] ?? '[]', true) ?: [],
             'accepted_by'         => $row['accepted_by'] ?? null,
@@ -105,6 +106,8 @@ if (!function_exists('csc_db_row_to_order_array')) {
             'has_child_order'     => $row['has_child_order'] ?? null,
             'cancel_reason'       => $row['cancel_reason'] ?? null,
             'master_released'     => !empty($row['master_released']),
+            // 3.7: синхронизация со схемой — читаем колонку reminder_sent из БД
+            'reminder_sent'       => !empty($row['reminder_sent']),
             'created_at'          => $row['created_at'] ?? '',
             'completed_at'        => $row['completed_at'] ?? null,
             'cancelled_at'        => $row['cancelled_at'] ?? null,
@@ -148,7 +151,7 @@ if (!function_exists('csc_order_array_to_db_row')) {
             'completion_files'    => wp_json_encode($order['completion_files'] ?? []),
             'master_id'           => $order['master_id'] ?? '',
             'current_candidate'   => $order['current_candidate'] ?? null,
-            'status'              => $order['status'] ?? 'ожидает',
+            'status'              => $order['status'] ?? CSC_STATUS_PENDING,
             'routing_status'      => $order['routing_status'] ?? '',
             'rejected_by'         => wp_json_encode($order['rejected_by'] ?? []),
             'accepted_by'         => $order['accepted_by'] ?? null,
@@ -165,6 +168,8 @@ if (!function_exists('csc_order_array_to_db_row')) {
             'has_child_order'     => $order['has_child_order'] ?? null,
             'cancel_reason'       => $order['cancel_reason'] ?? null,
             'master_released'     => !empty($order['master_released']) ? 1 : 0,
+            // 3.7: синхронизация с CREATE TABLE — поле напоминания сохраняется в БД
+            'reminder_sent'       => !empty($order['reminder_sent']) ? 1 : 0,
             'created_at'          => $order['created_at'] ?? current_time('mysql'),
             'completed_at'        => $order['completed_at'] ?? null,
             'cancelled_at'        => $order['cancelled_at'] ?? null,
@@ -747,7 +752,7 @@ $all_orders[] = $order;
 $busy = [];
 $busy_all = [];
 foreach ($all_orders as $order) {
-if (($order['status'] ?? '') === 'отменено') continue;
+if (($order['status'] ?? '') === CSC_STATUS_CANCELLED) continue;
 $order_start_str = ($order['date'] ?? '') . ' ' . ($order['time'] ?? '00:00');
 try {
 $dt_start = new DateTime($order_start_str, $tz);

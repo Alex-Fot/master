@@ -530,7 +530,7 @@ if (!function_exists('csc_submit_form_handler')) {
         $order_number = function_exists('csc_generate_unique_order_number') 
             ? csc_generate_unique_order_number() 
             : 'CSC-' . date('YmdHis') . '-' . wp_rand(10000, 99999);
-        $status = ($payment_method === 'sbp') ? 'ожидает оплаты' : 'поиск мастера';
+        $status = ($payment_method === 'sbp') ? CSC_STATUS_AWAITING_PAYMENT : CSC_STATUS_SEARCHING;
         
         // Генерация auth_token для cookie-авторизации в ЛК
         $auth_token = wp_generate_password(32, false);
@@ -685,7 +685,7 @@ if (!function_exists('csc_submit_form_handler')) {
         }
         
         // 8. ЗАПУСК МАРШРУТИЗАЦИИ ЗАЯВКИ
-        if ($status !== 'ожидает оплаты' && function_exists('csc_start_order_routing')) {
+        if ($status !== CSC_STATUS_AWAITING_PAYMENT && function_exists('csc_start_order_routing')) {
             csc_start_order_routing($order_number);
         }
         
@@ -729,7 +729,7 @@ if (!function_exists('csc_submit_form_handler')) {
             'auth_token' => $auth_token
         ];
         
-        if ($status === 'ожидает оплаты' && !empty($s['sbp_redirect_url'])) {
+        if ($status === CSC_STATUS_AWAITING_PAYMENT && !empty($s['sbp_redirect_url'])) {
             $response['redirect_url'] = add_query_arg(['order_number' => $order_number, 'total' => $final_total], $s['sbp_redirect_url']);
         }
         
@@ -840,9 +840,9 @@ if (!function_exists('csc_get_user_orders_handler')) {
         foreach ($user_orders as $num => $order) {
             $status = mb_strtolower($order['status'] ?? '');
             $is_active = !empty($order['cancelled_at']) || 
-                         $status === 'отменено' || 
-                         $status === 'выполнено' || 
-                         $status === 'завершено' ? false : true;
+                         $status === CSC_STATUS_CANCELLED || 
+                         $status === CSC_STATUS_COMPLETED || 
+                         $status === CSC_STATUS_COMPLETED ? false : true;
             
             $order['is_active'] = $is_active;
             $formatted_orders[] = $order;
@@ -915,7 +915,7 @@ if (!function_exists('csc_cancel_order_handler')) {
             return;
         }
         
-        if (($order['status'] ?? '') === 'отменено') {
+        if (($order['status'] ?? '') === CSC_STATUS_CANCELLED) {
             wp_send_json_error(['message' => 'Заказ уже отменен']);
             return;
         }
@@ -923,7 +923,7 @@ if (!function_exists('csc_cancel_order_handler')) {
         // УЛУЧШЕНИЕ №3: Сохраняем старый статус ДО изменения для истории
         $old_status = $order['status'] ?? '';
 
-        $order['status'] = 'отменено';
+        $order['status'] = CSC_STATUS_CANCELLED;
         $order['routing_status'] = 'cancelled';
         $order['cancelled_at'] = current_time('mysql');
         $order['cancel_reason'] = $reason;
@@ -944,7 +944,7 @@ if (!function_exists('csc_cancel_order_handler')) {
             csc_log_status_change(
                 $num,
                 $old_status,
-                'отменено',
+                CSC_STATUS_CANCELLED,
                 'customer',
                 $phone,
                 'Отмена клиентом через личный кабинет. Причина: ' . $reason
@@ -1124,7 +1124,7 @@ if (!function_exists('csc_get_analytics_data_handler')) {
         }
 
         // Допустимые значения фильтров (whitelist)
-        $allowed_statuses = ['all', 'выполнено', 'в работе', 'ожидает', 'отменено'];
+        $allowed_statuses = ['all', CSC_STATUS_COMPLETED, CSC_STATUS_PROCESSING, CSC_STATUS_PENDING, CSC_STATUS_CANCELLED];
         if (!in_array($status_filter, $allowed_statuses, true)) {
             wp_send_json_error(['message' => 'Некорректный статус фильтра']);
         }
@@ -1175,7 +1175,7 @@ if (!function_exists('csc_get_analytics_data_handler')) {
         foreach ($all_orders as $order) {
             $o_date   = $order['date'] ?? '';
             $o_master = $order['master_id'] ?? ($order['accepted_by'] ?? 'master_default');
-            $o_status = $order['status'] ?? 'ожидает';
+            $o_status = $order['status'] ?? CSC_STATUS_PENDING;
             $o_total  = floatval($order['total'] ?? 0);
             $o_time   = $order['time'] ?? '00:00';
             $o_rating = $order['review']['rating'] ?? null;
@@ -1192,11 +1192,11 @@ if (!function_exists('csc_get_analytics_data_handler')) {
             if ($master_id_filter !== 'all' && $o_master !== $master_id_filter) continue;
 
             // --- ОБРАБОТКА ОТМЕНЁННЫХ ЗАКАЗОВ (правильная логика) ---
-            if ($o_status === 'отменено') {
+            if ($o_status === CSC_STATUS_CANCELLED) {
                 $kpi['cancelled_count']++;
                 $kpi['lost_revenue'] += $o_total;
                 // Если фильтр не "отменено" и не "all" — пропускаем
-                if ($status_filter !== 'отменено' && $status_filter !== 'all') continue;
+                if ($status_filter !== CSC_STATUS_CANCELLED && $status_filter !== 'all') continue;
                 // Если фильтр "all" — считаем только в счётчике отменённых, не в total
                 if ($status_filter === 'all') continue;
             } else {
@@ -1224,7 +1224,7 @@ if (!function_exists('csc_get_analytics_data_handler')) {
             // --- ОСНОВНЫЕ KPI ---
             $kpi['total_orders']++;
             // Выручка считается только для выполненных заказов
-            if ($o_status === 'выполнено') {
+            if ($o_status === CSC_STATUS_COMPLETED) {
                 $kpi['total_revenue'] += $o_total;
             } else {
                 // Для "в работе" и "ожидает" считаем потенциальную выручку
@@ -1398,7 +1398,7 @@ if (!function_exists('csc_bulk_update_status_handler')) {
             wp_send_json_error(['message' => 'Не выбраны заказы или статус']);
         }
         
-        $valid_statuses = ['ожидает', 'в работе', 'выполнено', 'отменено'];
+        $valid_statuses = [CSC_STATUS_PENDING, CSC_STATUS_PROCESSING, CSC_STATUS_COMPLETED, CSC_STATUS_CANCELLED];
         if (!in_array($new_status, $valid_statuses)) {
             wp_send_json_error(['message' => 'Недопустимый статус']);
         }
@@ -1413,10 +1413,10 @@ if (!function_exists('csc_bulk_update_status_handler')) {
 
         foreach ($order_numbers as $num) {
             if (isset($all_orders[$num])) {
-                $old_status = $all_orders[$num]['status'] ?? 'ожидает';
+                $old_status = $all_orders[$num]['status'] ?? CSC_STATUS_PENDING;
                 $all_orders[$num]['status'] = $new_status;
                 
-                if ($new_status === 'отменено') {
+                if ($new_status === CSC_STATUS_CANCELLED) {
                     $all_orders[$num]['routing_status'] = 'cancelled';
                     $all_orders[$num]['cancelled_at'] = current_time('mysql');
                 }
@@ -1475,7 +1475,7 @@ if (!function_exists('csc_bulk_update_status_handler')) {
                     }
                 }
                 
-                if ($master_id && function_exists('csc_send_tg_notification') && in_array($new_status, ['в работе', 'выполнено', 'отменено'])) {
+                if ($master_id && function_exists('csc_send_tg_notification') && in_array($new_status, [CSC_STATUS_PROCESSING, CSC_STATUS_COMPLETED, CSC_STATUS_CANCELLED])) {
                     $m_list = function_exists('csc_get_masters') ? csc_get_masters() : [];
                     if (isset($m_list[$master_id]) && !empty($m_list[$master_id]['tg_chat_id'])) {
                         csc_send_tg_notification($m_list[$master_id]['tg_chat_id'], "📦 Изменение статуса #$num", "Администратор установил статус: \"$new_status\"", $num, 'master', $master_id, null);

@@ -165,8 +165,11 @@ if (!function_exists('csc_trigger_status_changed')) {
         $client_name = $order['name'] ?? 'Клиент';
         $master_id   = $order['master_id'] ?? '';
         
+        // 3.5: защита от старых кириллических значений статуса при сравнении
+        $to = function_exists('csc_status_normalize') ? csc_status_normalize($to) : $to;
+
         switch ($to) {
-            case 'в работе':
+            case CSC_STATUS_PROCESSING:
                 csc_notify_customer($phone,
                     'Заказ в работе',
                     "Ваш заказ #{$order_number} принят в работу. Мастер выехал к вам.",
@@ -181,8 +184,8 @@ if (!function_exists('csc_trigger_status_changed')) {
                 }
                 break;
                 
-            case 'выполнено':
-            case 'завершено':
+            case CSC_STATUS_COMPLETED:
+            case CSC_STATUS_COMPLETED:
                 $total = floatval($order['total'] ?? 0);
                 csc_notify_customer($phone,
                     'Заказ выполнен',
@@ -201,7 +204,7 @@ if (!function_exists('csc_trigger_status_changed')) {
                 do_action('csc_order_completed_finance', $order_number, $order);
                 break;
                 
-            case 'отменено':
+            case CSC_STATUS_CANCELLED:
                 $cancel_reason = $reason ?: 'причина не указана';
                 csc_notify_customer($phone,
                     'Заказ отменён',

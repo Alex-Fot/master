@@ -548,7 +548,7 @@ if (!function_exists('csc_handle_telegram_webhook')) {
             } else {
                 // Фолбэк: прямое обновление
                 $all_orders[$order_number]['routing_status'] = 'assigned';
-                $all_orders[$order_number]['status'] = 'в работе';
+                $all_orders[$order_number]['status'] = CSC_STATUS_PROCESSING;
                 $all_orders[$order_number]['accepted_by'] = $order['current_candidate'];
                 $all_orders[$order_number]['accepted_at'] = current_time('mysql');
                 $all_orders[$order_number]['rejected_by'] = []; // Очистка для аналитики
@@ -624,7 +624,7 @@ if (!function_exists('csc_handle_telegram_webhook')) {
             $old_status = $order['status'] ?? '';
             $master_id = $order['master_id'] ?? $order['accepted_by'] ?? '';
             
-            $all_orders[$order_number]['status'] = 'выполнено';
+            $all_orders[$order_number]['status'] = CSC_STATUS_COMPLETED;
             $all_orders[$order_number]['routing_status'] = 'completed';
             $all_orders[$order_number]['completed_at'] = current_time('mysql');
             
@@ -633,7 +633,7 @@ if (!function_exists('csc_handle_telegram_webhook')) {
             csc_cache_delete_orders();
 
             // === ДОБАВЛЕН ВЫЗОВ ХУКА ===
-            do_action('csc_order_status_changed', $order_number, $old_status, 'выполнено', 'master', $master_id, '');
+            do_action('csc_order_status_changed', $order_number, $old_status, CSC_STATUS_COMPLETED, 'master', $master_id, '');
 
             // ИСПРАВЛЕНО: логирование перехода в таблицу истории (УЛУЧШЕНИЕ №3).
             // Раньше переход «выполнено» через Telegram-кнопку не фиксировался.
@@ -641,7 +641,7 @@ if (!function_exists('csc_handle_telegram_webhook')) {
                 csc_log_status_change(
                     $order_number,
                     $old_status,
-                    'выполнено',
+                    CSC_STATUS_COMPLETED,
                     'master',
                     $master_id,
                     'Мастер отметил заказ выполненным через Telegram кнопку'

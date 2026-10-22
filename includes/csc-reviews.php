@@ -153,7 +153,7 @@ if (!function_exists('csc_submit_review_handler_pro')) {
             return;
         }
 
-        if (($order['status'] ?? '') !== 'выполнено') {
+        if (($order['status'] ?? '') !== CSC_STATUS_COMPLETED) {
             wp_send_json_error(['message' => 'Оценить можно только завершенный заказ']);
             return;
         }

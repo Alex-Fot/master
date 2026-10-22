@@ -407,7 +407,7 @@ $limit_ts = ($months > 0) ? strtotime("-$months months") : 0;
 
 foreach($all as $o) {
 if(isset($o['phone']) && $o['phone'] === $phone) {
-if(isset($o['status']) && $o['status'] !== 'отменено') {
+if(isset($o['status']) && $o['status'] !== CSC_STATUS_CANCELLED) {
 // ИСПРАВЛЕНО: конвертируем created_at из локального времени в UTC
 $created_at_utc = get_date_from_gmt($o['created_at'], 'U');
 if($created_at_utc >= $limit_ts) $cnt++;

@@ -300,7 +300,7 @@ if (!function_exists('csc_find_free_master')) {
 
             foreach ($all_orders as $order) {
                 // Исключаем отменённые и завершённые заказы
-                $ignored_statuses = array('отменено', 'выполнено', 'отклонено', 'завершено', 'completed', 'cancelled', 'rejected');
+                $ignored_statuses = array(CSC_STATUS_CANCELLED, CSC_STATUS_COMPLETED, 'rejected');
                 if (in_array($order['status'] ?? '', $ignored_statuses)) continue;
 
                 if (($order['date'] ?? '') !== $date) continue;
@@ -2010,8 +2010,8 @@ if (!function_exists('csc_get_master_details_ajax')) {
             $stats_row = $wpdb->get_row($wpdb->prepare("
                 SELECT 
                     COUNT(*) as total,
-                    SUM(CASE WHEN status IN ('выполнено', 'completed', 'завершено') THEN 1 ELSE 0 END) as completed,
-                    SUM(CASE WHEN status IN ('отменено', 'cancelled', 'отклонено') THEN 1 ELSE 0 END) as cancelled
+                    SUM(CASE WHEN status IN ('completed') THEN 1 ELSE 0 END) as completed,
+                    SUM(CASE WHEN status IN ('cancelled', 'canceled') THEN 1 ELSE 0 END) as cancelled
                 FROM {$table} 
                 WHERE master_id = %s
             ", $mid), ARRAY_A);
@@ -2060,8 +2060,8 @@ if (!function_exists('csc_get_master_details_ajax')) {
                 $all_orders = get_option('csc_all_orders', array());
             }
 
-            $completed_statuses = array('выполнено', 'completed', 'завершено');
-            $cancelled_statuses = array('отменено', 'cancelled', 'отклонено');
+            $completed_statuses = array(CSC_STATUS_COMPLETED, 'completed', CSC_STATUS_COMPLETED);
+            $cancelled_statuses = array(CSC_STATUS_CANCELLED, 'rejected'); // 3.5: латинские ключи; 'отклонено' покрывается read-normalizer'ом
 
             $master_orders = array();
             foreach ($all_orders as $order) {

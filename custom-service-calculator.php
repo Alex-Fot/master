@@ -6,6 +6,8 @@
  * Author: Александр Федотов
  * Requires PHP: 7.4
  * Requires at least: 6.0
+ * Text Domain: csc
+ * Domain Path: /languages
  *
  * ИСПРАВЛЕНО / ДОБАВЛЕНО:
  * - Создание таблиц: wp_csc_orders, wp_csc_order_history, wp_csc_notifications
@@ -25,7 +27,10 @@ if (!defined('ABSPATH')) exit;
 define('CSC_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('CSC_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('CSC_PLUGIN_VERSION', '9.0');
-define('CSC_DB_VERSION', '2.0');
+define('CSC_DB_VERSION', '2.1'); // 2.1: UPDATE-миграция статусов на латинские ключи (3.5)
+
+// 3.5: Словарь статусов — константы нужны уже в хуке активации (csc_migrate_statuses_to_latin)
+require_once plugin_dir_path(__FILE__) . 'includes/csc-status-i18n.php';
 
 // ============================================================
 // ХУК АКТИВАЦИИ
@@ -69,7 +74,7 @@ function csc_plugin_activate() {
         completion_files TEXT,
         master_id VARCHAR(100) NOT NULL DEFAULT '',
         current_candidate VARCHAR(100) DEFAULT NULL,
-        status VARCHAR(50) NOT NULL DEFAULT 'ожидает',
+        status VARCHAR(50) NOT NULL DEFAULT 'pending',
         routing_status VARCHAR(50) NOT NULL DEFAULT '',
         rejected_by TEXT,
         accepted_by VARCHAR(100) DEFAULT NULL,
@@ -85,6 +90,7 @@ function csc_plugin_activate() {
         has_child_order VARCHAR(50) DEFAULT NULL,
         cancel_reason TEXT,
         master_released TINYINT(1) NOT NULL DEFAULT 0,
+        reminder_sent TINYINT(1) NOT NULL DEFAULT 0,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         completed_at DATETIME DEFAULT NULL,
         cancelled_at DATETIME DEFAULT NULL,
@@ -202,6 +208,9 @@ function csc_plugin_activate() {
     // --- Миграция данных из wp_options в таблицу ---
     csc_migrate_orders_to_table();
 
+    // --- 3.5: UPDATE-миграция кириллических статусов в латинские ключи (одноразово) ---
+    csc_migrate_statuses_to_latin();
+
     // ============================================================
     // РЕГИСТРАЦИЯ КРОН-ЗАДАЧ
     // ============================================================
@@ -266,6 +275,71 @@ function csc_add_custom_cron_intervals($schedules) {
 }
 
 // ============================================================
+// 3.5: UPDATE-МИГРАЦИЯ СТАТУСОВ ЗАКАЗОВ НА ЛАТИНСКИЕ КЛЮЧИ
+// ============================================================
+if (!function_exists('csc_migrate_statuses_to_latin')) {
+    /**
+     * Одноразовый перевод кириллических статусов в латинские ключи
+     * в таблицах csc_orders (status) и csc_order_history (from_status/to_status).
+     * Флаг: csc_statuses_latin_migrated. Безопасно повторять (UPDATE не трогает латинские значения).
+     */
+    function csc_migrate_statuses_to_latin() {
+        global $wpdb;
+        if (get_option('csc_statuses_latin_migrated', false)) return;
+
+        $map = [
+            'ожидает'                    => CSC_STATUS_PENDING,
+            'поиск мастера'              => CSC_STATUS_SEARCHING,
+            'ожидает оплаты'             => CSC_STATUS_AWAITING_PAYMENT,
+            'в работе'                   => CSC_STATUS_PROCESSING,
+            'выполнено'                  => CSC_STATUS_COMPLETED,
+            'завершено'                  => CSC_STATUS_COMPLETED,
+            'отменено'                   => CSC_STATUS_CANCELLED,
+            'нет мастеров'               => CSC_STATUS_NO_MASTERS,
+            'ошибка: время поиска истекло' => CSC_STATUS_ROUTING_TIMEOUT,
+        ];
+
+        $tables = [
+            $wpdb->prefix . 'csc_orders'        => ['status'],
+            $wpdb->prefix . 'csc_order_history' => ['from_status', 'to_status'],
+        ];
+
+        foreach ($tables as $table => $columns) {
+            // Таблица может ещё не существовать (первая активация) — проверяем наличие
+            if ($wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table)) !== $table) continue;
+            foreach ($columns as $col) {
+                foreach ($map as $old => $new) {
+                    $wpdb->query($wpdb->prepare(
+                        "UPDATE {$table} SET {$col} = %s WHERE {$col} = %s",
+                        $new, $old
+                    ));
+                }
+            }
+        }
+
+        // Миграция legacy-статусов из опций (до переноса в таблицу), если они ещё не перенесены
+        $all_orders = get_option('csc_all_orders', []);
+        if (!empty($all_orders)) {
+            $changed = false;
+            foreach ($all_orders as $num => &$o) {
+                if (!isset($o['status'])) continue;
+                $normalized = csc_status_normalize($o['status']);
+                if ($normalized !== $o['status']) {
+                    $o['status'] = $normalized;
+                    $changed = true;
+                }
+            }
+            unset($o);
+            if ($changed) update_option('csc_all_orders', $all_orders);
+        }
+
+        delete_option('csc_cache_all_orders'); // сброс кэча заказов после миграции (на случай если он option-based)
+        if (function_exists('csc_cache_delete_orders')) csc_cache_delete_orders(); // transient-кэш списка заказов
+        update_option('csc_statuses_latin_migrated', true, false);
+    }
+}
+
+// ============================================================
 // МИГРАЦИЯ ЗАКАЗОВ ИЗ wp_options В ТАБЛИЦУ
 // ============================================================
 // ИСПРАВЛЕНО: Обертка function_exists для предотвращения Fatal Error при дублировании в csc-core-functions.php
@@ -309,7 +383,7 @@ if (!function_exists('csc_migrate_orders_to_table')) {
                 'completion_files'   => is_string($o['completion_files'] ?? null) ? $o['completion_files'] : wp_json_encode($o['completion_files'] ?? []),
                 'master_id'          => $o['master_id'] ?? '',
                 'current_candidate'  => $o['current_candidate'] ?? null,
-                'status'             => $o['status'] ?? 'ожидает',
+                'status'             => $o['status'] ?? CSC_STATUS_PENDING,
                 'routing_status'     => $o['routing_status'] ?? '',
                 'rejected_by'        => is_string($o['rejected_by'] ?? null) ? $o['rejected_by'] : wp_json_encode($o['rejected_by'] ?? []),
                 'accepted_by'        => $o['accepted_by'] ?? null,
@@ -335,7 +409,7 @@ if (!function_exists('csc_migrate_orders_to_table')) {
             $wpdb->insert($wpdb->prefix . 'csc_order_history', [
                 'order_number' => $order_number,
                 'from_status'  => '',
-                'to_status'    => $o['status'] ?? 'ожидает',
+                'to_status'    => $o['status'] ?? CSC_STATUS_PENDING,
                 'changed_by'   => 'system',
                 'changed_by_id'=> '',
                 'reason'       => 'Миграция из опций при обновлении плагина',
@@ -392,6 +466,10 @@ function csc_protect_uploads_dir() {
 // ============================================================
 // ПОДКЛЮЧЕНИЕ МОДУЛЕЙ
 // ============================================================
+// 3.5: единый словарь статусов (константы + нормализация) — подключается первым,
+// до csc-core-functions.php и остальных модулей, использующих CSC_STATUS_*.
+require_once CSC_PLUGIN_DIR . 'includes/csc-status-i18n.php';
+
 require_once CSC_PLUGIN_DIR . 'includes/csc-core-functions.php';
 require_once CSC_PLUGIN_DIR . 'includes/csc-admin-pages.php';
 require_once CSC_PLUGIN_DIR . 'includes/csc-calculator-shortcode.php';
@@ -461,131 +539,12 @@ function csc_deactivate_service_worker() {
 // ============================================================
 // ЗАГРУЗКА ТЕКСТ-ДОМЕНА
 // ============================================================
-add_action('init', 'csc_load_textdomain');
+add_action('plugins_loaded', 'csc_load_textdomain', 5); // до init: строки нужны уже в cron/ajax/telegram-хуках
 function csc_load_textdomain() {
     load_plugin_textdomain('csc', false, dirname(plugin_basename(__FILE__)) . '/languages/');
 }
 
-// ОБРАБОТЧИК ОТЗЫВОВ: единственный хук wp_ajax_csc_submit_review
-// регистрируется в includes/csc-reviews.php (csc_submit_review_handler_pro).
-// Старый дубль csc_submit_review_handler удалён (3.4) — он перекрывал
-// новую защиту (nonce, rate-limit, фото) из-за раннего require этого файла.
-
-/**
- * Парсинг данных заказа из таблицы 1_cc_orders
- */
-function csc_parse_order_data($order) {
-    $data = [
-        'order_number' => 'CSC-' . str_pad($order->id, 5, '0', STR_PAD_LEFT),
-        'date' => '',
-        'time' => '',
-        'status' => '',
-        'total' => 0,
-        'address' => '',
-        'services' => [],
-        'cancelled_at' => null,
-        'review' => null
-    ];
-    
-    // Дата и время из created_at
-    if (!empty($order->created_at)) {
-        $timestamp = strtotime($order->created_at);
-        $data['date'] = date('Y-m-d', $timestamp);
-        $data['time'] = date('H:i', $timestamp);
-    }
-    
-    // Статус
-    $status_map = [
-        'pending' => 'Ожидает',
-        'processing' => 'В работе',
-        'completed' => 'Выполнено',
-        'cancelled' => 'Отменено',
-        'canceled' => 'Отменено',
-        'paid' => 'Оплачено',
-        'unpaid' => 'Ожидает оплаты',
-    ];
-    $data['status'] = $status_map[$order->status] ?? $order->status;
-    
-    // Проверяем отмену
-    if ($order->status === 'cancelled' || $order->status === 'canceled') {
-        $data['cancelled_at'] = $order->updated_at ?: $order->created_at;
-    }
-    
-    // Парсим form_details (может быть JSON или serialized)
-    $form_data = [];
-    if (!empty($order->form_details)) {
-        $decoded = json_decode($order->form_details, true);
-        if (json_last_error() === JSON_ERROR_NONE) {
-            $form_data = $decoded;
-        } else {
-            $form_data = maybe_unserialize($order->form_details);
-        }
-    }
-    
-    // Парсим order_details
-    $order_data_raw = [];
-    if (!empty($order->order_details)) {
-        $decoded = json_decode($order->order_details, true);
-        if (json_last_error() === JSON_ERROR_NONE) {
-            $order_data_raw = $decoded;
-        } else {
-            $order_data_raw = maybe_unserialize($order->order_details);
-        }
-    }
-    
-    // Извлекаем адрес из данных формы
-    if (is_array($form_data)) {
-        foreach ($form_data as $key => $value) {
-            $key_lower = mb_strtolower((string)$key);
-            if (strpos($key_lower, 'адрес') !== false || strpos($key_lower, 'address') !== false) {
-                $data['address'] = is_array($value) ? implode(', ', $value) : (string)$value;
-            }
-        }
-    }
-    
-    // Извлекаем услуги и сумму из order_details
-    if (is_array($order_data_raw)) {
-        // Ищем сумму
-        foreach (['total', 'amount', 'price', 'sum', 'cost', 'итого', 'сумма'] as $key) {
-            if (isset($order_data_raw[$key])) {
-                $data['total'] = (float)$order_data_raw[$key];
-                break;
-            }
-        }
-        
-        // Ищем услуги
-        foreach (['services', 'items', 'products', 'услуги', 'сервисы'] as $key) {
-            if (isset($order_data_raw[$key])) {
-                if (is_array($order_data_raw[$key])) {
-                    $data['services'] = array_map(function($item) {
-                        if (is_array($item)) {
-                            return $item['name'] ?? $item['title'] ?? implode(' ', $item);
-                        }
-                        return (string)$item;
-                    }, $order_data_raw[$key]);
-                } elseif (is_string($order_data_raw[$key])) {
-                    $data['services'] = array_map('trim', explode(',', $order_data_raw[$key]));
-                }
-                break;
-            }
-        }
-    }
-    
-    // Если услуги не найдены в order_details, используем calc_title
-    if (empty($data['services']) && !empty($order->calc_title)) {
-        $data['services'] = [$order->calc_title];
-    }
-    
-    // Если сумма не найдена, пробуем извлечь из order_details как строку
-    if ($data['total'] === 0 && !empty($order->order_details)) {
-        if (preg_match('/(\d+[\.,]?\d*)\s*(руб|₽|rub)/iu', $order->order_details, $matches)) {
-            $data['total'] = (float)str_replace(',', '.', $matches[1]);
-        }
-    }
-    
-    return $data;
-}
-
-function csc_generate_auth_token($phone) {
-    return hash('sha256', $phone . wp_salt('nonce'));
-}
+// МЁРТВЫЙ КОД УДАЛЁН (п. 3.6): неиспользуемые функции
+// csc_parse_order_data() и csc_generate_auth_token() — ни одного вызова/хука в проекте.
+// Дубль обработчика отзывов удалён ранее (п. 3.4); единственный обработчик —
+// includes/csc-reviews.php (csc_submit_review_handler_pro).
