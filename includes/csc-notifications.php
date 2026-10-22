@@ -351,7 +351,9 @@ if (!function_exists('csc_vapid_generate_jwt')) {
 }
 
 if (!function_exists('csc_der_to_raw_signature')) {
-    function csc_der_to_raw_signature($der, $part_len) {
+    // ИСПРАВЛЕНО: единая каноническая реализация (используется и модулем push).
+    // $part_len теперь опционален (по умолчанию 32 — стандарт для P-256).
+    function csc_der_to_raw_signature($der, $part_len = 32) {
         $pos = 0;
         if (ord($der[$pos++]) !== 0x30) return $der;
         $pos++; 

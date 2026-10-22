@@ -11,67 +11,10 @@ if (!defined('ABSPATH')) exit;
 // ============================================================
 // 1. ГЕНЕРАЦИЯ VAPID-КЛЮЧЕЙ
 // ============================================================
-
-/**
- * Генерация пары VAPID-ключей (ECDSA P-256).
- * Используется openssl для создания пары ключей.
- */
-if (!function_exists('csc_generate_vapid_keys')) {
-    function csc_generate_vapid_keys() {
-        // Генерируем ECDSA ключ на кривой P-256 (prime256v1)
-        $key = openssl_pkey_new([
-            'curve_name'       => 'prime256v1',
-            'private_key_type' => OPENSSL_KEYTYPE_EC,
-        ]);
-        
-        if (!$key) {
-            return false;
-        }
-        
-        $details = openssl_pkey_get_details($key);
-        if (!$details || !isset($details['ec'])) {
-            return false;
-        }
-        
-        // Извлекаем координаты X и Y публичного ключа (по 32 байта каждая)
-        $x = str_pad($details['ec']['x'], 32, "\0", STR_PAD_LEFT);
-        $y = str_pad($details['ec']['y'], 32, "\0", STR_PAD_LEFT);
-        
-        // Публичный ключ = 0x04 + X + Y (65 байт)
-        $publicKeyRaw = "\x04" . $x . $y;
-        
-        // Приватный ключ = d (32 байта)
-        $privateKeyRaw = str_pad($details['ec']['d'], 32, "\0", STR_PAD_LEFT);
-        
-        // Кодируем в base64url
-        return [
-            'public'  => csc_base64url_encode($publicKeyRaw),
-            'private' => csc_base64url_encode($privateKeyRaw),
-        ];
-    }
-}
-
-/**
- * Base64url encode (без = и +/)
- */
-if (!function_exists('csc_base64url_encode')) {
-    function csc_base64url_encode($data) {
-        return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
-    }
-}
-
-/**
- * Base64url decode
- */
-if (!function_exists('csc_base64url_decode')) {
-    function csc_base64url_decode($data) {
-        $remainder = strlen($data) % 4;
-        if ($remainder) {
-            $data .= str_repeat('=', 4 - $remainder);
-        }
-        return base64_decode(strtr($data, '-_', '+/'));
-    }
-}
+// ИСПРАВЛЕНО: дубли функций csc_generate_vapid_keys(), csc_base64url_encode(),
+// csc_base64url_decode() и csc_der_to_raw_signature() удалены. Единые
+// канонические реализации находятся в includes/csc-notifications.php
+// (загружается из ядра раньше этого файла). Модуль push использует их как API.
 
 // ============================================================
 // 2. ИНИЦИАЛИЗАЦИЯ VAPID ПРИ АКТИВАЦИИ
@@ -262,36 +205,8 @@ if (!function_exists('csc_asn1_length')) {
     }
 }
 
-/**
- * Конвертирует DER-подпись ECDSA в raw R||S формат (64 байта).
- */
-if (!function_exists('csc_der_to_raw_signature')) {
-    function csc_der_to_raw_signature($der) {
-        if (ord($der[0]) !== 0x30) return false;
-        
-        $offset = 2;
-        if (ord($der[1]) & 0x80) {
-            $offset += (ord($der[1]) & 0x7F);
-        }
-        
-        // R
-        if (ord($der[$offset]) !== 0x02) return false;
-        $r_len = ord($der[$offset + 1]);
-        $r = substr($der, $offset + 2, $r_len);
-        $offset += 2 + $r_len;
-        
-        // S
-        if (ord($der[$offset]) !== 0x02) return false;
-        $s_len = ord($der[$offset + 1]);
-        $s = substr($der, $offset + 2, $s_len);
-        
-        // Нормализуем длину до 32 байт
-        $r = str_pad(ltrim($r, "\x00"), 32, "\x00", STR_PAD_LEFT);
-        $s = str_pad(ltrim($s, "\x00"), 32, "\x00", STR_PAD_LEFT);
-        
-        return $r . $s;
-    }
-}
+// ИСПРАВЛЕНО: дубль csc_der_to_raw_signature() удалён — каноническая
+// реализация находится в includes/csc-notifications.php.
 
 // ============================================================
 // 5. ОТПРАВКА PUSH-УВЕДОМЛЕНИЯ
@@ -307,93 +222,11 @@ if (!function_exists('csc_der_to_raw_signature')) {
  * @param string $recipient_type   master|customer
  * @param string $recipient_id     ID получателя
  */
-if (!function_exists('csc_send_web_push_notification')) {
-    function csc_send_web_push_notification($subscription_json, $title, $body, $order_number = '', $recipient_type = '', $recipient_id = '') {
-        $sub = is_array($subscription_json) ? $subscription_json : json_decode($subscription_json, true);
-        if (!$sub || empty($sub['endpoint'])) {
-            return false;
-        }
-        
-        $public_key  = get_option('csc_vapid_public_key', '');
-        $private_key = get_option('csc_vapid_private_key', '');
-        $subject     = get_option('csc_vapid_subject', 'mailto:' . get_option('admin_email'));
-        
-        if (empty($public_key) || empty($private_key)) {
-            error_log('[CSC_PUSH] VAPID keys not configured');
-            return false;
-        }
-        
-        // Parse endpoint URL
-        $parsed = parse_url($sub['endpoint']);
-        $audience = $parsed['scheme'] . '://' . $parsed['host'] . (isset($parsed['port']) ? ':' . $parsed['port'] : '');
-        
-        // Создаём JWT
-        $jwt = csc_create_vapid_jwt($audience, $subject, $private_key);
-        if (!$jwt) {
-            error_log('[CSC_PUSH] Failed to create JWT');
-            return false;
-        }
-        
-        // Payload
-        $dashboard_url = '';
-        if ($recipient_type === 'master' && $recipient_id && function_exists('csc_get_master_dashboard_url')) {
-            $dashboard_url = csc_get_master_dashboard_url($recipient_id);
-        } elseif ($recipient_type === 'customer') {
-            $dashboard_url = home_url('/'); // Клиент получает ссылку на главную (или ЛК)
-        }
-        
-        $payload = wp_json_encode([
-            'title'        => $title,
-            'message'      => $body,
-            'icon'         => plugins_url('/assets/icon-192.png', dirname(__FILE__)),
-            'badge'        => plugins_url('/assets/badge-72.png', dirname(__FILE__)),
-            'order_number' => $order_number,
-            'url'          => $dashboard_url,
-            'type'         => $recipient_type,
-        ], JSON_UNESCAPED_UNICODE);
-        
-        // Headers
-        $headers = [
-            'Authorization: WebPush ' . $jwt,
-            'Content-Type: application/octet-stream',
-            'Content-Encoding: aes128gcm',
-            'TTL: 86400',
-            'Crypto-Key: p256ecdsa=' . $public_key,
-            'Content-Length: ' . strlen($payload),
-        ];
-        
-        // Отправка через curl (без шифрования payload — только для публичных уведомлений)
-        $ch = curl_init($sub['endpoint']);
-        curl_setopt_array($ch, [
-            CURLOPT_POST           => true,
-            CURLOPT_POSTFIELDS     => $payload,
-            CURLOPT_HTTPHEADER     => $headers,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT        => 10,
-            CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_HTTP_VERSION   => CURL_HTTP_VERSION_1_1,
-        ]);
-        
-        $response = curl_exec($ch);
-        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $curl_error = curl_error($ch);
-        curl_close($ch);
-        
-        // Если подписка невалидна (410 Gone) — удаляем её
-        if ($http_code === 410 || $http_code === 404) {
-            csc_remove_push_subscription($recipient_type, $recipient_id, $sub['endpoint']);
-            error_log("[CSC_PUSH] Subscription removed ({$http_code}): {$recipient_type}/{$recipient_id}");
-            return false;
-        }
-        
-        if ($http_code < 200 || $http_code >= 300) {
-            error_log("[CSC_PUSH] Error {$http_code}: {$curl_error} | {$response}");
-            return false;
-        }
-        
-        return true;
-    }
-}
+// ИСПРАВЛЕНО: дубль csc_send_web_push_notification() удалён. Каноническая
+// реализация (шифрование RFC 8188 + трекинг статуса в БД уведомлений)
+// находится в includes/csc-notifications.php и загружается из ядра раньше.
+// Старая незащищённая версия (отправка открытого JSON без шифрования) более
+// не используется — все вызовы этого модуля идут через единый движок.
 
 /**
  * Удаление невалидной подписки.
