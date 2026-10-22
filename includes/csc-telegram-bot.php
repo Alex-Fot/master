@@ -57,42 +57,11 @@ if (!function_exists('csc_tg_log')) {
     }
 }
 
-/**
- * ИСПРАВЛЕНО: кэшированный запрос списка мастеров.
- * Делегирует в единую реализацию из csc-order-routing.php
- * для устранения дублирования и рассинхронизации кэшей.
- */
-if (!function_exists('csc_get_masters_cached')) {
-    function csc_get_masters_cached($force_refresh = false) {
-        $cache_key = 'csc_masters_list_v2';
-        $masters = wp_cache_get($cache_key);
-        
-        if ($force_refresh || false === $masters) {
-            // Используем сортировку по рейтингу если доступна (единая логика)
-            if (function_exists('csc_get_masters_sorted_by_rating')) {
-                $masters = csc_get_masters_sorted_by_rating();
-            } elseif (function_exists('csc_get_masters')) {
-                $masters = csc_get_masters();
-            } else {
-                $masters = [];
-            }
-            wp_cache_set($cache_key, $masters, '', HOUR_IN_SECONDS);
-        }
-        
-        return $masters;
-    }
-}
-
-/**
- * ИСПРАВЛЕНО: кэшированный запрос списка заказов.
- * Использует единую функцию csc_get_all_orders() из csc-core-functions.php.
- * Обёртка для обратной совместимости.
- */
-if (!function_exists('csc_get_orders_cached')) {
-    function csc_get_orders_cached($force_refresh = false) {
-        return csc_get_all_orders($force_refresh);
-    }
-}
+// ============================================================
+// ИСПРАВЛЕНО: дубли функций csc_get_masters_cached() и csc_get_orders_cached()
+// удалены. Единые реализации находятся в includes/csc-order-routing.php
+// (загружается из ядра раньше этого файла); этот модуль использует их как API.
+// ============================================================
 
 /**
  * Отправка запроса в Telegram API с повторными попытками

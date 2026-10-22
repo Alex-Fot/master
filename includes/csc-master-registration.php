@@ -2052,6 +2052,9 @@ if (!function_exists('csc_handle_reverse_geocode')) {
 //     Метод геосетки: зона мастера покрывает ячейки, в каждой ячейке
 //     не больше zone_max_masters мастеров
 // ============================================================
+// ИСПРАВЛЕНО: дубль функции удалён — единая реализация находится в
+// includes/csc-core-functions.php (загружается раньше этого файла).
+// Оставлена только заглушка на случай прямой загрузки модуля вне ядра.
 if (!function_exists('csc_haversine_km')) {
     function csc_haversine_km($lat1, $lon1, $lat2, $lon2) {
         $earth = 6371.0;
@@ -2166,29 +2169,6 @@ if (!function_exists('csc_handle_zone_check')) {
 // ============================================================
 // 19. МИГРАЦИЯ: добавление zone_limit существующим городам
 // ============================================================
-if (!function_exists('csc_migrate_cities_zone_limit')) {
-    function csc_migrate_cities_zone_limit() {
-        if (get_option('csc_cities_zone_limit_migrated')) return;
-        
-        $cities = get_option('csc_cities', []);
-        if (empty($cities)) {
-            update_option('csc_cities_zone_limit_migrated', true);
-            return;
-        }
-        
-        $changed = false;
-        foreach ($cities as $key => &$city) {
-            if (!array_key_exists('zone_limit', $city)) {
-                $city['zone_limit'] = 0;
-                $changed = true;
-            }
-        }
-        unset($city);
-        
-        if ($changed) {
-            update_option('csc_cities', $cities);
-        }
-        update_option('csc_cities_zone_limit_migrated', true);
-    }
-}
-add_action('admin_init', 'csc_migrate_cities_zone_limit', 10);
+// ИСПРАВЛЕНО: дубль функции и повторная регистрация хука удалены —
+// единая реализация csc_migrate_cities_zone_limit() с регистрацией на
+// admin_init находится в includes/csc-cities-settings.php (загружается из ядра).
