@@ -88,6 +88,7 @@ function csc_plugin_activate() {
         has_child_order VARCHAR(50) DEFAULT NULL,
         cancel_reason TEXT,
         master_released TINYINT(1) NOT NULL DEFAULT 0,
+        reminder_sent TINYINT(1) NOT NULL DEFAULT 0,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         completed_at DATETIME DEFAULT NULL,
         cancelled_at DATETIME DEFAULT NULL,
