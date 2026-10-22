@@ -1,0 +1,1089 @@
+diff --git a/assets/js/master-dashboard.js b/assets/js/master-dashboard.js
+index c2deb1f..03503ab 100644
+--- a/assets/js/master-dashboard.js
++++ b/assets/js/master-dashboard.js
+@@ -2115,32 +2115,65 @@
+         }
+         if (!confirm('Удалить все уведомления? Это действие необратимо.')) return;
+ 
++        // ИСПРАВЛЕНО: убрана «тихая» подмена очистки отметкой «прочитано».
++        // Фолбэк на mark-read допускается ТОЛЬКО при явном ответе сервера,
++        // что эндпоинт не поддерживается (404 или success:false), и всегда
++        // сопровождается честным предупреждением пользователя.
++        // Ошибки авторизации (401/403) и серверные ошибки (5xx) фолбэка НЕ получают.
++        let statusCode = null;
++
+         try {
+-            // Пытаемся вызвать эндпоинт очистки
+             const data = await apiCall('notifications/clear');
+-            if (data.success) {
++            if (data && data.success) {
+                 STATE.notifications = [];
+                 STATE.unreadNotifCount = 0;
+                 STATE.knownNotifIds = new Set();
+                 updateNotifBadge();
+                 renderNotifications();
+                 showToast('success', 'Очищено', 'Все уведомления удалены');
+-            } else {
+-                // Если эндпоинт не реализован — помечаем все как прочитанные (фолбэк)
+-                showToast('info', 'Информация', 'Сервер не поддерживает очистку. Помечаем как прочитанные.', 3000);
+-                markAllNotificationsRead();
++                return;
+             }
++            // Сервер вернул HTTP 200, но success:false — эндпоинт не выполнил очистку
++            statusCode = 200;
+         } catch (e) {
+-            // Если эндпоинт 404 — помечаем как прочитанные
+             const statusMatch = (e.message || '').match(/HTTP (\d{3})/);
+-            if (statusMatch && parseInt(statusMatch[1], 10) === 404) {
+-                showToast('info', 'Информация', 'Очистка недоступна. Помечаем как прочитанные.', 3000);
+-                markAllNotificationsRead();
+-            } else {
+-                console.warn('Clear notifications error:', e);
+-                showToast('error', 'Ошибка', 'Не удалось очистить уведомления');
+-            }
++            statusCode = statusMatch ? parseInt(statusMatch[1], 10) : null;
++        }
++
++        // Разбор кода ответа — вместо прежней единой тихой подмены
++        if (statusCode === 401 || statusCode === 403) {
++            // Ошибка авторизации: ничего локально не меняем, предлагаем перезайти
++            console.error('[CSC] Clear notifications: auth error HTTP ' + statusCode);
++            showToast('error', 'Нет доступа',
++                'Сессия истекла или токен недействителен. Обновите страницу и повторите попытку.', 5000);
++            return;
++        }
++
++        if (statusCode !== null && statusCode >= 500) {
++            // Серверная ошибка: данные на сервере не тронуты, предупреждаем явно
++            console.error('[CSC] Clear notifications: server error HTTP ' + statusCode);
++            showToast('error', 'Ошибка сервера',
++                'Не удалось удалить уведомления на сервере (HTTP ' + statusCode + '). Попробуйте позже.', 5000);
++            return;
+         }
++
++        if (statusCode === 404) {
++            // Эндпоинт действительно отсутствует — единственный допустимый случай фолбэка
++            console.warn('[CSC] Clear endpoint not available (404). Falling back to mark-as-read.');
++            showToast('warning', 'Очистка недоступна',
++                'Сервер не поддерживает удаление уведомлений. Уведомления будут только помечены как прочитанные, а не удалены.', 6000);
++            await markAllNotificationsRead();
++            return;
++        }
++
++        // Иные ситуации (success:false, сетевые ошибки без кода и т.п.) —
++        // показываем точную причину, не подменяя действие молча
++        const reason = statusCode
++            ? 'Сервер отклонил запрос (HTTP ' + statusCode + ')'
++            : 'Сервер не подтвердил удаление';
++        console.warn('[CSC] Clear notifications failed:', reason);
++        showToast('error', 'Не удалось очистить',
++            reason + '. Уведомления не удалены. Попробуйте ещё раз.', 6000);
+     }
+ 
+     /**
+diff --git a/custom-service-calculator.php b/custom-service-calculator.php
+index dd9dc36..1ed6f93 100644
+--- a/custom-service-calculator.php
++++ b/custom-service-calculator.php
+@@ -27,7 +27,7 @@ if (!defined('ABSPATH')) exit;
+ define('CSC_PLUGIN_DIR', plugin_dir_path(__FILE__));
+ define('CSC_PLUGIN_URL', plugin_dir_url(__FILE__));
+ define('CSC_PLUGIN_VERSION', '9.0');
+-define('CSC_DB_VERSION', '2.1'); // 2.1: UPDATE-миграция статусов на латинские ключи (3.5)
++define('CSC_DB_VERSION', '2.2'); // 2.2: перенос миграций БД в admin_init — колонки создаются при ОБНОВЛЕНИИ плагина, а не только при активации
+ 
+ // 3.5: Словарь статусов — константы нужны уже в хуке активации (csc_migrate_statuses_to_latin)
+ require_once plugin_dir_path(__FILE__) . 'includes/csc-status-i18n.php';
+@@ -155,55 +155,12 @@ function csc_plugin_activate() {
+     dbDelta($sql_history);
+ 
+     // ============================================================
+-    // МИГРАЦИЯ: Добавление колонок для существующих таблиц
++    // МИГРАЦИЯ: Добавление колонок/индексов для существующих таблиц
++    // ИСПРАВЛЕНО: логика вынесена в csc_run_db_migrations() и вызывается
++    // как отсюда (активация), так и из admin_init (при ОБНОВЛЕНИИ плагина).
++    // Функция идемпотентна: проверяет наличие колонок/индексов перед ALTER.
+     // ============================================================
+-    // ИСПРАВЛЕНО: Запрос SHOW COLUMNS выполняется только один раз
+-    $existing_columns = $wpdb->get_col("SHOW COLUMNS FROM $table_orders", 0);
+-
+-    if (!in_array('city', $existing_columns)) {
+-        $wpdb->query("ALTER TABLE $table_orders ADD COLUMN city VARCHAR(100) NOT NULL DEFAULT '' AFTER comment");
+-    }
+-    if (!in_array('city_name', $existing_columns)) {
+-        $wpdb->query("ALTER TABLE $table_orders ADD COLUMN city_name VARCHAR(255) NOT NULL DEFAULT '' AFTER city");
+-    }
+-    if (!in_array('zone', $existing_columns)) {
+-        $wpdb->query("ALTER TABLE $table_orders ADD COLUMN zone VARCHAR(100) NOT NULL DEFAULT '' AFTER city_name");
+-    }
+-    if (!in_array('completion_files', $existing_columns)) {
+-        $wpdb->query("ALTER TABLE $table_orders ADD COLUMN completion_files TEXT AFTER files");
+-    }
+-
+-    // Индекс на город для фильтрации при маршрутизации
+-    $index_exists_city = $wpdb->get_results("SHOW INDEX FROM $table_orders WHERE Key_name = 'idx_city'");
+-    if (empty($index_exists_city)) {
+-        $wpdb->query("ALTER TABLE $table_orders ADD INDEX idx_city (city)");
+-    }
+-
+-    // ============================================================
+-    // ИНДЕКС НА phone + created_at (ускорение ЛК)
+-    // ============================================================
+-    $index_exists = $wpdb->get_results("SHOW INDEX FROM $table_orders WHERE Key_name = 'idx_phone_created'");
+-    if (empty($index_exists)) {
+-        $wpdb->query("ALTER TABLE $table_orders ADD INDEX idx_phone_created (phone, created_at)");
+-    }
+-	
+-    // ============================================================
+-    // НОВОЕ 5.0: КОЛОНКИ ГЕОДАННЫХ ДЛЯ КЛИЕНТОВ
+-    // ============================================================
+-    if (!in_array('client_lat', $existing_columns)) {
+-        $wpdb->query("ALTER TABLE $table_orders ADD COLUMN client_lat DECIMAL(10,7) DEFAULT NULL AFTER address");
+-    }
+-    if (!in_array('client_lng', $existing_columns)) {
+-        $wpdb->query("ALTER TABLE $table_orders ADD COLUMN client_lng DECIMAL(10,7) DEFAULT NULL AFTER client_lat");
+-    }
+-    if (!in_array('geocode_status', $existing_columns)) {
+-        $wpdb->query("ALTER TABLE $table_orders ADD COLUMN geocode_status VARCHAR(20) NOT NULL DEFAULT '' AFTER client_lng");
+-    }
+-	if (!in_array('routing_circle', $existing_columns)) {
+-    $wpdb->query("ALTER TABLE $table_orders ADD COLUMN routing_circle TINYINT(1) NOT NULL DEFAULT 1 AFTER routing_attempts");
+-    }
+-
+-    update_option('csc_db_version', CSC_DB_VERSION, false);
++    csc_run_db_migrations();
+ 
+     // --- Миграция данных из wp_options в таблицу ---
+     csc_migrate_orders_to_table();
+@@ -247,6 +204,7 @@ function csc_plugin_deactivate() {
+     wp_clear_scheduled_hook('csc_routing_cron_hook');
+     wp_clear_scheduled_hook('csc_reminders_cron_hook');
+     wp_clear_scheduled_hook('csc_backup_cron_hook');
++    wp_clear_scheduled_hook('csc_history_cleanup_cron'); // ИСПРАВЛЕНО: очистка крона истории при деактивации
+     wp_clear_scheduled_hook('csc_finance_cron_hook');
+ 
+     // Push: удаление SW из корня
+@@ -466,6 +424,8 @@ function csc_protect_uploads_dir() {
+ // ============================================================
+ // ПОДКЛЮЧЕНИЕ МОДУЛЕЙ
+ // ============================================================
++require_once CSC_PLUGIN_DIR . 'includes/csc-db-migrations.php';
++
+ // 3.5: единый словарь статусов (константы + нормализация) — подключается первым,
+ // до csc-core-functions.php и остальных модулей, использующих CSC_STATUS_*.
+ require_once CSC_PLUGIN_DIR . 'includes/csc-status-i18n.php';
+diff --git a/includes/csc-admin-pages.php b/includes/csc-admin-pages.php
+index ddf2df9..f80909e 100644
+--- a/includes/csc-admin-pages.php
++++ b/includes/csc-admin-pages.php
+@@ -361,13 +361,34 @@ function csc_add_admin_menu() {
+ // ============================================================
+ // 3. СТРАНИЦА ГЛАВНЫХ НАСТРОЕК
+ // ============================================================
++
++/**
++ * Разбор токена, присланного из формы админки (модуль csc-crypto.php).
++ * - Пустая строка или значение-маска (содержит '*') => оставить ранее сохранённый токен.
++ * - Иначе => зашифровать новый токен перед записью в БД.
++ *
++ * @param string $submitted Сырое значение из $_POST['telegram_token']
++ * @return string Значение для записи в опцию (зашифрованное либо открытое при недоступности OpenSSL)
++ */
++if (!function_exists('csc_resolve_submitted_token')) {
++    function csc_resolve_submitted_token($submitted) {
++        $old = get_option('csc_main_settings', []);
++        $old_token = is_array($old) ? ($old['telegram_token'] ?? '') : '';
++        // Поле не тронуто (пусто) или прислана маска — оставляем хранимый токен как есть
++        if ($submitted === '' || strpos($submitted, '*') !== false) {
++            return $old_token;
++        }
++        return function_exists('csc_prepare_token_for_storage')
++            ? csc_prepare_token_for_storage($submitted)
++            : $submitted;
++    }
++}
++
+ function csc_main_settings_page() {
+     if ($_POST && wp_verify_nonce($_POST['_wpnonce'], 'csc_main_settings_action')) {
+         $settings = [
+             // УЛУЧШЕНИЕ №1: Шифрование токена при сохранении
+-            'telegram_token'    => function_exists('csc_prepare_token_for_storage')
+-                                    ? csc_prepare_token_for_storage(sanitize_text_field($_POST['telegram_token'] ?? ''))
+-                                    : sanitize_text_field($_POST['telegram_token'] ?? ''),
++            'telegram_token'    => csc_resolve_submitted_token(sanitize_text_field($_POST['telegram_token'] ?? '')),
+             'telegram_chat_id'  => sanitize_text_field($_POST['telegram_chat_id'] ?? ''),
+             'work_hours_start'  => intval($_POST['work_hours_start']),
+             'work_hours_end'    => intval($_POST['work_hours_end']),
+@@ -406,10 +427,15 @@ function csc_main_settings_page() {
+     $s = get_option('csc_main_settings', []);
+     $templates = isset($s['templates']) ? $s['templates'] : [];
+ 
+-    // УЛУЧШЕНИЕ №1: расшифрованный токен для отображения в поле
+-    $display_token = function_exists('csc_get_telegram_token')
+-        ? csc_get_telegram_token()
+-        : ($s['telegram_token'] ?? '');
++    // УЛУЧШЕНИЕ №1: в HTML админки показываем ТОЛЬКО маскированный токен,
++    // полный токен больше не светится в source-code страницы.
++    // Пустое поле при сохранении = «не менять текущий токен» (см. csc_resolve_submitted_token).
++    $raw_stored   = $s['telegram_token'] ?? '';
++    $display_token = '';
++    if (!empty($raw_stored)) {
++        $plain_for_mask = function_exists('csc_decrypt_token') ? csc_decrypt_token($raw_stored) : $raw_stored;
++        $display_token = function_exists('csc_mask_token') ? csc_mask_token($plain_for_mask) : $plain_for_mask;
++    }
+     ?>
+     <div class="wrap">
+     <h1>Основные настройки калькулятора</h1>
+@@ -422,8 +448,8 @@ function csc_main_settings_page() {
+                 <tr>
+                     <th>Бот Токен:</th>
+                     <td>
+-                        <input type="text" name="telegram_token" value="<?php echo esc_attr($display_token); ?>" class="regular-text">
+-                        <p class="description">Токен шифруется перед сохранением в базу данных (AES-256-GCM).</p>
++                        <input type="text" name="telegram_token" value="" placeholder="<?php echo esc_attr($display_token ? ('Текущий: ' . $display_token) : '1234567890:AAH...'); ?>" class="regular-text" autocomplete="off">
++                        <p class="description">Токен шифруется перед сохранением в БД (AES-256-GCM).<?php if ($display_token): ?> Текущий: <code><?php echo esc_html($display_token); ?></code>. Оставьте поле пустым, чтобы не менять токен.<?php endif; ?></p>
+                     </td>
+                 </tr>
+                 <tr>
+diff --git a/includes/csc-db-migrations.php b/includes/csc-db-migrations.php
+new file mode 100644
+index 0000000..d8dd117
+--- /dev/null
++++ b/includes/csc-db-migrations.php
+@@ -0,0 +1,175 @@
++<?php
++/**
++ * Миграции базы данных плагина CSC.
++ *
++ * ИСПРАВЛЕНО (продакшн-правка): миграции колонок/индексов выполнялись
++ * ТОЛЬКО в хуке активации. При обычном обновлении плагина (замена файлов
++ * через wp-admin или WP-CLI без деактивации) новые колонки (reminder_sent,
++ * гео-данные, upsell-поля и др.) не создавались, а код уже обращался к ним
++ * → SQL-ошибки «Unknown column».
++ *
++ * Теперь:
++ *  - вся схема колонок описана декларативно в csc_db_schema_columns();
++ *  - csc_run_db_migrations() идемпотентно досоздаёт отсутствующие колонки/индексы;
++ *  - хук admin_init (приоритет 4) сверяет CSC_DB_VERSION с сохранённой опцией
++ *    csc_db_version и запускает миграции при ОБНОВЛЕНИИ плагина, а не только
++ *    при активации.
++ *
++ * @package CSC
++ */
++
++if (!defined('ABSPATH')) exit;
++
++if (!function_exists('csc_db_schema_columns')) {
++    /**
++     * Декларативная схема колонок таблицы заказов (порядок = порядок ALTER).
++     * Ключи: name — имя колонки; ddl — объявление для ALTER TABLE ADD COLUMN;
++     * after — колонка-сосед (или null).
++     *
++     * @return array[]
++     */
++    function csc_db_schema_columns() {
++        return [
++            // --- Базовые поля маршрутизации/городов ---
++            ['name' => 'city',             'ddl' => "VARCHAR(100) NOT NULL DEFAULT ''", 'after' => 'comment'],
++            ['name' => 'city_name',        'ddl' => "VARCHAR(255) NOT NULL DEFAULT ''", 'after' => 'city'],
++            ['name' => 'zone',             'ddl' => "VARCHAR(100) NOT NULL DEFAULT ''", 'after' => 'city_name'],
++            ['name' => 'completion_files', 'ddl' => "TEXT",                              'after' => 'files'],
++
++            // --- Гео-данные клиента (карты/маршрутизация) ---
++            ['name' => 'client_lat',       'ddl' => "DECIMAL(10,7) DEFAULT NULL",        'after' => 'address'],
++            ['name' => 'client_lng',       'ddl' => "DECIMAL(10,7) DEFAULT NULL",        'after' => 'client_lat'],
++            ['name' => 'geocode_status',   'ddl' => "VARCHAR(20) NOT NULL DEFAULT ''",   'after' => 'client_lng'],
++            ['name' => 'routing_circle',   'ddl' => "TINYINT(1) NOT NULL DEFAULT 1",     'after' => 'routing_attempts'],
++
++            // --- Поля из CREATE, отсутствовавшие в старых ALTER-миграциях ---
++            ['name' => 'auth_token',       'ddl' => "VARCHAR(64) NOT NULL DEFAULT ''",   'after' => 'routing_started_at'],
++            ['name' => 'review',           'ddl' => "TEXT",                              'after' => 'auth_token'],
++            ['name' => 'additional_items', 'ddl' => "TEXT",                              'after' => 'review'],
++            ['name' => 'parent_order',     'ddl' => "VARCHAR(50) DEFAULT NULL",          'after' => 'additional_items'],
++            ['name' => 'is_child',         'ddl' => "TINYINT(1) NOT NULL DEFAULT 0",     'after' => 'parent_order'],
++            ['name' => 'has_child_order',  'ddl' => "VARCHAR(50) DEFAULT NULL",          'after' => 'is_child'],
++            ['name' => 'cancel_reason',    'ddl' => "TEXT",                              'after' => 'has_child_order'],
++            ['name' => 'master_released',  'ddl' => "TINYINT(1) NOT NULL DEFAULT 0",     'after' => 'cancel_reason'],
++            ['name' => 'started_at',       'ddl' => "DATETIME DEFAULT NULL",             'after' => 'cancelled_at'],
++
++            // --- Напоминания (модуль csc-reminders.php) ---
++            ['name' => 'reminder_sent',    'ddl' => "TINYINT(1) NOT NULL DEFAULT 0",     'after' => 'completed_at'],
++        ];
++    }
++}
++
++if (!function_exists('csc_db_schema_indexes')) {
++    /**
++     * Декларативный список индексов таблицы заказов.
++     *
++     * @return array[] пары [имя индекса, колонки]
++     */
++    function csc_db_schema_indexes() {
++        return [
++            ['idx_city',           '(city)'],                  // фильтрация при маршрутизации
++            ['idx_phone_created',  '(phone, created_at)'],     // ускорение личного кабинета
++            ['idx_reminder_sent',  '(reminder_sent)'],         // выборка заказов для напоминаний
++        ];
++    }
++}
++
++if (!function_exists('csc_run_db_migrations')) {
++    /**
++     * Идемпотентная миграция схемы: досоздаёт отсутствующие колонки и индексы
++     * в таблице csc_orders, затем обновляет версию схемы csc_db_version.
++     *
++     * Безопасно вызывать многократно (админ-запросы, cron, активация).
++     *
++     * @param bool $force Принудительно выполнить SHOW COLUMNS даже если версия совпадает.
++     * @return void
++     */
++    function csc_run_db_migrations($force = false) {
++        global $wpdb;
++
++        $table = $wpdb->prefix . 'csc_orders';
++
++        // Таблица может ещё не существовать (первая активация до dbDelta) — выходим тихо.
++        if ($wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table)) !== $table) {
++            return;
++        }
++
++        $stored_version = get_option('csc_db_version', '0');
++        if (!$force && version_compare($stored_version, CSC_DB_VERSION, '>=')
++            && get_option('csc_reminders_column_migrated_v2', false)) {
++            return; // схема уже актуальна — не делаем SHOW COLUMNS каждый запрос
++        }
++
++        $existing = $wpdb->get_col("SHOW COLUMNS FROM {$table}", 0);
++        if (!is_array($existing)) {
++            $existing = [];
++        }
++
++        foreach (csc_db_schema_columns() as $col) {
++            if (in_array($col['name'], $existing, true)) {
++                continue;
++            }
++            $after_sql = in_array($col['after'], $existing, true)
++                ? " AFTER `{$col['after']}`"
++                : '';
++            $sql = "ALTER TABLE {$table} ADD COLUMN `{$col['name']}` {$col['ddl']}{$after_sql}";
++            $res = $wpdb->query($sql);
++            if ($res === false) {
++                error_log('[CSC_DB_MIGRATION] Ошибка добавления колонки ' . $col['name'] . ': ' . $wpdb->last_error);
++            } else {
++                error_log('[CSC_DB_MIGRATION] Добавлена колонка ' . $col['name'] . ' в ' . $table);
++            }
++        }
++
++        foreach (csc_db_schema_indexes() as $idx) {
++            list($idx_name, $idx_cols) = $idx;
++            $exists = $wpdb->get_results("SHOW INDEX FROM {$table} WHERE Key_name = '{$idx_name}'");
++            if (empty($exists)) {
++                $res = $wpdb->query("ALTER TABLE {$table} ADD INDEX {$idx_name} {$idx_cols}");
++                if ($res === false) {
++                    error_log('[CSC_DB_MIGRATION] Ошибка добавления индекса ' . $idx_name . ': ' . $wpdb->last_error);
++                }
++            }
++        }
++
++        // Синхронизируем флаг модуля напоминаний, чтобы csc-reminders.php не делал повторный ALTER.
++        $existing_after = $wpdb->get_col("SHOW COLUMNS FROM {$table}", 0);
++        if (is_array($existing_after) && in_array('reminder_sent', $existing_after, true)) {
++            update_option('csc_reminders_column_migrated_v2', true, false);
++        }
++
++        update_option('csc_db_version', CSC_DB_VERSION, false);
++    }
++}
++
++if (!function_exists('csc_db_migrations_on_update')) {
++    /**
++     * Хук admin_init: запуск миграций при ОБНОВЛЕНИИ плагина.
++     * Срабатывает только при рассогласовании версий (дёшево), либо один раз
++     * как «прогрев» после обновления (трансиент-флаг на 5 минут).
++     */
++    function csc_db_migrations_on_update() {
++        if (!current_user_can('activate_plugins')) {
++            return;
++        }
++
++        $stored = get_option('csc_db_version', '0');
++        $needs  = version_compare($stored, CSC_DB_VERSION, '<');
++
++        if (!$needs) {
++            // Дополнительная страховка: сразу после обновления файлов версии
++            // могут совпадать, но трансиент-маркер plugin_version отсутствует.
++            $marker = get_transient('csc_db_migration_check');
++            if (false !== $marker) {
++                return;
++            }
++            set_transient('csc_db_migration_check', 1, 5 * MINUTE_IN_SECONDS);
++            csc_run_db_migrations(true);
++            return;
++        }
++
++        csc_run_db_migrations(true);
++        delete_transient('csc_db_migration_check');
++    }
++    add_action('admin_init', 'csc_db_migrations_on_update', 4);
++}
+diff --git a/includes/csc-master-registration.php b/includes/csc-master-registration.php
+index 0363b6a..b15be6a 100644
+--- a/includes/csc-master-registration.php
++++ b/includes/csc-master-registration.php
+@@ -2052,6 +2052,9 @@ if (!function_exists('csc_handle_reverse_geocode')) {
+ //     Метод геосетки: зона мастера покрывает ячейки, в каждой ячейке
+ //     не больше zone_max_masters мастеров
+ // ============================================================
++// ИСПРАВЛЕНО: дубль функции удалён — единая реализация находится в
++// includes/csc-core-functions.php (загружается раньше этого файла).
++// Оставлена только заглушка на случай прямой загрузки модуля вне ядра.
+ if (!function_exists('csc_haversine_km')) {
+     function csc_haversine_km($lat1, $lon1, $lat2, $lon2) {
+         $earth = 6371.0;
+@@ -2166,29 +2169,6 @@ if (!function_exists('csc_handle_zone_check')) {
+ // ============================================================
+ // 19. МИГРАЦИЯ: добавление zone_limit существующим городам
+ // ============================================================
+-if (!function_exists('csc_migrate_cities_zone_limit')) {
+-    function csc_migrate_cities_zone_limit() {
+-        if (get_option('csc_cities_zone_limit_migrated')) return;
+-        
+-        $cities = get_option('csc_cities', []);
+-        if (empty($cities)) {
+-            update_option('csc_cities_zone_limit_migrated', true);
+-            return;
+-        }
+-        
+-        $changed = false;
+-        foreach ($cities as $key => &$city) {
+-            if (!array_key_exists('zone_limit', $city)) {
+-                $city['zone_limit'] = 0;
+-                $changed = true;
+-            }
+-        }
+-        unset($city);
+-        
+-        if ($changed) {
+-            update_option('csc_cities', $cities);
+-        }
+-        update_option('csc_cities_zone_limit_migrated', true);
+-    }
+-}
+-add_action('admin_init', 'csc_migrate_cities_zone_limit', 10);
+\ No newline at end of file
++// ИСПРАВЛЕНО: дубль функции и повторная регистрация хука удалены —
++// единая реализация csc_migrate_cities_zone_limit() с регистрацией на
++// admin_init находится в includes/csc-cities-settings.php (загружается из ядра).
+\ No newline at end of file
+diff --git a/includes/csc-masters.php b/includes/csc-masters.php
+index 8083f84..b945632 100644
+--- a/includes/csc-masters.php
++++ b/includes/csc-masters.php
+@@ -1080,6 +1080,7 @@ if (!function_exists('csc_masters_admin_page')) {
+                 cscModerateMasterFromModal(currentMasterId, 'block', reason);
+             });
+ 
++            if (!window.cscOpenMasterView) {
+             function cscOpenMasterView(masterId) {
+                 currentMasterId = masterId;
+                 currentMasterData = null;
+@@ -1122,12 +1123,14 @@ if (!function_exists('csc_masters_admin_page')) {
+                     });
+             }
+ 
++            if (!window.cscShowViewError) {
+             function cscShowViewError(message) {
+                 document.getElementById('csc-mv-loading').style.display = 'none';
+                 document.getElementById('csc-mv-error').style.display = 'block';
+                 document.getElementById('csc-mv-error-text').textContent = message;
+             }
+ 
++            if (!window.cscRenderMasterView) {
+             function cscRenderMasterView(data) {
+                 document.getElementById('csc-mv-loading').style.display = 'none';
+                 document.getElementById('csc-mv-content').style.display = 'block';
+@@ -1442,6 +1445,7 @@ if (!function_exists('csc_masters_admin_page')) {
+                 return num.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 });
+             }
+ 
++            if (!window.cscEscapeHtml) {
+             function cscEscapeHtml(str) {
+                 if (str === null || str === undefined) return '';
+                 return String(str)
+diff --git a/includes/csc-notifications.php b/includes/csc-notifications.php
+index 7319390..0728b76 100644
+--- a/includes/csc-notifications.php
++++ b/includes/csc-notifications.php
+@@ -351,7 +351,9 @@ if (!function_exists('csc_vapid_generate_jwt')) {
+ }
+ 
+ if (!function_exists('csc_der_to_raw_signature')) {
+-    function csc_der_to_raw_signature($der, $part_len) {
++    // ИСПРАВЛЕНО: единая каноническая реализация (используется и модулем push).
++    // $part_len теперь опционален (по умолчанию 32 — стандарт для P-256).
++    function csc_der_to_raw_signature($der, $part_len = 32) {
+         $pos = 0;
+         if (ord($der[$pos++]) !== 0x30) return $der;
+         $pos++; 
+@@ -687,99 +689,3 @@ if (!function_exists('csc_webpush_remove_invalid_subscription')) {
+         }
+     }
+ }
+-
+-// ВРЕМЕННАЯ ДИАГНОСТИКА v2 — удалить после проверки
+-add_action('admin_init', function() {
+-    if (!current_user_can('manage_options')) return;
+-    if (!isset($_GET['csc_test_tg'])) return;
+-    
+-    $s = get_option('csc_main_settings', []);
+-    $raw_token = $s['telegram_token'] ?? '(empty)';
+-    $decrypted = function_exists('csc_get_telegram_token') ? csc_get_telegram_token() : '(function not exists)';
+-    $chat_id = $s['telegram_chat_id'] ?? '(empty)';
+-    
+-    echo '<pre style="background:#000;color:#0f0;padding:20px;font-size:12px;">';
+-    echo "=== CSC Telegram Diagnostics v2 ===\n";
+-    echo "Raw token in DB:     " . substr($raw_token, 0, 20) . "...\n";
+-    echo "Decrypted token:     " . substr($decrypted, 0, 20) . "...\n";
+-    echo "Admin chat_id:       $chat_id\n\n";
+-    
+-    // Тест 1: getMe
+-    if ($decrypted && $decrypted !== '(function not exists)') {
+-        echo "--- TEST 1: getMe ---\n";
+-        $api = "https://api.telegram.org/bot{$decrypted}/getMe";
+-        $r = wp_remote_get($api, ['timeout' => 15, 'sslverify' => true]);
+-        
+-        if (is_wp_error($r)) {
+-            echo "❌ WP_Error: " . $r->get_error_message() . "\n";
+-        } else {
+-            $code = wp_remote_retrieve_response_code($r);
+-            $body = wp_remote_retrieve_body($r);
+-            echo "HTTP Code: $code\n";
+-            echo "Response: " . substr($body, 0, 500) . "\n";
+-            
+-            if ($code === 200) {
+-                $data = json_decode($body, true);
+-                if ($data['ok'] ?? false) {
+-                    echo "✅ Bot name: " . ($data['result']['username'] ?? '?') . "\n";
+-                }
+-            }
+-        }
+-        
+-        // Тест 2: sendMessage
+-        echo "\n--- TEST 2: sendMessage ---\n";
+-        $send_api = "https://api.telegram.org/bot{$decrypted}/sendMessage";
+-        $r2 = wp_remote_post($send_api, [
+-            'body' => [
+-                'chat_id' => $chat_id,
+-                'text' => '🧪 CSC тест ' . date('H:i:s'),
+-                'parse_mode' => 'HTML'
+-            ],
+-            'timeout' => 15,
+-            'sslverify' => true
+-        ]);
+-        
+-        if (is_wp_error($r2)) {
+-            echo "❌ WP_Error: " . $r2->get_error_message() . "\n";
+-        } else {
+-            $code2 = wp_remote_retrieve_response_code($r2);
+-            $body2 = wp_remote_retrieve_body($r2);
+-            echo "HTTP Code: $code2\n";
+-            echo "Response: " . substr($body2, 0, 500) . "\n";
+-            
+-            if ($code2 === 200) {
+-                $data2 = json_decode($body2, true);
+-                if ($data2['ok'] ?? false) {
+-                    echo "✅ Message sent! ID: " . ($data2['result']['message_id'] ?? '?') . "\n";
+-                } else {
+-                    echo "❌ Telegram error: " . ($data2['description'] ?? 'unknown') . "\n";
+-                }
+-            }
+-        }
+-        
+-        // Тест 3: Проверка cURL
+-        echo "\n--- TEST 3: cURL check ---\n";
+-        if (function_exists('curl_init')) {
+-            $ch = curl_init($api);
+-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+-            curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+-            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+-            $curl_result = curl_exec($ch);
+-            $curl_error = curl_error($ch);
+-            $curl_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+-            curl_close($ch);
+-            
+-            echo "cURL HTTP Code: $curl_code\n";
+-            if ($curl_error) {
+-                echo "❌ cURL Error: $curl_error\n";
+-            } else {
+-                echo "✅ cURL works. Response: " . substr($curl_result, 0, 200) . "\n";
+-            }
+-        } else {
+-            echo "⚠️ cURL not available\n";
+-        }
+-    }
+-    
+-    echo '</pre>';
+-    exit;
+-});
+\ No newline at end of file
+diff --git a/includes/csc-push.php b/includes/csc-push.php
+index cc06c13..46275df 100644
+--- a/includes/csc-push.php
++++ b/includes/csc-push.php
+@@ -11,67 +11,10 @@ if (!defined('ABSPATH')) exit;
+ // ============================================================
+ // 1. ГЕНЕРАЦИЯ VAPID-КЛЮЧЕЙ
+ // ============================================================
+-
+-/**
+- * Генерация пары VAPID-ключей (ECDSA P-256).
+- * Используется openssl для создания пары ключей.
+- */
+-if (!function_exists('csc_generate_vapid_keys')) {
+-    function csc_generate_vapid_keys() {
+-        // Генерируем ECDSA ключ на кривой P-256 (prime256v1)
+-        $key = openssl_pkey_new([
+-            'curve_name'       => 'prime256v1',
+-            'private_key_type' => OPENSSL_KEYTYPE_EC,
+-        ]);
+-        
+-        if (!$key) {
+-            return false;
+-        }
+-        
+-        $details = openssl_pkey_get_details($key);
+-        if (!$details || !isset($details['ec'])) {
+-            return false;
+-        }
+-        
+-        // Извлекаем координаты X и Y публичного ключа (по 32 байта каждая)
+-        $x = str_pad($details['ec']['x'], 32, "\0", STR_PAD_LEFT);
+-        $y = str_pad($details['ec']['y'], 32, "\0", STR_PAD_LEFT);
+-        
+-        // Публичный ключ = 0x04 + X + Y (65 байт)
+-        $publicKeyRaw = "\x04" . $x . $y;
+-        
+-        // Приватный ключ = d (32 байта)
+-        $privateKeyRaw = str_pad($details['ec']['d'], 32, "\0", STR_PAD_LEFT);
+-        
+-        // Кодируем в base64url
+-        return [
+-            'public'  => csc_base64url_encode($publicKeyRaw),
+-            'private' => csc_base64url_encode($privateKeyRaw),
+-        ];
+-    }
+-}
+-
+-/**
+- * Base64url encode (без = и +/)
+- */
+-if (!function_exists('csc_base64url_encode')) {
+-    function csc_base64url_encode($data) {
+-        return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
+-    }
+-}
+-
+-/**
+- * Base64url decode
+- */
+-if (!function_exists('csc_base64url_decode')) {
+-    function csc_base64url_decode($data) {
+-        $remainder = strlen($data) % 4;
+-        if ($remainder) {
+-            $data .= str_repeat('=', 4 - $remainder);
+-        }
+-        return base64_decode(strtr($data, '-_', '+/'));
+-    }
+-}
++// ИСПРАВЛЕНО: дубли функций csc_generate_vapid_keys(), csc_base64url_encode(),
++// csc_base64url_decode() и csc_der_to_raw_signature() удалены. Единые
++// канонические реализации находятся в includes/csc-notifications.php
++// (загружается из ядра раньше этого файла). Модуль push использует их как API.
+ 
+ // ============================================================
+ // 2. ИНИЦИАЛИЗАЦИЯ VAPID ПРИ АКТИВАЦИИ
+@@ -262,36 +205,8 @@ if (!function_exists('csc_asn1_length')) {
+     }
+ }
+ 
+-/**
+- * Конвертирует DER-подпись ECDSA в raw R||S формат (64 байта).
+- */
+-if (!function_exists('csc_der_to_raw_signature')) {
+-    function csc_der_to_raw_signature($der) {
+-        if (ord($der[0]) !== 0x30) return false;
+-        
+-        $offset = 2;
+-        if (ord($der[1]) & 0x80) {
+-            $offset += (ord($der[1]) & 0x7F);
+-        }
+-        
+-        // R
+-        if (ord($der[$offset]) !== 0x02) return false;
+-        $r_len = ord($der[$offset + 1]);
+-        $r = substr($der, $offset + 2, $r_len);
+-        $offset += 2 + $r_len;
+-        
+-        // S
+-        if (ord($der[$offset]) !== 0x02) return false;
+-        $s_len = ord($der[$offset + 1]);
+-        $s = substr($der, $offset + 2, $s_len);
+-        
+-        // Нормализуем длину до 32 байт
+-        $r = str_pad(ltrim($r, "\x00"), 32, "\x00", STR_PAD_LEFT);
+-        $s = str_pad(ltrim($s, "\x00"), 32, "\x00", STR_PAD_LEFT);
+-        
+-        return $r . $s;
+-    }
+-}
++// ИСПРАВЛЕНО: дубль csc_der_to_raw_signature() удалён — каноническая
++// реализация находится в includes/csc-notifications.php.
+ 
+ // ============================================================
+ // 5. ОТПРАВКА PUSH-УВЕДОМЛЕНИЯ
+@@ -307,93 +222,11 @@ if (!function_exists('csc_der_to_raw_signature')) {
+  * @param string $recipient_type   master|customer
+  * @param string $recipient_id     ID получателя
+  */
+-if (!function_exists('csc_send_web_push_notification')) {
+-    function csc_send_web_push_notification($subscription_json, $title, $body, $order_number = '', $recipient_type = '', $recipient_id = '') {
+-        $sub = is_array($subscription_json) ? $subscription_json : json_decode($subscription_json, true);
+-        if (!$sub || empty($sub['endpoint'])) {
+-            return false;
+-        }
+-        
+-        $public_key  = get_option('csc_vapid_public_key', '');
+-        $private_key = get_option('csc_vapid_private_key', '');
+-        $subject     = get_option('csc_vapid_subject', 'mailto:' . get_option('admin_email'));
+-        
+-        if (empty($public_key) || empty($private_key)) {
+-            error_log('[CSC_PUSH] VAPID keys not configured');
+-            return false;
+-        }
+-        
+-        // Parse endpoint URL
+-        $parsed = parse_url($sub['endpoint']);
+-        $audience = $parsed['scheme'] . '://' . $parsed['host'] . (isset($parsed['port']) ? ':' . $parsed['port'] : '');
+-        
+-        // Создаём JWT
+-        $jwt = csc_create_vapid_jwt($audience, $subject, $private_key);
+-        if (!$jwt) {
+-            error_log('[CSC_PUSH] Failed to create JWT');
+-            return false;
+-        }
+-        
+-        // Payload
+-        $dashboard_url = '';
+-        if ($recipient_type === 'master' && $recipient_id && function_exists('csc_get_master_dashboard_url')) {
+-            $dashboard_url = csc_get_master_dashboard_url($recipient_id);
+-        } elseif ($recipient_type === 'customer') {
+-            $dashboard_url = home_url('/'); // Клиент получает ссылку на главную (или ЛК)
+-        }
+-        
+-        $payload = wp_json_encode([
+-            'title'        => $title,
+-            'message'      => $body,
+-            'icon'         => plugins_url('/assets/icon-192.png', dirname(__FILE__)),
+-            'badge'        => plugins_url('/assets/badge-72.png', dirname(__FILE__)),
+-            'order_number' => $order_number,
+-            'url'          => $dashboard_url,
+-            'type'         => $recipient_type,
+-        ], JSON_UNESCAPED_UNICODE);
+-        
+-        // Headers
+-        $headers = [
+-            'Authorization: WebPush ' . $jwt,
+-            'Content-Type: application/octet-stream',
+-            'Content-Encoding: aes128gcm',
+-            'TTL: 86400',
+-            'Crypto-Key: p256ecdsa=' . $public_key,
+-            'Content-Length: ' . strlen($payload),
+-        ];
+-        
+-        // Отправка через curl (без шифрования payload — только для публичных уведомлений)
+-        $ch = curl_init($sub['endpoint']);
+-        curl_setopt_array($ch, [
+-            CURLOPT_POST           => true,
+-            CURLOPT_POSTFIELDS     => $payload,
+-            CURLOPT_HTTPHEADER     => $headers,
+-            CURLOPT_RETURNTRANSFER => true,
+-            CURLOPT_TIMEOUT        => 10,
+-            CURLOPT_SSL_VERIFYPEER => true,
+-            CURLOPT_HTTP_VERSION   => CURL_HTTP_VERSION_1_1,
+-        ]);
+-        
+-        $response = curl_exec($ch);
+-        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+-        $curl_error = curl_error($ch);
+-        curl_close($ch);
+-        
+-        // Если подписка невалидна (410 Gone) — удаляем её
+-        if ($http_code === 410 || $http_code === 404) {
+-            csc_remove_push_subscription($recipient_type, $recipient_id, $sub['endpoint']);
+-            error_log("[CSC_PUSH] Subscription removed ({$http_code}): {$recipient_type}/{$recipient_id}");
+-            return false;
+-        }
+-        
+-        if ($http_code < 200 || $http_code >= 300) {
+-            error_log("[CSC_PUSH] Error {$http_code}: {$curl_error} | {$response}");
+-            return false;
+-        }
+-        
+-        return true;
+-    }
+-}
++// ИСПРАВЛЕНО: дубль csc_send_web_push_notification() удалён. Каноническая
++// реализация (шифрование RFC 8188 + трекинг статуса в БД уведомлений)
++// находится в includes/csc-notifications.php и загружается из ядра раньше.
++// Старая незащищённая версия (отправка открытого JSON без шифрования) более
++// не используется — все вызовы этого модуля идут через единый движок.
+ 
+ /**
+  * Удаление невалидной подписки.
+@@ -646,4 +479,4 @@ if (!function_exists('csc_push_test_send_ajax')) {
+             'message' => "Отправлено: {$sent}, ошибок: {$failed}",
+         ]);
+     }
+-}
+\ No newline at end of file
++}
+\ No newline at end of file
+diff --git a/includes/csc-telegram-bot.php b/includes/csc-telegram-bot.php
+index 84f002b..4ecea55 100644
+--- a/includes/csc-telegram-bot.php
++++ b/includes/csc-telegram-bot.php
+@@ -57,42 +57,12 @@ if (!function_exists('csc_tg_log')) {
+     }
+ }
+ 
+-/**
+- * ИСПРАВЛЕНО: кэшированный запрос списка мастеров.
+- * Делегирует в единую реализацию из csc-order-routing.php
+- * для устранения дублирования и рассинхронизации кэшей.
+- */
+-if (!function_exists('csc_get_masters_cached')) {
+-    function csc_get_masters_cached($force_refresh = false) {
+-        $cache_key = 'csc_masters_list_v2';
+-        $masters = wp_cache_get($cache_key);
+-        
+-        if ($force_refresh || false === $masters) {
+-            // Используем сортировку по рейтингу если доступна (единая логика)
+-            if (function_exists('csc_get_masters_sorted_by_rating')) {
+-                $masters = csc_get_masters_sorted_by_rating();
+-            } elseif (function_exists('csc_get_masters')) {
+-                $masters = csc_get_masters();
+-            } else {
+-                $masters = [];
+-            }
+-            wp_cache_set($cache_key, $masters, '', HOUR_IN_SECONDS);
+-        }
+-        
+-        return $masters;
+-    }
+-}
+-
+-/**
+- * ИСПРАВЛЕНО: кэшированный запрос списка заказов.
+- * Использует единую функцию csc_get_all_orders() из csc-core-functions.php.
+- * Обёртка для обратной совместимости.
+- */
+-if (!function_exists('csc_get_orders_cached')) {
+-    function csc_get_orders_cached($force_refresh = false) {
+-        return csc_get_all_orders($force_refresh);
+-    }
+-}
++// ============================================================
++// ИСПРАВЛЕНО: дубли функций csc_get_masters_cached() и csc_get_orders_cached()
++// удалены. Единые реализации находятся в includes/csc-order-routing.php
++// (загружается из ядра сразу после этого файла, вызовы идут внутри обработчиков
++// событий — к моменту выполнения order-routing уже загружен).
++// ============================================================
+ 
+ /**
+  * Отправка запроса в Telegram API с повторными попытками
+@@ -322,7 +292,10 @@ if (!function_exists('csc_register_telegram_webhook')) {
+ if (!function_exists('csc_tg_send_offer_to_master')) {
+     function csc_tg_send_offer_to_master($order_number, $master_chat_id, $message_text) {
+         $s = get_option('csc_main_settings', []);
+-        $tg_token = $s['telegram_token'] ?? '';
++        // ИСПРАВЛЕНО: расшифровка токена через csc_get_telegram_token() (модуль csc-crypto.php)
++        $tg_token = function_exists('csc_get_telegram_token')
++            ? csc_get_telegram_token()
++            : ($s['telegram_token'] ?? '');
+         
+         if (!$tg_token || !$master_chat_id) {
+             csc_tg_log('send_failed', ['reason' => 'missing_config', 'order' => $order_number]);
+@@ -467,7 +440,10 @@ if (!function_exists('csc_handle_telegram_webhook')) {
+         $from_user = $callback['from'] ?? [];
+         
+         $s = get_option('csc_main_settings', []);
+-        $tg_token = $s['telegram_token'] ?? '';
++        // ИСПРАВЛЕНО: расшифровка токена через csc_get_telegram_token() (модуль csc-crypto.php)
++        $tg_token = function_exists('csc_get_telegram_token')
++            ? csc_get_telegram_token()
++            : ($s['telegram_token'] ?? '');
+         
+         $answer_callback = function($text, $show_alert = false) use ($tg_token, $callback_id) {
+             csc_tg_api_request('answerCallbackQuery', [
+@@ -884,11 +860,24 @@ if (!function_exists('csc_check_telegram_webhook')) {
+  */
+ add_action('update_option_csc_main_settings', 'csc_on_telegram_settings_saved', 10, 3);
+ function csc_on_telegram_settings_saved($old_value, $new_value, $option) {
+-    $old_token = $old_value['telegram_token'] ?? '';
+-    $new_token = $new_value['telegram_token'] ?? '';
+-    
++    static $running = false;
++    // Защита от рекурсии: миграция шифрования тоже обновляет эту опцию
++    if ($running) return;
++
++    $old_token = is_array($old_value) ? ($old_value['telegram_token'] ?? '') : '';
++    $new_token = is_array($new_value) ? ($new_value['telegram_token'] ?? '') : '';
++
++    // Значения в БД зашифрованы (AES-256-GCM) — сравниваем открытые токены,
++    // иначе миграция открытого токена в зашифрованный ложно сработает как смена токена
++    if (function_exists('csc_decrypt_token')) {
++        $old_token = csc_decrypt_token($old_token);
++        $new_token = csc_decrypt_token($new_token);
++    }
++
+     // Если токен изменился — переустанавливаем webhook
+     if ($old_token !== $new_token && !empty($new_token)) {
++        $running = true;
+         csc_setup_telegram_webhook();
++        $running = false;
+     }
+ }
+\ No newline at end of file
+diff --git a/uninstall.php b/uninstall.php
+index 98a2947..122bd9c 100644
+--- a/uninstall.php
++++ b/uninstall.php
+@@ -14,7 +14,9 @@
+  *   - {prefix}csc_fiscal_receipts
+  * - Добавлено удаление опций городов, модерации, регистрации мастеров, шифрования, миграций
+  * - Добавлено удаление динамических опций уведомлений мастеров и платёжных данных
++ * - Добавлено удаление ВСЕХ опций плагина массовым запросом LIKE 'csc\_%' (гарантия чистоты БД)
+  * - Добавлено удаление всех транзиентов плагина, включая токены, кэши, блокировки и лимиты
++ *   (включая «осиротевшие» rows таймаутов без парных транзиентов)
+  * - Добавлена очистка всех крон-задач плагина, включая будущие финансовые и кассовые
+  * - Добавлена поддержка очистки данных в режиме WordPress Multisite
+  * - Включено удаление файлов плагина при деинсталляции:
+@@ -56,7 +58,7 @@ if (!function_exists('csc_uninstall_cleanup')) {
+         // 2. УДАЛЕНИЕ ВСЕХ ОПЦИЙ ПЛАГИНА
+         // ============================================================
+ 
+-        // Основные настройки (включая модерацию, города, шифрование, миграции)
++        // Явный список ключевых настроек (документирует состав данных плагина).
+         $csc_options = [
+             'csc_all_orders',
+             'csc_main_settings',
+@@ -101,37 +103,38 @@ if (!function_exists('csc_uninstall_cleanup')) {
+             }
+         }
+ 
+-        // Удаление опций с динамическими префиксами
+-        // Счётчики, пуш-подписки, брони, уведомления мастеров
+-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'csc_order_counter_%'");
+-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'csc_push_subs_%'");
+-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'csc_booked_ranges_%'");
+-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'csc_master_notifications_%'");
+-        // Динамические платёжные данные (добавлено в 2.0)
+-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'csc_transactions_%'");
+-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'csc_invoices_%'");
+-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'csc_fiscal_receipts_%'");
+-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'csc_ledger_%'");
+-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'csc_payment_%'");
+-        // Опции модерации
+-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'csc_moderation_%'");
++        // ГАРАНТИЙНАЯ ОЧИСТКА: все опции с префиксом csc_ одним запросом.
++        // Покрывает динамические ключи (csc_push_subs_*, csc_in_cabinet_*,
++        // csc_master_notifications_*, csc_order_counter_*, платёжные csc_*),
++        // любые будущие опции и явные ключи из списка выше — независимо от
++        // регистра/кодировки имени. Подчёркивания экранированы, чтобы LIKE
++        // не воспринимал '_' как односимвольный wildcard.
++        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE 'csc\\_%'");
++
++        // Site-опции мультисайта (wp_sitemeta) с префиксом csc_
++        if (is_multisite()) {
++            $wpdb->query("DELETE FROM {$wpdb->base_prefix}sitemeta WHERE meta_key LIKE 'csc\\_%'");
++        }
+ 
+         // ============================================================
+         // 3. УДАЛЕНИЕ CRON-ЗАДАЧ
+         // ============================================================
+-        // Базовые хуки
+-        wp_clear_scheduled_hook('csc_routing_cron_hook');
+-        wp_clear_scheduled_hook('csc_reminders_cron_hook');
+-        wp_clear_scheduled_hook('csc_backup_cron_hook');
+-        wp_clear_scheduled_hook('csc_history_cleanup_cron');
+-
+-        // Финансовые и кассовые хуки (добавлено в 2.0)
+-        // ПРОВЕРЬТЕ ИМЕНА ХУКОВ: они должны совпадать с теми, что использовались в плагине
+-        wp_clear_scheduled_hook('csc_financial_cron_hook');
+-        wp_clear_scheduled_hook('csc_fiscal_cron_hook');
+-        wp_clear_scheduled_hook('csc_invoices_cron_hook');
+-        wp_clear_scheduled_hook('csc_transactions_cron_hook');
+-        wp_clear_scheduled_hook('csc_ledger_cron_hook');
++        // Список соответствует реальным хукам, регистрируемым плагином
++        // (см. custom-service-calculator.php csc_plugin_activate/deactivate).
++        $csc_cron_hooks = [
++            'csc_routing_cron_hook',       // маршрутизация заказов (каждую минуту)
++            'csc_reminders_cron_hook',     // напоминания (каждые 30 минут)
++            'csc_backup_cron_hook',        // резервные копии (ежедневно)
++            'csc_history_cleanup_cron',    // очистка истории заказов (ежедневно)
++            'csc_finance_cron_hook',       // финансовый ежедневный cron
++            'csc_webhook_cleanup_cron',    // очистка webhook-событий (ежедневно)
++            'csc_payment_check_cron',      // проверка статусов платежей (каждые 5 минут)
++            'csc_payment_stuck_notify_cron', // уведомления о зависших платежах (ежечасно)
++        ];
++
++        foreach ($csc_cron_hooks as $csc_cron_hook) {
++            wp_clear_scheduled_hook($csc_cron_hook);
++        }
+ 
+         // ============================================================
+         // 4. ОЧИСТКА ЗАГРУЖЕННЫХ ФАЙЛОВ
+@@ -166,17 +169,36 @@ if (!function_exists('csc_uninstall_cleanup')) {
+         // ============================================================
+         // 5. УДАЛЕНИЕ ТРАНЗИЕНТОВ (временные данные)
+         // ============================================================
+-        // Обычные транзиенты
+-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_csc_%'");
+-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_timeout_csc_%'");
++        // Универсальная очистка: любые транзиенты, чьё имя начинается с csc_
++        // (купоны, токены ЛК, geocache, лимиты входа/отзывов, рейтинги, кэши
++        // заказов/услуг, webhook-события и все будущие), плюс парные им rows
++        // '_transient_timeout_csc_*'. Завершение '%' покрывает и имена вида
++        // 'csc_<hash>' (md5/sha токенов), где после префикса нет подчёркивания.
++        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '\\_transient\\_csc\\_%'");
++        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '\\_transient\\_timeout\\_csc\\_%'");
++
+         // Site-транзиенты (актуально для Multisite)
+-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_site_transient_csc_%'");
+-        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_site_transient_timeout_csc_%'");
++        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '\\_site\\_transient\\_csc\\_%'");
++        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '\\_site\\_transient\\_timeout\\_csc\\_%'");
++
++        // «Осиротевшие» rows таймаутов: WordPress хранит срок жизни транзиента
++        // в отдельной записи '_transient_timeout_*', которая может пережить сам
++        // транзиент (например, удалён через delete_transient до истечения срока).
++        // Удаляем оставшиеся timeout-записи без парного транзиента.
++        $wpdb->query(
++            "DELETE t FROM {$wpdb->options} t
++             LEFT JOIN {$wpdb->options} o
++               ON o.option_name = CONCAT('_transient_', SUBSTRING(t.option_name, 21))
++             WHERE t.option_name LIKE '\\_transient\\_timeout\\_csc\\_%'
++               AND o.option_name IS NULL"
++        );
+ 
+         // ============================================================
+         // 6. УДАЛЕНИЕ ПОЛЬЗОВАТЕЛЬСКИХ РОЛЕЙ И CAPABILITIES
+         // ============================================================
+-        // Раскомментируйте и адаптируйте, если плагин регистрировал кастомные роли
++        // Плагин НЕ регистрирует собственные роли и capabilities (проверено
++        // по коду: add_role/add_cap в модулях отсутствуют). Блок оставлен как
++        // заготовка на будущее — раскомментируйте, если роли появятся:
+         /*
+         remove_role('csc_master');
+         remove_role('csc_manager');
