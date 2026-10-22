@@ -689,3 +689,99 @@ if (!function_exists('csc_webpush_remove_invalid_subscription')) {
         }
     }
 }
+
+// ВРЕМЕННАЯ ДИАГНОСТИКА v2 — удалить после проверки
+add_action('admin_init', function() {
+    if (!current_user_can('manage_options')) return;
+    if (!isset($_GET['csc_test_tg'])) return;
+    
+    $s = get_option('csc_main_settings', []);
+    $raw_token = $s['telegram_token'] ?? '(empty)';
+    $decrypted = function_exists('csc_get_telegram_token') ? csc_get_telegram_token() : '(function not exists)';
+    $chat_id = $s['telegram_chat_id'] ?? '(empty)';
+    
+    echo '<pre style="background:#000;color:#0f0;padding:20px;font-size:12px;">';
+    echo "=== CSC Telegram Diagnostics v2 ===\n";
+    echo "Raw token in DB:     " . substr($raw_token, 0, 20) . "...\n";
+    echo "Decrypted token:     " . substr($decrypted, 0, 20) . "...\n";
+    echo "Admin chat_id:       $chat_id\n\n";
+    
+    // Тест 1: getMe
+    if ($decrypted && $decrypted !== '(function not exists)') {
+        echo "--- TEST 1: getMe ---\n";
+        $api = "https://api.telegram.org/bot{$decrypted}/getMe";
+        $r = wp_remote_get($api, ['timeout' => 15, 'sslverify' => true]);
+        
+        if (is_wp_error($r)) {
+            echo "❌ WP_Error: " . $r->get_error_message() . "\n";
+        } else {
+            $code = wp_remote_retrieve_response_code($r);
+            $body = wp_remote_retrieve_body($r);
+            echo "HTTP Code: $code\n";
+            echo "Response: " . substr($body, 0, 500) . "\n";
+            
+            if ($code === 200) {
+                $data = json_decode($body, true);
+                if ($data['ok'] ?? false) {
+                    echo "✅ Bot name: " . ($data['result']['username'] ?? '?') . "\n";
+                }
+            }
+        }
+        
+        // Тест 2: sendMessage
+        echo "\n--- TEST 2: sendMessage ---\n";
+        $send_api = "https://api.telegram.org/bot{$decrypted}/sendMessage";
+        $r2 = wp_remote_post($send_api, [
+            'body' => [
+                'chat_id' => $chat_id,
+                'text' => '🧪 CSC тест ' . date('H:i:s'),
+                'parse_mode' => 'HTML'
+            ],
+            'timeout' => 15,
+            'sslverify' => true
+        ]);
+        
+        if (is_wp_error($r2)) {
+            echo "❌ WP_Error: " . $r2->get_error_message() . "\n";
+        } else {
+            $code2 = wp_remote_retrieve_response_code($r2);
+            $body2 = wp_remote_retrieve_body($r2);
+            echo "HTTP Code: $code2\n";
+            echo "Response: " . substr($body2, 0, 500) . "\n";
+            
+            if ($code2 === 200) {
+                $data2 = json_decode($body2, true);
+                if ($data2['ok'] ?? false) {
+                    echo "✅ Message sent! ID: " . ($data2['result']['message_id'] ?? '?') . "\n";
+                } else {
+                    echo "❌ Telegram error: " . ($data2['description'] ?? 'unknown') . "\n";
+                }
+            }
+        }
+        
+        // Тест 3: Проверка cURL
+        echo "\n--- TEST 3: cURL check ---\n";
+        if (function_exists('curl_init')) {
+            $ch = curl_init($api);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+            $curl_result = curl_exec($ch);
+            $curl_error = curl_error($ch);
+            $curl_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+            
+            echo "cURL HTTP Code: $curl_code\n";
+            if ($curl_error) {
+                echo "❌ cURL Error: $curl_error\n";
+            } else {
+                echo "✅ cURL works. Response: " . substr($curl_result, 0, 200) . "\n";
+            }
+        } else {
+            echo "⚠️ cURL not available\n";
+        }
+    }
+    
+    echo '</pre>';
+    exit;
+});
