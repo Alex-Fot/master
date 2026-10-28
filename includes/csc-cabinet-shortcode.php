@@ -506,6 +506,13 @@ const REVIEW_EXPIRY_DAYS = 35;
 const MAX_REVIEW_PHOTOS  = 10;
 const MAX_REVIEW_PHOTO_SIZE = 5 * 1024 * 1024; // 5 МБ
 const SOUND_URL = '<?php echo esc_js($sound_url); ?>';
+// i18n: локализованные подписи статусов из PHP (csc_status_labels_js — переводятся gettext на сервере)
+const CSC_STATUS_LABELS = <?php echo wp_json_encode(function_exists('csc_status_labels_js') ? csc_status_labels_js() : new stdClass()); ?>;
+
+// ИСПРАВЛЕНО (защита ЛК): токен сессии клиента хранится только в памяти страницы.
+// Выдаётся сервером при входе (res.data.auth_token) и подставляется в запросы,
+// требующие подтверждения доступа (платежи). В URL/cookie/localStorage не попадает.
+let cscSessionToken = '';
 
 // ИСПРАВЛЕНО (защита ЛК): токен сессии клиента хранится только в памяти страницы.
 // Выдаётся сервером при входе (res.data.auth_token) и подставляется в запросы,
@@ -851,9 +858,11 @@ function renderOrders(orders, meta) {
     html += '</tr></thead><tbody>';
 
     orders.forEach(o => {
-        const STATUS_LABELS = { pending:'Ожидает', searching:'Поиск мастера', awaiting_payment:'Ожидает оплаты', processing:'В работе', completed:'Выполнено', cancelled:'Отменено', no_masters:'Нет мастеров', routing_timeout:'Ошибка: время поиска истекло' };
+        // i18n: подписи берутся из CSC_STATUS_LABELS (wp_json_encode из csc_status_labels_js),
+        // словарь ниже — фолбэк на случай, если PHP-карта не передалась.
+        const STATUS_FALLBACK = { pending:'Ожидает', searching:'Поиск мастера', awaiting_payment:'Ожидает оплаты', processing:'В работе', completed:'Выполнено', cancelled:'Отменено', no_masters:'Нет мастеров', routing_timeout:'Ошибка: время поиска истекло' };
         const rawStatus = ((o.status || 'pending') + '').toLowerCase();
-        const statusText = STATUS_LABELS[rawStatus] || rawStatus;
+        const statusText = (typeof CSC_STATUS_LABELS === 'object' && CSC_STATUS_LABELS[rawStatus]) ? CSC_STATUS_LABELS[rawStatus] : (STATUS_FALLBACK[rawStatus] || rawStatus);
         const isCancelled = !!o.cancelled_at || rawStatus === 'cancelled';
                 let statusClass = '';
         if (isCancelled) statusClass = 'cancelled';
