@@ -533,7 +533,10 @@ if (!function_exists('csc_submit_form_handler')) {
         $status = ($payment_method === 'sbp') ? CSC_STATUS_AWAITING_PAYMENT : CSC_STATUS_SEARCHING;
         
         // Генерация auth_token для cookie-авторизации в ЛК
+        // ИСПРАВЛЕНО (защита ЛК): в БД/option хранится только SHA-256 хэш токена;
+        // открытый токен однократно возвращается клиенту и больше нигде не сохраняется.
         $auth_token = wp_generate_password(32, false);
+        $auth_token_hash = function_exists('csc_hash_token') ? csc_hash_token($auth_token) : $auth_token;
         
         // === НОВОЕ: Автоопределение города по поддомену ===
         $detected_city = function_exists('csc_detect_current_city') 
@@ -614,7 +617,7 @@ if (!function_exists('csc_submit_form_handler')) {
             'completion_files'    => [],
             'master_id'           => $assigned_master_id,
             'status'              => $status,
-            'auth_token'          => $auth_token,
+            'auth_token'          => $auth_token_hash, // Хэш SHA-256 (защита ЛК)
             'created_at'          => current_time('mysql'),
         ];
 
@@ -760,7 +763,13 @@ if (!function_exists('csc_get_user_orders_handler')) {
         if (!$phone) {
             wp_send_json_error(['message' => 'Введите телефон']);
         }
-        
+
+        // ИСПРАВЛЕНО: подключён лимит попыток входа против подбора телефона/заявки/token.
+        // 5 попыток на номер за 15 минут (функция была определена, но не вызывалась).
+        if (function_exists('csc_check_login_rate_limit') && !csc_check_login_rate_limit($phone)) {
+            wp_send_json_error(['message' => 'Слишком много попыток входа. Повторите через 15 минут.']);
+        }
+
         // Получаем все заказы
         $all = function_exists('csc_get_all_orders') ? csc_get_all_orders() : get_option('csc_all_orders', []);
         $response_token = '';
@@ -783,7 +792,9 @@ if (!function_exists('csc_get_user_orders_handler')) {
                 wp_send_json_error(['message' => 'УПС! Заявка не найдена']);
             }
             
-            $response_token = $target['auth_token'] ?? '';
+            // В хранилище — только хэш; клиенту возвращаем его лишь если он уже предъявлял
+            // корректный токен ранее (иначе пустая строка, токен выдаётся один раз при создании заказа)
+            $response_token = ($auth_token !== '') ? $auth_token : '';
             $user_orders = [$order_number => $target];
             
         } else {
@@ -815,7 +826,12 @@ if (!function_exists('csc_get_user_orders_handler')) {
                     
                     $order_token = $o['auth_token'] ?? '';
                     if (empty($order_token)) return false;
-                    
+
+                    // ИСПРАВЛЕНО: в хранилище лежит SHA-256 хэш; сверка через csc_verify_token
+                    // (поддерживает и старые открытые значения — ленивая миграция не меняет исходный массив)
+                    if (function_exists('csc_verify_token')) {
+                        return csc_verify_token($auth_token, $order_token);
+                    }
                     return hash_equals($order_token, $auth_token);
                 });
                 
@@ -827,7 +843,12 @@ if (!function_exists('csc_get_user_orders_handler')) {
                 wp_send_json_error(['message' => 'Заявки не найдены за последние 6 месяцев']);
             }
             
-            $response_token = $auth_token ?: (reset($user_orders)['auth_token'] ?? '');
+            $response_token = $auth_token;
+        }
+
+        // Успешный вход — сбрасываем счётчик попыток
+        if (function_exists('csc_reset_login_rate_limit')) {
+            csc_reset_login_rate_limit($phone);
         }
         
         // Сортировка по дате создания (новые первые)

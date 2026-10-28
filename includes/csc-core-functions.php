@@ -651,6 +651,209 @@ if (!function_exists('csc_reset_login_rate_limit')) {
 }
 
 /**
+* НОВОЕ (защита ЛК мастера): Лимит попыток входа по токену для кабинетов мастеров.
+* 10 неудачных попыток на одного мастера за 15 минут, затем блокировка до конца окна.
+* Ключ — md5 от ID мастера (в транзиенте не светится идентификатор).
+*
+* @param string $master_id ID мастера
+* @return array ['allowed' => bool, 'retry_after' => int секунды до разблокировки]
+*/
+if (!function_exists('csc_check_master_login_rate_limit')) {
+    function csc_check_master_login_rate_limit($master_id) {
+        if (empty($master_id)) {
+            return ['allowed' => false, 'retry_after' => 0];
+        }
+        $key = 'csc_master_login_attempts_' . md5($master_id);
+        $data = get_transient($key);
+
+        $max_attempts = 10;
+        $window = 15 * MINUTE_IN_SECONDS;
+
+        if (!$data || !is_array($data)) {
+            set_transient($key, ['attempts' => 1, 'start_time' => time()], $window);
+            return ['allowed' => true, 'retry_after' => 0];
+        }
+
+        $attempts = intval($data['attempts'] ?? 0);
+        if ($attempts >= $max_attempts) {
+            $elapsed = time() - intval($data['start_time'] ?? time());
+            return ['allowed' => false, 'retry_after' => max(1, $window - $elapsed)];
+        }
+
+        // Строгое окно: не продлеваем TTL, только увеличиваем счётчик
+        $data['attempts'] = $attempts + 1;
+        $remaining_ttl = $window - (time() - intval($data['start_time'] ?? time()));
+        if ($remaining_ttl > 0) {
+            set_transient($key, $data, $remaining_ttl);
+        }
+        return ['allowed' => true, 'retry_after' => 0];
+    }
+}
+
+/**
+* Сброс счётчика попыток входа мастера (после успешной авторизации).
+*
+* @param string $master_id ID мастера
+*/
+if (!function_exists('csc_reset_master_login_rate_limit')) {
+    function csc_reset_master_login_rate_limit($master_id) {
+        if (empty($master_id)) return;
+        delete_transient('csc_master_login_attempts_' . md5($master_id));
+    }
+}
+
+// ============================================================
+// ХЭШИРОВАНИЕ ТОКЕНОВ ДОСТУПА (SHA-256)
+// Токены ЛК (клиентов auth_token и мастеров dashboard_token) хранятся
+// только в виде необратимого хэша. Формат: 'sha256$' . hex(64).
+// Старые открытые значения распознаются по отсутствию префикса и
+// конвертируются «на лету» при первой проверке (ленивая миграция).
+// ============================================================
+
+/** Префикс хэшированного токена */
+if (!defined('CSC_TOKEN_HASH_PREFIX')) {
+    define('CSC_TOKEN_HASH_PREFIX', 'sha256$');
+}
+
+/**
+* Вычислить хэш токена (SHA-256 с солью wp_salt('auth')).
+*
+* @param string $token Исходный (открытый) токен
+* @return string Хэш вида sha256$<hex64> или '' для пустого токена
+*/
+if (!function_exists('csc_hash_token')) {
+    function csc_hash_token($token) {
+        $token = (string)$token;
+        if ($token === '') return '';
+        // Идемпотентность: уже хэш — возвращаем как есть
+        if (csc_is_hashed_token($token)) return $token;
+        $salt = function_exists('wp_salt') ? wp_salt('auth') : 'csc_fallback_salt';
+        return CSC_TOKEN_HASH_PREFIX . hash('sha256', $salt . '|' . $token);
+    }
+}
+
+/**
+* Распознать значение в формате хэша.
+*
+* @param string $value Stored-значение
+* @return bool
+*/
+if (!function_exists('csc_is_hashed_token')) {
+    function csc_is_hashed_token($value) {
+        $value = (string)$value;
+        if (strpos($value, CSC_TOKEN_HASH_PREFIX) !== 0) return false;
+        $hex = substr($value, strlen(CSC_TOKEN_HASH_PREFIX));
+        return strlen($hex) === 64 && ctype_xdigit($hex);
+    }
+}
+
+/**
+* Проверить открытый токен против stored-значения (хэш или старый открытый токен).
+* При обнаружении открытого stored-значения оно немедленно заменяется хэшем
+* через переданный колбэк (ленивая миграция). Сравнение — через hash_equals.
+*
+* @param string   $token       Предъявленный открытый токен
+* @param string   $stored      Stored-значение (хэш sha256$... или открытый токен legacy)
+* @param callable|null $on_migrate Колбэк for($new_hash), если нужно записать хэш вместо legacy
+* @return bool
+*/
+if (!function_exists('csc_verify_token')) {
+    function csc_verify_token($token, $stored, $on_migrate = null) {
+        $token  = (string)$token;
+        $stored = (string)$stored;
+        if ($token === '' || $stored === '') return false;
+
+        if (csc_is_hashed_token($stored)) {
+            return hash_equals($stored, csc_hash_token($token));
+        }
+
+        // LEGACY: открытый токен в хранилище — сверяем и мигрируем в хэш
+        $ok = hash_equals($stored, $token);
+        if ($ok && is_callable($on_migrate)) {
+            $on_migrate(csc_hash_token($token));
+        }
+        return $ok;
+    }
+}
+
+/**
+* Миграция хэширования токенов: разово конвертирует все открытые
+* auth_token заказов и dashboard_token мастеров в хэши SHA-256.
+* Идемпотентна, запускается из админки и из hook активации плагина.
+*
+* @return array Статистика: ['orders' => int, 'masters' => int]
+*/
+if (!function_exists('csc_run_token_hash_migration')) {
+    function csc_run_token_hash_migration() {
+        global $wpdb;
+        $stats = ['orders' => 0, 'masters' => 0];
+
+        // 1. Заказы: фолбэк-хранилище wp_options
+        $all_orders = get_option('csc_all_orders', []);
+        if (is_array($all_orders) && !empty($all_orders)) {
+            $changed = false;
+            foreach ($all_orders as $num => &$order) {
+                if (!is_array($order)) continue;
+                $t = $order['auth_token'] ?? '';
+                if ($t !== '' && !csc_is_hashed_token($t)) {
+                    $order['auth_token'] = csc_hash_token($t);
+                    $changed = true;
+                    $stats['orders']++;
+                }
+            }
+            unset($order);
+            if ($changed) {
+                update_option('csc_all_orders', $all_orders, false);
+            }
+        }
+
+        // 2. Заказы: основная таблица {prefix}csc_orders (если создана)
+        $table = $wpdb->prefix . 'csc_orders';
+        $table_exists = ($wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table)) === $table);
+        if ($table_exists) {
+            $rows = $wpdb->get_results("SELECT id, auth_token FROM {$table} WHERE auth_token <> '' AND auth_token NOT LIKE 'sha256\\$%'", ARRAY_A);
+            if (is_array($rows)) {
+                foreach ($rows as $row) {
+                    $hash = csc_hash_token($row['auth_token']);
+                    if ($hash !== '') {
+                        $wpdb->update($table, ['auth_token' => $hash], ['id' => intval($row['id'])]);
+                        $stats['orders']++;
+                    }
+                }
+            }
+        }
+
+        // 3. Мастера: option csc_masters_list
+        $masters = get_option('csc_masters_list', []);
+        if (is_array($masters) && !empty($masters)) {
+            $changed = false;
+            foreach ($masters as $mid => &$mdata) {
+                if (!is_array($mdata)) continue;
+                $t = $mdata['dashboard_token'] ?? '';
+                if ($t !== '' && !csc_is_hashed_token($t)) {
+                    $mdata['dashboard_token'] = csc_hash_token($t);
+                    $changed = true;
+                    $stats['masters']++;
+                }
+            }
+            unset($mdata);
+            if ($changed) {
+                update_option('csc_masters_list', $masters, false);
+                if (function_exists('csc_cache_delete_masters')) {
+                    csc_cache_delete_masters();
+                } else {
+                    wp_cache_delete('csc_masters_list_v2');
+                }
+            }
+        }
+
+        // Логируем без раскрытия секретов — только количество сконвертированных значений
+        error_log('[CSC_SECURITY] Миграция хэширования токенов: заказов=' . $stats['orders'] . ', мастеров=' . $stats['masters']);
+        return $stats;
+    }
+}
+
+/**
 * Получить IP клиента с учётом прокси / балансировщика.
 * ИСПРАВЛЕНО: поддержка X-Forwarded-For, X-Real-IP.
 */
