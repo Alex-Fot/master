@@ -1110,6 +1110,88 @@ if (!function_exists('csc_issue_master_login_token')) {
 }
 
 /**
+ * ИСПРАВЛЕНО (баг «Недостаточно данных» / «Ссылка: Отсутствует» в админке):
+ * AJAX-хендлер csc_save_master_token перенесён из includes/csc-masters.php
+ * в ядро. Модуль csc-masters.php подключается только при рендере страницы
+ * настроек через includes/csc-admin-pages.php, поэтому при вызове из других
+ * контекстов add_action() не регистрировался и admin-ajax возвращал 400 с
+ * пустым телом («Недостаточно данных» на JS-стороне при парсинге ответа).
+ */
+if (!function_exists('csc_save_master_token_ajax')) {
+    function csc_save_master_token_ajax() {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => __('Доступ запрещен', 'csc')));
+        }
+        if (!check_ajax_referer('csc_masters_action', '_wpnonce', false)) {
+            wp_send_json_error(array('message' => __('Ошибка безопасности', 'csc')));
+        }
+
+        $mid   = sanitize_text_field($_POST['mid'] ?? '');
+        $regen = !empty($_POST['regen']);
+
+        if ($mid === '') {
+            wp_send_json_error(array('message' => __('Не указан ID мастера', 'csc')));
+        }
+
+        if (!function_exists('csc_get_masters')) {
+            $m_file = dirname(__FILE__) . '/csc-masters.php';
+            if (file_exists($m_file)) {
+                require_once $m_file;
+            }
+        }
+        if (!function_exists('csc_get_masters')) {
+            wp_send_json_error(array('message' => __('Модуль мастеров недоступен', 'csc')));
+        }
+
+        $masters = csc_get_masters(true);
+        if (!isset($masters[$mid])) {
+            wp_send_json_error(array('message' => __('Мастер не найден', 'csc')));
+        }
+
+        // SHA-256: админ не вводит «живой» токен.
+        // 1) regen=1 — сервер создаёт новый постоянный токен, в хранилище кладётся только его хэш;
+        // 2) без regen — поле формы передаётся только как stored (хэш sha256$... или legacy открытый).
+        $token = sanitize_text_field($_POST['token'] ?? '');
+
+        if ($regen) {
+            $plain = bin2hex(random_bytes(24)); // 48 символов
+            $masters[$mid]['dashboard_token'] = csc_hash_token($plain);
+            csc_save_masters($masters);
+        } elseif (!empty($token)) {
+            if (csc_is_hashed_token($token)) {
+                $stored = $token;
+            } elseif (strlen($token) >= 16) {
+                $stored = csc_hash_token($token);
+            } else {
+                wp_send_json_error(array('message' => __('Слишком короткий токен (минимум 16 символов)', 'csc')));
+            }
+            $masters[$mid]['dashboard_token'] = $stored;
+            csc_save_masters($masters);
+        }
+
+        // Если stored-токена всё ещё нет (новый мастер) — генерируем,
+        // чтобы ссылка кабинета была рабочей.
+        if (empty($masters[$mid]['dashboard_token'])) {
+            $plain = bin2hex(random_bytes(24));
+            $masters[$mid]['dashboard_token'] = csc_hash_token($plain);
+            csc_save_masters($masters);
+        }
+
+        // Ссылка входа формируется с одноразовым входным креденшелом,
+        // а не со stored-значением (хэш в URL недопустим).
+        $login_token = csc_issue_master_login_token($mid, $masters);
+
+        wp_send_json_success(array(
+            'message' => __('Токен сохранен', 'csc'),
+            'link'    => $login_token !== ''
+                ? home_url('/?csc_master_dashboard=1&mid=' . urlencode($mid) . '&token=' . urlencode($login_token))
+                : home_url('/?csc_master_dashboard=1'),
+        ));
+    }
+    add_action('wp_ajax_csc_save_master_token', 'csc_save_master_token_ajax');
+}
+
+/**
 * ИСПРАВЛЕНО (защита ЛК мастера): проверка одноразового входного токена.
 * Возвращает master_id при совпадении и УДАЛЯЕТ transient (однократное использование).
 *
