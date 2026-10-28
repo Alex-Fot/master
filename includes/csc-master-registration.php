@@ -198,8 +198,9 @@ if (!function_exists('csc_render_become_master_form')) {
 
         // КРИТИЧНО ИСПРАВЛЕНО: Leaflet загружается ПЕРЕД нашим скриптом (в header, не в footer)
         // Это гарантирует что L будет доступен когда наш JS вызовет initRegistrationMap()
-        wp_enqueue_style('csc-leaflet', 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css', [], '1.9.4');
-        wp_enqueue_script('csc-leaflet', 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js', [], '1.9.4', false);
+        // Локальные копии библиотек (стабильность без интернета; CDN unpkg больше не используется)
+        wp_enqueue_style('csc-leaflet', CSC_PLUGIN_URL . 'assets/vendor/leaflet/leaflet.css', [], '1.9.4');
+        wp_enqueue_script('csc-leaflet', CSC_PLUGIN_URL . 'assets/vendor/leaflet/leaflet.js', [], '1.9.4', false);
 		
         wp_enqueue_style('csc-master-registration');
         wp_enqueue_script('csc-master-registration');
@@ -223,6 +224,10 @@ if (!function_exists('csc_render_become_master_form')) {
             'radiusMax' => 20,
             'radiusDefault' => 10,
             'nonce' => wp_create_nonce('wp_rest'),
+            // Локальные пути библиотек (Leaflet) — вместо CDN unpkg
+            'leafletCss'    => CSC_PLUGIN_URL . 'assets/vendor/leaflet/leaflet.css',
+            'leafletJs'     => CSC_PLUGIN_URL . 'assets/vendor/leaflet/leaflet.js',
+            'leafletImages' => CSC_PLUGIN_URL . 'assets/vendor/leaflet/images/',
             // i18n: словарь строк интерфейса формы регистрации (cscI18n.t('key'))
             'i18n'  => function_exists('csc_js_strings_registration') ? csc_js_strings_registration() : [],
         ]);

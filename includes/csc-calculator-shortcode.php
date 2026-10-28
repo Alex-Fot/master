@@ -30,7 +30,7 @@ function csc_calculator_shortcode() {
     ob_start();
     ?>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="<?php echo esc_url(CSC_PLUGIN_URL . 'assets/vendor/html2canvas/html2canvas.min.js'); ?>"></script>
 <style>
 :root {
     --csc-primary: #3b82f6;

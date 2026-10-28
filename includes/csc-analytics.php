@@ -200,11 +200,11 @@ function csc_get_zones_coverage_data_handler() {
 // 3. ГЛАВНАЯ ФУНКЦИЯ ОТРИСОВКИ СТРАНИЦЫ
 // ============================================================
 function csc_render_analytics_page() {
-    // Подключение внешних библиотек
-    wp_enqueue_script('chart-js', 'https://cdn.jsdelivr.net/npm/chart.js', [], '3.9.1', true);
-    wp_enqueue_script('sheetjs', 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js', [], '0.18.5', true);
-    wp_enqueue_style('leaflet-css', 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css', [], '1.9.4');
-    wp_enqueue_script('leaflet-js', 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js', [], '1.9.4', true);
+    // Подключение внешних библиотек — локальные копии (работает без доступа к CDN)
+    wp_enqueue_script('chart-js', CSC_PLUGIN_URL . 'assets/vendor/chartjs/chart.umd.js', [], '3.9.1', true);
+    wp_enqueue_script('sheetjs', CSC_PLUGIN_URL . 'assets/vendor/xlsx/xlsx.full.min.js', [], '0.18.5', true);
+    wp_enqueue_style('leaflet-css', CSC_PLUGIN_URL . 'assets/vendor/leaflet/leaflet.css', [], '1.9.4');
+    wp_enqueue_script('leaflet-js', CSC_PLUGIN_URL . 'assets/vendor/leaflet/leaflet.js', [], '1.9.4', true);
 
     $masters = function_exists('csc_get_masters') ? csc_get_masters() : [];
     $default_start = date('Y-m-01');

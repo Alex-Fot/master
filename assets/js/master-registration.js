@@ -391,16 +391,21 @@ function loadLeafletDynamically(callback) {
         return;
     }
     
+    // Локальные копии Leaflet из assets плагина (fallback на unpkg, если конфиг не передан)
+    const cscCfg = (typeof CSC_REGISTRATION_CONFIG !== 'undefined') ? CSC_REGISTRATION_CONFIG : {};
+    const leafletCssUrl = cscCfg.leafletCss || 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+    const leafletJsUrl  = cscCfg.leafletJs  || 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+
     if (!document.getElementById('leaflet-css-dynamic')) {
         const css = document.createElement('link');
         css.id = 'leaflet-css-dynamic';
         css.rel = 'stylesheet';
-        css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+        css.href = leafletCssUrl;
         document.head.appendChild(css);
     }
     
     const script = document.createElement('script');
-    script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+    script.src = leafletJsUrl;
     script.onload = function() { callback(); };
     document.head.appendChild(script);
 }
@@ -433,7 +438,9 @@ function createMap() {
     if (!mapEl || mapInitialized) return;
     if (typeof L === 'undefined') return;
 
-    L.Icon.Default.prototype.options.imagePath = 'https://unpkg.com/leaflet@1.9.4/dist/images/';
+    const cscLeafletImg = ((typeof CSC_REGISTRATION_CONFIG !== 'undefined' && CSC_REGISTRATION_CONFIG.leafletImages) ? CSC_REGISTRATION_CONFIG.leafletImages : 'https://unpkg.com/leaflet@1.9.4/dist/images/');
+    window.CSC_LEAFLET_IMG = cscLeafletImg;
+    L.Icon.Default.prototype.options.imagePath = cscLeafletImg;
 
     const center = Array.isArray(CONFIG.mapCenter) && CONFIG.mapCenter.length === 2
         ? CONFIG.mapCenter
@@ -466,9 +473,9 @@ function createMap() {
         tileLayer.addTo(registrationMap);
 
         const customIcon = L.icon({
-            iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-            iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-            shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+            iconUrl: (window.CSC_LEAFLET_IMG || 'https://unpkg.com/leaflet@1.9.4/dist/images/') + 'marker-icon.png',
+            iconRetinaUrl: (window.CSC_LEAFLET_IMG || 'https://unpkg.com/leaflet@1.9.4/dist/images/') + 'marker-icon-2x.png',
+            shadowUrl: (window.CSC_LEAFLET_IMG || 'https://unpkg.com/leaflet@1.9.4/dist/images/') + 'marker-shadow.png',
             iconSize: [25, 41],
             iconAnchor: [12, 41],
             popupAnchor: [1, -34],

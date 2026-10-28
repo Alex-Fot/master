@@ -200,9 +200,9 @@ if (!function_exists('csc_render_master_dashboard')) {
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>Кабинет мастера | <?php echo esc_html($master_name); ?></title>
     
-    <!-- Подключение Leaflet для карты зоны обслуживания -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Подключение Leaflet для карты зоны обслуживания (локальная копия) -->
+    <link rel="stylesheet" href="<?php echo esc_url(CSC_PLUGIN_URL . 'assets/vendor/leaflet/leaflet.css'); ?>" />
+    <script src="<?php echo esc_url(CSC_PLUGIN_URL . 'assets/vendor/leaflet/leaflet.js'); ?>"></script>
     
     <?php wp_head(); ?>
 </head>
