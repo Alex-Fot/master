@@ -291,15 +291,15 @@ if (!function_exists('csc_format_order_history')) {
         ];
 
         $status_labels = [
-            ''                  => '(создание)',
-            CSC_STATUS_PENDING           => 'Ожидает',
-            CSC_STATUS_SEARCHING => 'Поиск мастера',
-            CSC_STATUS_AWAITING_PAYMENT => 'Ожидает оплаты',
-            CSC_STATUS_PROCESSING => 'В работе',
-            CSC_STATUS_COMPLETED         => 'Выполнено',
-            CSC_STATUS_CANCELLED          => 'Отменено',
-            CSC_STATUS_NO_MASTERS => 'Нет мастеров',
-            CSC_STATUS_ROUTING_TIMEOUT => 'Ошибка: время поиска истекло',
+            ''                  => __('(создание)', 'csc'),
+            CSC_STATUS_PENDING           => __('Ожидает', 'csc'),
+            CSC_STATUS_SEARCHING => __('Поиск мастера', 'csc'),
+            CSC_STATUS_AWAITING_PAYMENT => __('Ожидает оплаты', 'csc'),
+            CSC_STATUS_PROCESSING => __('В работе', 'csc'),
+            CSC_STATUS_COMPLETED         => __('Выполнено', 'csc'),
+            CSC_STATUS_CANCELLED          => __('Отменено', 'csc'),
+            CSC_STATUS_NO_MASTERS => __('Нет мастеров', 'csc'),
+            CSC_STATUS_ROUTING_TIMEOUT => __('Ошибка: время поиска истекло', 'csc'),
         ];
         
         $financial_statuses = [
