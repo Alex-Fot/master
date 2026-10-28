@@ -633,6 +633,10 @@ if (!function_exists('csc_submit_form_handler')) {
             $all_orders = get_option('csc_all_orders', []);
             $all_orders[$order_number] = $order_data;
             update_option('csc_all_orders', $all_orders, false);
+            // Инвалидация кэша заказов при фолбэк-записи мимо csc_save_order
+            if (function_exists('csc_cache_delete_orders')) {
+                csc_cache_delete_orders();
+            }
         }
         
         do_action('csc_order_created', $order_number, $order_data);
@@ -994,6 +998,10 @@ if (!function_exists('csc_cancel_order_handler')) {
             $all = get_option('csc_all_orders', []);
             $all[$num] = $order;
             update_option('csc_all_orders', $all, false);
+            // Инвалидация кэша заказов при фолбэк-записи мимо csc_update_order
+            if (function_exists('csc_cache_delete_orders')) {
+                csc_cache_delete_orders();
+            }
         }
 
         // ============================================================
