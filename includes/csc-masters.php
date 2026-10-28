@@ -608,12 +608,6 @@ if (!function_exists('csc_masters_admin_page')) {
                     <button type="button" class="button button-primary" id="csc-dash-copy-btn">📋 Копировать</button>
                 </div>
 
-                <label style="display:block; font-size:13px; font-weight:600; margin-bottom:6px; color:#64748b;">Токен доступа (для отладки):</label>
-                <div style="display:flex; gap:8px; margin-bottom:16px;">
-                    <input type="text" id="csc-dash-token-input" readonly style="flex:1; padding:10px; border:1px solid #e2e8f0; border-radius:6px; font-size:12px; background:#f8fafc; font-family:monospace;" onclick="this.select();">
-                    <button type="button" class="button" id="csc-dash-token-copy-btn">📋</button>
-                </div>
-
                 <div style="display:flex; gap:8px; justify-content:space-between; align-items:center;">
                     <button type="button" class="button button-link-delete" id="csc-dash-regen-btn" title="Сгенерировать новый токен. Старая ссылка перестанет работать.">🔄 Сбросить токен</button>
                     <button type="button" class="button" onclick="document.getElementById('csc-dash-link-modal').style.display='none'">Закрыть</button>
@@ -648,7 +642,6 @@ if (!function_exists('csc_masters_admin_page')) {
         function cscShowDashboardLink(masterId, masterName, btnEl) {
             const modal = document.getElementById('csc-dash-link-modal');
             const linkInput = document.getElementById('csc-dash-link-input');
-            const tokenInput = document.getElementById('csc-dash-token-input');
             const statusEl = document.getElementById('csc-dash-status');
             const hiddenInput = btnEl.closest('td').querySelector('input[name*="dashboard_token"]');
 
@@ -659,9 +652,9 @@ if (!function_exists('csc_masters_admin_page')) {
             statusEl.textContent = '⏳ Получение ссылки...';
             statusEl.style.color = '#64748b';
 
-            // КЛИЕНТСКАЯ ГЕНЕРАЦИЯ ТОКЕНОВ УБРАНА (SHA-256): ссылка и токен выдаются
+            // КЛИЕНТСКАЯ ГЕНЕРАЦИЯ ТОКЕНОВ УБРАНА (SHA-256): ссылка выдаётся
             // сервером (AJAX csc_save_master_token) — в хранилище только хэш,
-            // в URL — одноразовый входной креденшел.
+            // в URL — одноразовый входной креденшел. «Живой» токен не показывается.
             const fd = new FormData();
             fd.append('action', 'csc_save_master_token');
             fd.append('mid', masterId);
@@ -678,9 +671,8 @@ if (!function_exists('csc_masters_admin_page')) {
             .then(res => {
                 if (res.success) {
                     linkInput.value = res.data.link || '';
-                    tokenInput.value = '—'; // «живой» токен не отображается: хранится только хэш
                     modal.style.display = 'flex';
-                    statusEl.textContent = '✅ Ссылка сгенерирована на сервере. Старые постоянные ссылки больше не используются.';
+                    statusEl.textContent = '✅ Ссылка готова (одноразовый вход). Постоянный токен хранится в виде хэша.';
                     statusEl.style.color = '#10b981';
                 } else {
                     modal.style.display = 'flex';
@@ -709,19 +701,9 @@ if (!function_exists('csc_masters_admin_page')) {
             });
         });
 
-        document.getElementById('csc-dash-token-copy-btn').addEventListener('click', function() {
-            const input = document.getElementById('csc-dash-token-input');
-            input.select();
-            navigator.clipboard.writeText(input.value).catch(() => document.execCommand('copy'));
-            const statusEl = document.getElementById('csc-dash-status');
-            statusEl.textContent = '✅ Токен скопирован';
-            statusEl.style.color = '#10b981';
-        });
-
         document.getElementById('csc-dash-regen-btn').addEventListener('click', function() {
             if (!confirm('Сбросить токен? Старая ссылка на кабинет перестанет работать.')) return;
 
-            const tokenInput = document.getElementById('csc-dash-token-input');
             const linkInput = document.getElementById('csc-dash-link-input');
             const statusEl = document.getElementById('csc-dash-status');
 
@@ -747,7 +729,6 @@ if (!function_exists('csc_masters_admin_page')) {
             .then(res => {
                 if (res.success) {
                     linkInput.value = res.data.link || '';
-                    tokenInput.value = '—';
                     statusEl.textContent = '✅ Новый токен сохранен на сервере!';
                     statusEl.style.color = '#10b981';
                 } else {
@@ -1555,34 +1536,47 @@ if (!function_exists('csc_save_master_token_ajax')) {
         }
 
         $mid = sanitize_text_field($_POST['mid'] ?? '');
+        $regen = !empty($_POST['regen']);
 
-        // ИСПРАВЛЕНО (SHA-256): админ больше не вводит «живой» токен — значение из
-        // поля формы используется только как stored (хэш sha256$... или legacy открытый).
-        $token = sanitize_text_field($_POST['token'] ?? '');
-
-        if (empty($mid) || empty($token)) {
-            wp_send_json_error(['message' => 'Недостаточно данных']);
+        if (empty($mid)) {
+            wp_send_json_error(array('message' => __('Не указан ID мастера', 'csc')));
         }
 
         // Получаем свежий список мастеров (сброс кэша)
         $masters = csc_get_masters(true);
 
         if (!isset($masters[$mid])) {
-            wp_send_json_error(['message' => 'Мастер не найден']);
+            wp_send_json_error(array('message' => __('Мастер не найден', 'csc')));
         }
 
-        // Сохраняем stored-значение: хэш приводим к каноническому виду,
-        // legacy открытое значение длиной < 16 символов отклоняем.
-        if (csc_is_hashed_token($token)) {
-            $stored = $token;
-        } elseif (strlen($token) >= 16) {
-            $stored = function_exists('csc_hash_token') ? csc_hash_token($token) : $token;
-        } else {
-            wp_send_json_error(['message' => 'Слишком короткий токен (минимум 16 символов)']);
-        }
+        // ИСПРАВЛЕНО (SHA-256): админ больше не вводит «живой» токен.
+        // 1) regen=1 — сервер создаёт новый постоянный токен, в хранилище кладётся только его хэш;
+        // 2) без regen — поле формы передаётся только как stored (хэш sha256$... или legacy открытый),
+        //    что сохраняет совместимость со скрытым полем таблицы мастеров при обычном сохранении.
+        $token = sanitize_text_field($_POST['token'] ?? '');
 
-        $masters[$mid]['dashboard_token'] = $stored;
-        csc_save_masters($masters);
+        if ($regen) {
+            $plain = bin2hex(random_bytes(24)); // 48 символов
+            $masters[$mid]['dashboard_token'] = csc_hash_token($plain);
+            csc_save_masters($masters);
+        } elseif (!empty($token)) {
+            if (csc_is_hashed_token($token)) {
+                $stored = $token;
+            } elseif (strlen($token) >= 16) {
+                $stored = function_exists('csc_hash_token') ? csc_hash_token($token) : $token;
+            } else {
+                wp_send_json_error(array('message' => __('Слишком короткий токен (минимум 16 символов)', 'csc')));
+            }
+            $masters[$mid]['dashboard_token'] = $stored;
+            csc_save_masters($masters);
+        }
+        // Если stored-токена всё ещё нет (новый мастер / пустое поле) — генерируем,
+        // чтобы ссылка кабинета была рабочей.
+        if (empty($masters[$mid]['dashboard_token'])) {
+            $plain = bin2hex(random_bytes(24));
+            $masters[$mid]['dashboard_token'] = csc_hash_token($plain);
+            csc_save_masters($masters);
+        }
 
         // Ссылка входа формируется с одноразовым входным креденшелом,
         // а не с stored-значением (хэш в URL недопустим).
