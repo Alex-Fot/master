@@ -100,13 +100,7 @@ if (!function_exists('csc_render_master_dashboard')) {
         // Устранена мёртвая ветка: прежний второй `if (!hash_equals(...))` после проверки
         // одноразового токена отклонял корректные одноразовые ссылки — удалён.
         if (!$is_valid_token) {
-        // Неудачная попытка уже засчитана в csc_check_master_login_rate_limit выше.
         wp_die(__('Доступ запрещен. Ссылка недействительна или истекла.', 'csc'), __('Ошибка доступа', 'csc'), ['response' => 403]);
-        }
-
-        // Успешный вход — сбрасываем счётчик попыток
-        if (function_exists('csc_reset_master_login_rate_limit')) {
-        csc_reset_master_login_rate_limit($mid);
         }
 
         // Автогенерация постоянного токена, если отсутствует (всегда в хэшированном виде).
@@ -118,6 +112,14 @@ if (!function_exists('csc_render_master_dashboard')) {
         if (function_exists('csc_cache_delete_masters')) {
         csc_cache_delete_masters();
         }
+        $new_token = $masters[$mid]['dashboard_token'];
+        $new_url = home_url('/?csc_master_dashboard=1&mid=' . urlencode($mid) . '&token=' . urlencode($new_token));
+        wp_redirect($new_url);
+        exit;
+        }
+
+        if (!hash_equals($stored_token, (string)$token)) {
+            wp_die(__('Доступ запрещен. Ссылка недействительна или истекла.', 'csc'), __('Ошибка доступа', 'csc'), ['response' => 403]);
         }
 
         // Проверка статуса модерации
