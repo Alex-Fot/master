@@ -1445,11 +1445,26 @@ function csc_orders_admin_page() {
         });
     }
 
-    // Счётчики для чипов быстрой фильтрации
-    $status_counts = [];
-    foreach (csc_get_all_orders() as $o) {
-        $st = $o['status'] ?? '';
-        $status_counts[$st] = ($status_counts[$st] ?? 0) + 1;
+    // ОПТИМИЗАЦИЯ (Кэш заказов): счётчики чипов через SQL GROUP BY
+    // (csc_get_order_status_counts) вместо перечитывания всего списка;
+    // повторный запрос к кэшу/БД здесь больше не нужен.
+    $status_counts = function_exists('csc_get_order_status_counts')
+        ? csc_get_order_status_counts()
+        : [];
+    if ($payment_status_filter !== '') {
+        // Для комбинированного чипа «статус:платёж» считаем по отфильтрованному списку
+        $awaiting_with_payment = 0;
+        foreach ($all_orders as $o) {
+            if (($o['status'] ?? '') === CSC_STATUS_AWAITING_PAYMENT
+                && ($o['payment_status'] ?? '') === 'pending') {
+                $awaiting_with_payment++;
+            }
+        }
+        $chip_key = CSC_STATUS_AWAITING_PAYMENT . ':pending';
+        $status_counts[$chip_key] = $awaiting_with_payment;
+    }
+    if (!isset($status_counts[CSC_STATUS_AWAITING_PAYMENT])) {
+        $status_counts[CSC_STATUS_AWAITING_PAYMENT] = 0;
     }
 
     // ============================================================
