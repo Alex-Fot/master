@@ -776,6 +776,40 @@ if (!function_exists('csc_verify_token')) {
     }
 }
 
+if (!function_exists('csc_update_order_auth_token')) {
+    /**
+     * Заменить stored-значение auth_token заказа (ленивая миграция legacy → SHA-256).
+     * Обновляет и таблицу {prefix}csc_orders, и фолбэк-хранилище wp_options.
+     *
+     * @param string $order_number Номер заказа
+     * @param string $new_hash     Новое stored-значение (хэш)
+     * @return bool
+     */
+    function csc_update_order_auth_token($order_number, $new_hash) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'csc_orders';
+        $ok = false;
+        if ($wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table)) === $table) {
+            $affected = (int) $wpdb->update(
+                $table,
+                ['auth_token' => $new_hash],
+                ['order_number' => $order_number]
+            );
+            $ok = ($affected >= 0);
+        }
+        $all_orders = get_option('csc_all_orders', []);
+        if (is_array($all_orders) && isset($all_orders[$order_number]) && is_array($all_orders[$order_number])) {
+            $all_orders[$order_number]['auth_token'] = $new_hash;
+            update_option('csc_all_orders', $all_orders, false);
+            if (function_exists('csc_cache_delete_orders')) {
+                csc_cache_delete_orders();
+            }
+            $ok = true;
+        }
+        return $ok;
+    }
+}
+
 /**
 * Миграция хэширования токенов: разово конвертирует все открытые
 * auth_token заказов и dashboard_token мастеров в хэши SHA-256.
