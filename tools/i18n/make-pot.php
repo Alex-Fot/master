@@ -46,9 +46,9 @@ function csc_parse_args(array $tokens, int &$i): array
 {
     $args = [];
     $cur = '';
-    $cur_pure = true; // только литералы без переменных
+    $cur_pure = true;     // текущий аргумент — чистый литерал (только T_CONSTANT_ENCAPSED_STRING и конкатенация)
     $cur_has_lit = false; // в текущем аргументе был хотя бы один строковый литерал
-    $depth = 0;
+    $depth = 0;           // глубина вложенных ( ) / [ ] / { } относительно аргументной скобки
     $n = count($tokens);
 
     $flush = function () use (&$cur, &$cur_pure, &$cur_has_lit, &$args) {
@@ -56,7 +56,7 @@ function csc_parse_args(array $tokens, int &$i): array
         if ($val === '' || !$cur_has_lit) {
             $args[] = null; // пусто или выражение без литерала (переменные и т.п.)
         } elseif ($cur_pure) {
-            $args[] = $val; // чистый литерал (в т.ч. склеенный конкатенацией, с %s и знаками препинания)
+            $args[] = $val; // чистый литерал
         } else {
             $args[] = null; // смешанное выражение — не извлекаем
         }
@@ -64,10 +64,6 @@ function csc_parse_args(array $tokens, int &$i): array
         $cur_pure = true;
         $cur_has_lit = false;
     };
-
-    // Отладка: CSC_POT_DEBUG=<подстрока msgid> — печатает разобранные аргументы вызовов,
-    // содержащих эту подстроку (для диагностики пропущенных строк).
-    $dbg = getenv('CSC_POT_DEBUG');
 
     // Вызывающий код передал позицию сразу за открывающей скобкой '('.
     for (; $i < $n; $i++) {
@@ -80,47 +76,31 @@ function csc_parse_args(array $tokens, int &$i): array
                 } else {
                     $str = stripcslashes($str);
                 }
-                $cur .= $str;
-                $cur_has_lit = true;
-            } elseif ($t[0] === T_ENCAPSED_AND_WHITESPACE) {
-                $cur .= $t[1];
-            } else {
-                $cur_pure = false;
-                if (!in_array($t[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
-                    $cur .= $t[1];
+                if ($depth === 0) {
+                    $cur .= $str;
+                    $cur_has_lit = true;
                 }
+            } elseif ($t[0] === T_WHITESPACE || $t[0] === T_COMMENT || $t[0] === T_DOC_COMMENT) {
+                // шум — не влияет на чистоту литерала
+            } else {
+                // любая переменная, вызов функции, интерполяция и т.п. — аргумент не извлекаем
+                $cur_pure = false;
             }
         } else {
-            if ($t === '(') { $depth++; $cur .= $t; $cur_pure = false; }
-            elseif ($t === ')') {
-                if ($depth === 0) { $flush(); break; }
+            if ($t === '(' || $t === '[' || $t === '{') {
+                $depth++;
+                $cur_pure = false; // вложенные структуры внутри аргумента
+            } elseif ($t === ')' || $t === ']' || $t === '}') {
+                if ($depth === 0) { $flush(); break; } // закрывающая скобка вызова
                 $depth--;
-                $cur .= $t;
-            } elseif ($t === '[' || $t === ']') {
-                // скобки массивов внутри аргумента (например, ['message' => __('...','csc')]) —
-                // не прерывают разбор литерала и НЕ помечают его «нечистым»
-                $cur .= $t;
-            } elseif ($t === '{' || $t === '}') {
-                $cur .= $t;
-                $cur_pure = false;
             } elseif ($t === ',' && $depth === 0) {
                 $flush();
+            } elseif ($t === '.') {
+                // конкатенация: склеивает части литерала; переменные уже пометили cur_pure=false
             } else {
-                if ($t === '.') {
-                    // конкатенация: склеивает части литерала; переменные уже пометили cur_pure=false
-                    continue;
-                }
-                if ($t === '"' || $t === "'" || $t === '`') {
-                    // маркеры строк/наследия от heredoc-разборов — игнорируем как шум
-                    continue;
-                }
-                $cur .= $t;
                 $cur_pure = false;
             }
         }
-    }
-    if ($dbg !== false && $dbg !== '' && strpos(json_encode($args, JSON_UNESCAPED_UNICODE), $dbg) !== false) {
-        fwrite(STDERR, "DEBUG parse_args at start: " . json_encode($args, JSON_UNESCAPED_UNICODE) . "\n");
     }
     return $args;
 }
@@ -212,6 +192,14 @@ foreach (array_keys($single) as $msgid) {
 }
 
 $pot_path = $root . '/languages/csc.pot';
+
+// Защита от перезаписи пустым каталогом: если ничего не извлечено, но POT уже существует —
+// считаем это сбоем экстрактора и выходим с ошибкой, не трогая файл.
+if (count($single) === 0 && file_exists($pot_path)) {
+    fwrite(STDERR, "ERROR: extracted 0 entries while existing POT found — refusing to overwrite. Check extractor.\n");
+    exit(2);
+}
+
 if (!is_dir(dirname($pot_path))) mkdir(dirname($pot_path), 0755, true);
 file_put_contents($pot_path, $out);
 echo "Wrote $pot_path: $count_single singular, $count_plural plural entries (" . count($single) . " unique msgids)\n";
