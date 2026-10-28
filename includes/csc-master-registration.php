@@ -181,8 +181,18 @@ if (!function_exists('csc_render_become_master_form')) {
             $token = sanitize_text_field($_GET['token']);
             $masters = function_exists('csc_get_masters') ? csc_get_masters() : [];
             
-            if (isset($masters[$mid]) && isset($masters[$mid]['dashboard_token']) && $masters[$mid]['dashboard_token'] === $token) {
-                return '<div style="padding:40px;text-align:center;background:#dcfce7;border:2px solid #86efac;border-radius:12px;max-width:700px;margin:0 auto;">Вы уже зарегистрированы. <a href="' . esc_url(home_url('/?csc_master_dashboard=1&mid=' . urlencode($mid) . '&token=' . urlencode($token))) . '">Перейти в кабинет</a></div>';
+// Проверка через csc_verify_token: поддерживает хэш (sha256$...) и legacy-открытый токен.
+            if (isset($masters[$mid]) && !empty($masters[$mid]['dashboard_token'])
+                && function_exists('csc_verify_token')
+                && csc_verify_token($token, $masters[$mid]['dashboard_token'], null)) {
+// Ссылка в кабинет — на одноразовом входном креденшеле, а не на предъявленном токене.
+                $login_token = function_exists('csc_issue_master_login_token')
+                    ? csc_issue_master_login_token($mid, $masters)
+                    : '';
+                $dash_url = $login_token !== ''
+                    ? home_url('/?csc_master_dashboard=1&mid=' . urlencode($mid) . '&token=' . urlencode($login_token))
+                    : home_url('/?csc_master_dashboard=1');
+                return '<div style="padding:40px;text-align:center;background:#dcfce7;border:2px solid #86efac;border-radius:12px;max-width:700px;margin:0 auto;">Вы уже зарегистрированы. <a href="' . esc_url($dash_url) . '">Перейти в кабинет</a></div>';
             }
         }
 
@@ -1200,7 +1210,9 @@ if (!function_exists('csc_handle_register_master')) {
 
         // Генерация ID и токена
         $master_id = 'm_' . wp_generate_password(8, false);
-        $dashboard_token = wp_generate_password(32, false);
+        // Токен сохраняется только в виде хэша (SHA-256); открытое значение не попадает в БД.
+        $raw_dashboard_token = wp_generate_password(32, false);
+        $dashboard_token = function_exists('csc_hash_token') ? csc_hash_token($raw_dashboard_token) : $raw_dashboard_token;
 
         // Формирование расписания
         $formatted_schedule = [];
@@ -1465,7 +1477,14 @@ if (!function_exists('csc_send_registration_notifications')) {
         
         // Мастеру об одобрении
         if ($settings['auto_approve']) {
-            $dashboard_url = home_url('/?csc_master_dashboard=1&mid=' . urlencode($master['id']) . '&token=' . urlencode($master['dashboard_token']));
+            // Ссылка входа строится на одноразовом входном креденшеле:
+            // в хранилище лежит хэш, открытый токен в e-mail не подставляется.
+            $login_token = function_exists('csc_issue_master_login_token')
+                ? csc_issue_master_login_token($master['id'], csc_get_masters(true))
+                : '';
+            $dashboard_url = $login_token !== ''
+                ? home_url('/?csc_master_dashboard=1&mid=' . urlencode($master['id']) . '&token=' . urlencode($login_token))
+                : home_url('/?csc_master_dashboard=1');
             $subject = '✅ Вы зарегистрированы как мастер!';
             $message = "Здравствуйте, {$master['name']}!\n";
             $message .= "Ваша заявка на регистрацию успешно одобрена.\n";
