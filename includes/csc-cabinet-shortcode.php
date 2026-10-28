@@ -507,6 +507,11 @@ const MAX_REVIEW_PHOTOS  = 10;
 const MAX_REVIEW_PHOTO_SIZE = 5 * 1024 * 1024; // 5 МБ
 const SOUND_URL = '<?php echo esc_js($sound_url); ?>';
 
+// ИСПРАВЛЕНО (защита ЛК): токен сессии клиента хранится только в памяти страницы.
+// Выдаётся сервером при входе (res.data.auth_token) и подставляется в запросы,
+// требующие подтверждения доступа (платежи). В URL/cookie/localStorage не попадает.
+let cscSessionToken = '';
+
 // ============================================================
 // СОСТОЯНИЕ
 // ============================================================
@@ -791,7 +796,9 @@ document.getElementById('csc-login-form').addEventListener('submit', function(e)
     fd.append('action', 'csc_get_user_orders');
     fd.append('phone', phoneRaw);
     fd.append('order_number', orderNum);
-    fd.append('auth_token', '');
+    // ИСПРАВЛЕНО (защита ЛК): предъявляем токен сессии из памяти страницы,
+    // если он уже был выдан сервером при предыдущем входе.
+    fd.append('auth_token', cscSessionToken || '');
     fd.append('_wpnonce', NONCE);
 
     fetch(AJAX_URL, { method: 'POST', body: fd })
@@ -800,6 +807,8 @@ document.getElementById('csc-login-form').addEventListener('submit', function(e)
         submitBtn.disabled = false;
         submitBtn.textContent = 'Найти заявки';
         if (res.success && res.data && res.data.orders && res.data.orders.length > 0) {
+            // Сохраняем выданный сервером токен сессии (только в памяти страницы)
+            if (res.data.auth_token) { cscSessionToken = res.data.auth_token; }
             const phoneNorm = phoneRaw.replace(/[^0-9]/g, '');
             markNotificationsRead(phoneNorm);
             initPushSubscription(phoneNorm);
