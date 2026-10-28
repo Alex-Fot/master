@@ -138,25 +138,6 @@ if (!function_exists('csc_render_master_dashboard')) {
         if ($session_token === '') {
             $session_token = $token; // фолбэк: используем уже предъявленный валидный токен
         }
-        // Токен из URL мог быть ОДНОКРАТНЫМ (Telegram/админ-ссылка) или legacy-постоянным.
-        // Для авторизации REST/AJAX-запросов страницы нормализуем его до постоянного
-        // открытого токена мастера: если stored — legacy (открытый), берём его как есть;
-        // если stored — хэш, генерируем новый постоянный токен (его хэш сохраняется).
-        if (function_exists('csc_is_hashed_token') && csc_is_hashed_token($stored_token)) {
-            $fresh_persistent = wp_generate_password(32, false);
-            $masters[$mid]['dashboard_token'] = csc_hash_token($fresh_persistent);
-            update_option('csc_masters_list', $masters, false);
-            if (function_exists('csc_cache_delete_masters')) {
-                csc_cache_delete_masters();
-            }
-            $session_token = $fresh_persistent;
-        } elseif ($stored_token !== '' && strlen($stored_token) >= 16) {
-            // Legacy открытый токен — оставляем его working значением для сессии
-            // (ленивая миграция в хэш произойдёт при первой сверке csc_verify_token).
-            $session_token = $stored_token;
-        }
-        // Если у мастера не было токена вовсе — csc_issue_master_login_token выше
-        // создал новый и вернул открытую часть; она остаётся в $session_token.
         $site_url = esc_url(home_url());
         $ajax_nonce = wp_create_nonce('csc_cabinet_nonce');
 
