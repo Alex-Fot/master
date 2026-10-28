@@ -424,14 +424,18 @@ if (!function_exists('csc_get_items')) {
     }
 }
 
+if (!function_exists('csc_save_sections')) {
 function csc_save_sections($sections) {
     // ИСПРАВЛЕНО: Убран array_filter, который удалял валидные falsy-значения (0, false, '')
     update_option('csc_service_sections', is_array($sections) ? $sections : [], false);
 }
+}
 
+if (!function_exists('csc_save_items')) {
 function csc_save_items($items) {
     // ИСПРАВЛЕНО: Убран array_filter
     update_option('csc_service_items', is_array($items) ? $items : [], false);
+}
 }
 
 // ============================================================
@@ -1751,6 +1755,7 @@ function csc_validate_coordinates($lat, $lng) {
 // 9. PWA / WEB APP (ИСПРАВЛЕНО: esc_url для всех URL)
 // ============================================================
 add_action('wp_head', 'csc_pwa_head');
+if (!function_exists('csc_pwa_head')) {
 function csc_pwa_head() {
     if (defined('CSC_PLUGIN_URL')) {
         // ИСПРАВЛЕНО: все URL обёрнуты в esc_url()
@@ -1760,8 +1765,10 @@ function csc_pwa_head() {
         echo '<meta name="apple-mobile-web-app-capable" content="yes">';
     }
 }
+}
 
 add_action('init', 'csc_register_sw');
+if (!function_exists('csc_register_sw')) {
 function csc_register_sw() {
     if (isset($_GET['csc-sw'])) {
         // ИСПРАВЛЕНО: Отключаем кэширование, чтобы браузер всегда получал актуальный Service Worker
@@ -1771,8 +1778,10 @@ function csc_register_sw() {
         exit;
     }
 }
+}
 
 add_action('wp_head', 'csc_sw_loader');
+if (!function_exists('csc_sw_loader')) {
 function csc_sw_loader() {
     if (is_ssl()) {
         // ИСПРАВЛЕНО: home_url обёрнут в esc_url()
