@@ -45,7 +45,13 @@ if (!function_exists('csc_get_all_orders')) {
         $table = $wpdb->prefix . 'csc_orders';
         $table_exists = get_option('csc_orders_migrated', false);
         if ($table_exists) {
-            $results = $wpdb->get_results("SELECT * FROM {$table}", ARRAY_A);
+            // ОПТИМИЗАЦИЯ (Кэш заказов): сортировка created_at DESC выполняется
+            // индексом idx_phone_created (phone, created_at) — список приходит
+            // уже упорядоченным «новые первыми», PHP-uasort в потребителях
+            // становится ненужным. LIMIT не задаём: полный список используется
+            // в админке/кронах; пер-мастера и пер-клиента выборки — SQL-хелперы
+            // csc_get_orders_for_master()/csc_get_orders_by_phone().
+            $results = $wpdb->get_results("SELECT * FROM {$table} ORDER BY created_at DESC", ARRAY_A);
             $orders = [];
             foreach ($results as $row) {
                 $order_number = $row['order_number'];
@@ -993,6 +999,10 @@ if (!function_exists('csc_run_token_hash_migration')) {
             unset($order);
             if ($changed) {
                 update_option('csc_all_orders', $all_orders, false);
+                // Инвалидация кэша заказов после миграции токенов
+                if (function_exists('csc_cache_delete_orders')) {
+                    csc_cache_delete_orders();
+                }
             }
         }
 
@@ -1152,6 +1162,10 @@ if (!function_exists('csc_issue_customer_session_token')) {
             $order['auth_token'] = $hash;
             $all[$order_number]  = $order;
             update_option('csc_all_orders', $all, false);
+            // Инвалидация кэша при фолбэк-записи токена мимо csc_update_order_auth_token
+            if (function_exists('csc_cache_delete_orders')) {
+                csc_cache_delete_orders();
+            }
         }
         return $fresh;
     }
