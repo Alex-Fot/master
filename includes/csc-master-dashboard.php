@@ -824,13 +824,6 @@ if (!function_exists('csc_verify_master_auth')) {
         }
 
         if (!$is_valid) {
-            // ИСПРАВЛЕНО (защита ЛК мастера): фиксация НЕУДАЧНОЙ попытки подбора токена.
-            // csc_check_master_login_rate_limit инкрементирует счётчик на каждом запросе,
-            // включая успешные; при валидном токене он сбрасывается ниже, поэтому учёт
-            // именно неудач здесь корректен и не создаёт ложных блокировок.
-            if (function_exists('csc_check_master_login_rate_limit')) {
-                csc_check_master_login_rate_limit($mid);
-            }
             return new WP_Error('unauthorized', 'Invalid credentials', ['status' => 401]);
         }
 
@@ -1171,15 +1164,12 @@ if (!function_exists('csc_handle_upload_completion')) {
 
         // ИСПРАВЛЕНО (защита ЛК мастера): URL прокси-файлов не должен содержать
         // секрет доступа (раньше сюда попадал хэш постоянного dashboard_token).
-        // Токен сессии мастера (уже авторизован через csc_verify_master_auth) —
-        // единственный секрет, известный странице; он же подставляется в file-proxy
-        // ссылки. Хэш из хранилища в URL не попадает никогда.
-        $file_proxy_token = '';
-        $auth_header = $request->get_header('X-CSC-Token');
-        if (!empty($auth_header)) {
-            $file_proxy_token = sanitize_text_field($auth_header);
-        } else {
-            $file_proxy_token = sanitize_text_field($request->get_param('token') ?? '');
+        // Генерируем короткий-lived креденшел только для ссылок на загруженные файлы.
+        $file_proxy_token = function_exists('csc_issue_master_login_token')
+            ? csc_issue_master_login_token($mid, $auth['masters'], 6 * HOUR_IN_SECONDS)
+            : '';
+        if ($file_proxy_token === '') {
+            $file_proxy_token = $auth['masters'][$mid]['dashboard_token'] ?? '';
         }
 
         if (empty($order_number)) {
