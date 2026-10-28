@@ -1387,16 +1387,6 @@ function csc_orders_admin_page() {
                     $all_orders[$ord_num]['cancel_reason'] = 'Отменено администратором (зависший заказ в ожидании оплаты)';
                 }
             }
-            // Перевод заказа В статус «Ожидает оплаты» из админки: фиксируем ожидание платежа,
-            // чтобы заказ не считался «зависшим без платежа» и корректно обрабатывался кроном.
-            if ($new_status === CSC_STATUS_AWAITING_PAYMENT && empty($all_orders[$ord_num]['payment_status'])) {
-                $all_orders[$ord_num]['payment_status'] = 'pending';
-                // Ориентир по времени: существующий awaiting_payment_since (или дата заказа),
-                // иначе крон зависших платежей не «состарит» заказ до фактической оплаты.
-                $all_orders[$ord_num]['awaiting_payment_since'] = $all_orders[$ord_num]['awaiting_payment_since']
-                    ?? trim(($all_orders[$ord_num]['date'] ?? '') . ' ' . ($all_orders[$ord_num]['time'] ?? ''))
-                    ?: current_time('mysql');
-            }
             if (in_array($new_status, [CSC_STATUS_PROCESSING, CSC_STATUS_COMPLETED]) && ($all_orders[$ord_num]['routing_status'] ?? '') === 'searching') {
                 $all_orders[$ord_num]['routing_status'] = 'manual_override';
             }
@@ -1491,14 +1481,14 @@ function csc_orders_admin_page() {
 
     // Чипы быстрой фильтрации по статусу (включая зависшие «Ожидает оплаты»)
     $filter_chips = [
-        ''                                  => __('Все', 'csc'),
-        CSC_STATUS_PENDING                   => __('Ожидает', 'csc'),
-        CSC_STATUS_SEARCHING                 => __('Поиск мастера', 'csc'),
-        CSC_STATUS_AWAITING_PAYMENT          => '💳 ' . __('Ожидает оплаты (зависшие)', 'csc'),
-        CSC_STATUS_AWAITING_PAYMENT . ':pending' => __('Ожидает оплаты: платёж в процессе', 'csc'),
-        CSC_STATUS_PROCESSING                => __('В работе', 'csc'),
-        CSC_STATUS_COMPLETED                 => __('Выполнено', 'csc'),
-        CSC_STATUS_CANCELLED                 => __('Отменено', 'csc'),
+        ''                                  => 'Все',
+        CSC_STATUS_PENDING                   => 'Ожидает',
+        CSC_STATUS_SEARCHING                 => 'Поиск мастера',
+        CSC_STATUS_AWAITING_PAYMENT          => '💳 Ожидает оплаты (зависшие)',
+        CSC_STATUS_AWAITING_PAYMENT . ':pending' => 'Ожидает оплаты: платёж в процессе',
+        CSC_STATUS_PROCESSING                => 'В работе',
+        CSC_STATUS_COMPLETED                 => 'Выполнено',
+        CSC_STATUS_CANCELLED                 => 'Отменено',
     ];
     ?>
     <div class="wrap">
