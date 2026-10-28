@@ -22,76 +22,67 @@ def esc(s):
     return s.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\t', '\\t')
 
 def parse(path):
-    """Разбор PO/POT в записи {ctx, msgid, plural, trans{}}.
-
-    Реализация «блок на пустой строке»: корректно обрабатывает и заголовки
-    (msgid "" + многострочный msgstr ""), и многострочные msgid/msgstr[],
-    и вызовы без пробела после ключевого слова.
-    """
     entries = []
-    block = []          # строки текущего блока
-    def add_block():
-        nonlocal block
-        if block:
-            entries.append(parse_block(block))
-            block = []
+    cur = None      # dict: ctx,msgid,plural,trans{}
+    field = None    # текущее поле для continuation-строк
+    cont = None
+    def flush():
+        nonlocal cur, field, cont
+        if cur is not None:
+            if cont is not None:
+                cur[field][cur_key] += cont
+                cont = None
+            entries.append(cur)
+        cur = None; field = None; cont = None
     with open(path, encoding='utf-8') as f:
         for raw in f:
-            s = raw.strip()
+            line = raw.rstrip('\n')
+            s = line.strip()
+            m_lit = re.fullmatch(r'"((?:[^"\\]|\\.)*)"', s)
             if s == '':
-                add_block(); continue
-            if s.startswith('#'):
+                flush(); continue
+            if m_lit and cur is not None and cont is not None:
+                cont += unesc(m_lit.group(1)); continue
+            if m_lit and cur is not None and field and cont is None:
+                cur[field].setdefault(cur_key, '')
+                cur[field][cur_key] += unesc(m_lit.group(1))
+                cont = ''  # следующие литералы дописываем
                 continue
-            block.append(s)
-        add_block()
-    return [e for e in entries if e is not None]
-
-def _lit(s):
-    m = re.match(r'"((?:[^"\\]|\\.)*)"\s*$', s)
-    return unesc(m.group(1)) if m else ''
-
-def parse_block(lines):
-    e = {'ctx': {}, 'msgid': {}, 'plural': None, 'trans': {}}
-    field = None; key = 0
-    for s in lines:
-        m = re.match(r'msgctxt\s*(.*)', s)
-        if m:
-            field = 'ctx'; key = 0
-            if m.group(1).strip(): e['ctx'][0] = _lit(m.group(1).strip())
-            continue
-        m = re.match(r'msgid_plural\s*(.*)', s)
-        if m:
-            field = 'plural'; key = 0
-            e['plural'] = {}
-            if m.group(1).strip(): e['plural'][0] = _lit(m.group(1).strip())
-            continue
-        m = re.match(r'msgid\s+(.*)', s)
-        if m:
-            field = 'msgid'; key = 0
-            if m.group(1).strip(): e['msgid'][0] = _lit(m.group(1).strip())
-            continue
-        m = re.match(r'msgstr\[(\d+)\]\s*(.*)', s)
-        if m:
-            field = 'trans'; key = int(m.group(1))
-            e['trans'].setdefault(key, '')
-            if m.group(2).strip(): e['trans'][key] = _lit(m.group(2).strip())
-            continue
-        m = re.match(r'msgstr\s+(.*)', s)
-        if m:
-            field = 'trans'; key = 0
-            e['trans'].setdefault(0, '')
-            if m.group(1).strip(): e['trans'][0] = _lit(m.group(1).strip())
-            continue
-        if s.startswith('"') and field is not None:
-            piece = _lit(s)
-            if field == 'plural':
-                e['plural'][0] = e['plural'].get(0, '') + piece
-            else:
-                e[field][key] = e[field].get(key, '') + piece
-            continue
-    if not e['msgid']:
-        return None
-    return e
+            cont_done = None
+            if cont is not None and cur is not None:
+                cur[field][cur_key] += cont; cont = None
+            if s.startswith('msgctxt'):
+                if cur is not None: flush()
+                cur = {'ctx': {}, 'msgid': {}, 'plural': None, 'trans': {}}
+                field = 'ctx'; cur_key = 0
+                rest = s[len('msgctxt'):].strip()
+                if rest: cur['ctx'][0] = unesc(re.match(r'"((?:[^"\\]|\\.)*)"', rest).group(1)); cont = ''
+            elif s.startswith('msgid_plural'):
+                cur['plural'] = {}
+                field = 'plural'; cur_key = 0
+                rest = s[len('msgid_plural'):].strip()
+                if rest: cur['plural'][0] = unesc(re.match(r'"((?:[^"\\]|\\.)*)"', rest).group(1)); cont = ''
+            elif s.startswith('msgid'):
+                if cur is not None and cur.get('msgid'): flush()
+                if cur is None:
+                    cur = {'ctx': {}, 'msgid': {}, 'plural': None, 'trans': {}}
+                field = 'msgid'; cur_key = 0
+                rest = s[len('msgid'):].strip()
+                if rest: cur['msgid'][0] = unesc(re.match(r'"((?:[^"\\]|\\.)*)"', rest).group(1)); cont = ''
+            elif s.startswith('msgstr['):
+                m = re.match(r'msgstr\[(\d+)\]', s)
+                idx = int(m.group(1)); field = 'trans'; cur_key = idx
+                cur['trans'].setdefault(idx, '')
+                rest = s[m.end():].strip()
+                if rest: cur['trans'][idx] = unesc(re.match(r'"((?:[^"\\]|\\.)*)"', rest).group(1)); cont = ''
+            elif s.startswith('msgstr'):
+                field = 'trans'; cur_key = 0
+                cur['trans'].setdefault(0, '')
+                rest = s[len('msgstr'):].strip()
+                if rest: cur['trans'][0] = unesc(re.match(r'"((?:[^"\\]|\\.)*)"', rest).group(1)); cont = ''
+            # комментарии — игнорируем
+    flush()
+    return entries
 
 pot_entries = parse(POT)
 po_entries  = parse(PO)
