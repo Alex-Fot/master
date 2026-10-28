@@ -180,6 +180,8 @@ if (!function_exists('csc_render_master_dashboard')) {
             'serviceLng'     => $service_lng,
             'serviceRadius'  => $service_radius,
             'soundUrl'       => $sound_url, // <--- ДОБАВЛЕНО: URL звукового файла или пустая строка
+            // i18n: локализованные подписи статусов для инлайнового JS (getStatusLabel)
+            'statusLabels'   => function_exists('csc_status_labels_js') ? csc_status_labels_js() : [],
         ]);
 
         nocache_headers();

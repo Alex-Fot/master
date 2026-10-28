@@ -84,6 +84,11 @@
     }
 
     function getStatusLabel(status) {
+        // i18n: подписи статусов приходят из PHP (csc_status_labels_js -> CSC_MASTER_CONFIG.statusLabels),
+        // поэтому переводятся через gettext на сервере. Жёстко закодированные строки ниже — фолбэк.
+        const cfg = (typeof CSC_MASTER_CONFIG !== 'undefined' && CSC_MASTER_CONFIG.statusLabels) ? CSC_MASTER_CONFIG.statusLabels : {};
+        const s = String(status || '').toLowerCase().trim();
+        if (cfg[s]) return cfg[s];
         const labels = {
             'waiting': 'Ожидает',
             'active': 'В работе',
