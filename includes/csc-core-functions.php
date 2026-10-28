@@ -892,7 +892,7 @@ if (!function_exists('csc_run_token_hash_migration')) {
         }
 
         // Логируем без раскрытия секретов — только количество сконвертированных значений
-        error_log('[CSC_SECURITY] Миграция хэширования токенов: заказов=' . $stats['orders'] . ', мастеров=' . $stats['masters']);
+        csc_log('Миграция хэширования токенов: заказов=' . $stats['orders'] . ', мастеров=' . $stats['masters']);
         update_option('csc_token_hash_migrated', 1, false);
         return $stats;
     }
@@ -1114,7 +1114,7 @@ try {
 $current = new DateTime($date . ' ' . str_pad($start_hour, 2, '0', STR_PAD_LEFT) . ':00:00', $tz);
 $end = new DateTime($date . ' ' . str_pad($end_hour, 2, '0', STR_PAD_LEFT) . ':00:00', $tz);
 } catch (Exception $e) {
-error_log('[CSC_SLOTS] Ошибка парсинга даты: ' . $e->getMessage());
+csc_log('Ошибка парсинга даты: ' . $e->getMessage());
 return [];
 }
 // ============================================================
@@ -1421,7 +1421,7 @@ function csc_geocode_address($address, $country = 'ru') {
     ];
     csc_save_geocode_cache($original_address, $negative, 3600); // 1 час вместо 24
     
-    error_log('[CSC_GEOCODE] FAILED: ' . $original_address);
+    csc_log('Geocode FAILED: ' . $original_address);
     return $negative;
 }
 }
@@ -1494,14 +1494,14 @@ function csc_nominatim_search($query, $country = 'ru') {
     ]);
     
     if (is_wp_error($response)) {
-        error_log('[CSC_GEOCODE] Network error: ' . $response->get_error_message() . ' | Query: ' . $query);
+        csc_log('Network error: ' . $response->get_error_message() . ' | Query: ' . $query);
         return ['lat' => null, 'lng' => null, 'display_name' => '', 'status' => 'failed', 'message' => 'Ошибка сети'];
     }
     
     $code = wp_remote_retrieve_response_code($response);
     if ($code === 429) {
         // Rate limit — Nominatim просит замедлиться
-        error_log('[CSC_GEOCODE] Rate limited (429)');
+        csc_log('Rate limited by Nominatim (HTTP 429)');
         sleep(2);
         return ['lat' => null, 'lng' => null, 'display_name' => '', 'status' => 'failed', 'message' => 'Rate limited'];
     }
@@ -1541,7 +1541,7 @@ function csc_validate_coordinates($lat, $lng) {
     $in_russia_lng = ($lng >= 19.0 && $lng <= 180.0) || ($lng >= -180.0 && $lng <= -168.0);
     
     if (!$in_russia_lat || !$in_russia_lng) {
-        error_log("[CSC_GEOCODE] Координаты вне России: {$lat}, {$lng}");
+        csc_log("Координаты вне России: {$lat}, {$lng}", 'debug', 'GEOCODE');
         return false;
     }
     

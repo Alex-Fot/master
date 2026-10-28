@@ -80,14 +80,14 @@ return $available;
 // Проверяем наличие функций
 if (!function_exists('openssl_encrypt') || !function_exists('openssl_decrypt')) {
 $available = false;
-error_log('[CSC_CRYPTO] OpenSSL недоступен. Токены хранятся в открытом виде.');
+csc_log('OpenSSL недоступен. Токены хранятся в открытом виде.');
 return false;
 }
 // Проверяем поддержку алгоритма
 $methods = openssl_get_cipher_methods();
 if (!in_array(CSC_CRYPTO_CIPHER, $methods)) {
 $available = false;
-error_log('[CSC_CRYPTO] Алгоритм ' . CSC_CRYPTO_CIPHER . ' не поддерживается. Токены хранятся в открытом виде.');
+csc_log('Алгоритм ' . CSC_CRYPTO_CIPHER . ' не поддерживается. Токены хранятся в открытом виде.');
 return false;
 }
 $available = true;
@@ -136,7 +136,7 @@ $tag,
 CSC_CRYPTO_TAG_LENGTH
 );
 if ($ciphertext === false) {
-error_log('[CSC_CRYPTO] Ошибка шифрования: ' . openssl_error_string());
+csc_log('Ошибка шифрования: ' . openssl_error_string());
 return $plaintext; // Фолбэк: возвращаем открытым
 }
 // Формат: iv (12) || tag (16) || ciphertext (N)
@@ -171,7 +171,7 @@ return $encrypted;
 }
 // Если шифрование недоступно — не можем расшифровать
 if (!csc_crypto_available()) {
-error_log('[CSC_CRYPTO] Попытка расшифровки при недоступном OpenSSL.');
+csc_log('Попытка расшифровки при недоступном OpenSSL.');
 return '';
 }
 $key = csc_get_encryption_key();
@@ -179,13 +179,13 @@ $key = csc_get_encryption_key();
 $base64_data = substr($encrypted, strlen(CSC_CRYPTO_PREFIX));
 $combined = base64_decode($base64_data, true);
 if ($combined === false) {
-error_log('[CSC_CRYPTO] Ошибка base64_decode при дешифровании.');
+csc_log('Ошибка base64_decode при дешифровании.');
 return '';
 }
 // Проверяем минимальную длину: iv (12) + tag (16) + хотя бы 1 байт данных
 $min_length = CSC_CRYPTO_IV_LENGTH + CSC_CRYPTO_TAG_LENGTH + 1;
 if (strlen($combined) < $min_length) {
-error_log('[CSC_CRYPTO] Данные слишком короткие для дешифрования.');
+csc_log('Данные слишком короткие для дешифрования.');
 return '';
 }
 // Разбираем: iv || tag || ciphertext
@@ -202,7 +202,7 @@ $iv,
 $tag
 );
 if ($plaintext === false) {
-error_log('[CSC_CRYPTO] Ошибка дешифрования: неверный ключ или данные повреждены.');
+csc_log('Ошибка дешифрования: неверный ключ или данные повреждены.');
 return '';
 }
 return $plaintext;
@@ -324,7 +324,7 @@ return;
 // чтобы не пытаться снова при каждом запросе
 if (!csc_crypto_available()) {
 update_option('csc_token_encrypted', true, false);
-error_log('[CSC_CRYPTO] Миграция токена пропущена: OpenSSL недоступен.');
+csc_log('Миграция токена пропущена: OpenSSL недоступен.');
 return;
 }
 // Шифруем и сохраняем
@@ -333,10 +333,10 @@ if ($encrypted !== $raw_token) { // Убеждаемся, что шифрова�
 $s['telegram_token'] = $encrypted;
 update_option('csc_main_settings', $s, false);
 update_option('csc_token_encrypted', true, false);
-error_log('[CSC_CRYPTO] Токен бота зашифрован при миграции.');
+csc_log('Токен бота зашифрован при миграции.');
 } else {
 // Шифрование не сработало — не ставим флаг, попробуем снова
-error_log('[CSC_CRYPTO] Миграция токена не удалась: шифрование вернуло исходное значение.');
+csc_log('Миграция токена не удалась: шифрование вернуло исходное значение.');
 }
 }
 }

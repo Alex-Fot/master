@@ -174,7 +174,7 @@ if (!function_exists('csc_log_notification')) {
 
         $result = $wpdb->insert($table, $data);
         if ($result === false) {
-            error_log('[CSC_NOTIF] Ошибка вставки уведомления: ' . $wpdb->last_error);
+            csc_log('Ошибка вставки уведомления: ' . $wpdb->last_error);
             return 0;
         }
         return $wpdb->insert_id;

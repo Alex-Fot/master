@@ -27,6 +27,19 @@ foreach ($it as $f) {
 }
 sort($files);
 
+// JS-файлы плагина: сканируем вызовы __c('key', 'Фолбэк') / cscI18n.t('key', 'Фолбэк').
+// Второй литеральный аргумент (русский оригинал) добавляется в POT как переводимая строка.
+$files_js = [];
+$jit = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS));
+foreach ($jit as $f) {
+    if ($f->isFile() && strtolower($f->getExtension()) === 'js') {
+        $path = str_replace('\\', '/', $f->getPathname());
+        if (strpos($path, '/node_modules/') !== false) continue;
+        $files_js[] = $f->getPathname();
+    }
+}
+sort($files_js);
+
 $single   = [];  // msgid => true
 $plurals  = [];  // msgid => msgid_plural
 $contexts = [];  // msgid => context
@@ -46,8 +59,9 @@ function csc_parse_args(array $tokens, int &$i): array
 {
     $args = [];
     $cur = '';
-    $cur_pure = true; // только литералы без переменных
-    $depth = 0;
+    $cur_pure = true;     // текущий аргумент — чистый литерал (только T_CONSTANT_ENCAPSED_STRING и конкатенация)
+    $cur_has_lit = false; // в текущем аргументе был хотя бы один строковый литерал
+    $depth = 0;           // глубина вложенных ( ) / [ ] / { } относительно аргументной скобки
     $n = count($tokens);
 
     $flush = function () use (&$cur, &$cur_pure, &$args) {
@@ -55,7 +69,7 @@ function csc_parse_args(array $tokens, int &$i): array
         if ($val === '') {
             $args[] = null;
         } elseif ($cur_pure) {
-            $args[] = $val; // литералы (в т.ч. с %s и знаками препинания)
+            $args[] = $val; // чистый литерал
         } else {
             $args[] = null; // выражение с переменными — не извлекаем
         }
@@ -63,6 +77,7 @@ function csc_parse_args(array $tokens, int &$i): array
         $cur_pure = true;
     };
 
+    // Вызывающий код передал позицию сразу за открывающей скобкой '('.
     for (; $i < $n; $i++) {
         $t = $tokens[$i];
         if (is_array($t)) {
@@ -73,25 +88,29 @@ function csc_parse_args(array $tokens, int &$i): array
                 } else {
                     $str = stripcslashes($str);
                 }
-                $cur .= $str;
-            } else {
-                $cur_pure = false;
-                if (!in_array($t[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
-                    $cur .= $t[1];
+                if ($depth === 0) {
+                    $cur .= $str;
+                    $cur_has_lit = true;
                 }
+            } elseif ($t[0] === T_WHITESPACE || $t[0] === T_COMMENT || $t[0] === T_DOC_COMMENT) {
+                // шум — не влияет на чистоту литерала
+            } else {
+                // любая переменная, вызов функции, интерполяция и т.п. — аргумент не извлекаем
+                $cur_pure = false;
             }
         } else {
-            if ($t === '(') { $depth++; continue; }
-            if ($t === ')') {
-                if ($depth === 0) { $flush(); break; }
+            if ($t === '(' || $t === '[' || $t === '{') {
+                $depth++;
+                $cur_pure = false; // вложенные структуры внутри аргумента
+            } elseif ($t === ')' || $t === ']' || $t === '}') {
+                if ($depth === 0) { $flush(); break; } // закрывающая скобка вызова
                 $depth--;
-                $cur .= $t;
-            } elseif ($t === ',') {
-                if ($depth === 0) { $flush(); }
-                else { $cur .= $t; }
+            } elseif ($t === ',' && $depth === 0) {
+                $flush();
+            } elseif ($t === '.') {
+                // конкатенация: склеивает части литерала; переменные уже пометили cur_pure=false
             } else {
-                if ($t !== '.') $cur .= $t;
-                // '.' (конкатенация) просто склеивает части; если есть переменные — cur_pure=false уже стоит
+                $cur_pure = false;
             }
         }
     }
@@ -185,6 +204,14 @@ foreach (array_keys($single) as $msgid) {
 }
 
 $pot_path = $root . '/languages/csc.pot';
+
+// Защита от перезаписи пустым каталогом: если ничего не извлечено, но POT уже существует —
+// считаем это сбоем экстрактора и выходим с ошибкой, не трогая файл.
+if (count($single) === 0 && file_exists($pot_path)) {
+    fwrite(STDERR, "ERROR: extracted 0 entries while existing POT found — refusing to overwrite. Check extractor.\n");
+    exit(2);
+}
+
 if (!is_dir(dirname($pot_path))) mkdir(dirname($pot_path), 0755, true);
 file_put_contents($pot_path, $out);
 echo "Wrote $pot_path: $count_single singular, $count_plural plural entries (" . count($single) . " unique msgids)\n";

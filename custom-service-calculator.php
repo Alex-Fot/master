@@ -4,6 +4,8 @@
  * Description: Веб-приложение для расчёта и бронирования услуг с плиточным выбором разделов.
  * Version: 9.0
  * Author: Александр Федотов
+ * License: GPLv2 or later
+ * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Requires PHP: 7.4
  * Requires at least: 6.0
  * Text Domain: csc
@@ -426,9 +428,16 @@ function csc_protect_uploads_dir() {
 // ============================================================
 require_once CSC_PLUGIN_DIR . 'includes/csc-db-migrations.php';
 
+// Централизованный логгер — подключается раньше всех модулей, использующих csc_log().
+require_once CSC_PLUGIN_DIR . 'includes/csc-logger.php';
+
 // 3.5: единый словарь статусов (константы + нормализация) — подключается первым,
 // до csc-core-functions.php и остальных модулей, использующих CSC_STATUS_*.
 require_once CSC_PLUGIN_DIR . 'includes/csc-status-i18n.php';
+
+// i18n-словари для JS (csc_t(), csc_js_strings_*): подключаются до модулей,
+// которые локализуют скрипты (csc-master-dashboard / csc-master-registration).
+require_once CSC_PLUGIN_DIR . 'includes/csc-js-i18n.php';
 
 require_once CSC_PLUGIN_DIR . 'includes/csc-core-functions.php';
 require_once CSC_PLUGIN_DIR . 'includes/csc-admin-pages.php';

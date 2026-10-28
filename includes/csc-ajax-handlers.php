@@ -584,7 +584,7 @@ if (!function_exists('csc_submit_form_handler')) {
                 // Адрес не найден — логируем, но не блокируем заказ.
                 // Маршрутизация пойдёт без фильтра по радиусу.
                 $geocode_status = 'failed';
-                error_log('[CSC_GEOCODE] Адрес клиента не геокодирован: ' . $address . ' | для геокодера: ' . $address_for_geocode);
+                csc_log('Адрес клиента не геокодирован: ' . $address . ' | для геокодера: ' . $address_for_geocode);
             }
         } else {
             $geocode_status = empty($address) ? 'empty' : 'no_geocoder';
@@ -647,8 +647,7 @@ if (!function_exists('csc_submit_form_handler')) {
                 $status,
                 'customer',
                 $phone,
-                'Создание заявки клиентом через калькулятор'
-            );
+                'Создание заявки клиентом через калькулятор');
         }
         // ============================================================
         // КОНЕЦ ЛОГИРОВАНИЯ ИСТОРИИ

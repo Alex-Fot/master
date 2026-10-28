@@ -62,7 +62,7 @@ if (!function_exists('csc_backup_order_on_routing_failure')) {
         ];
         $backup_queue[$order_number] = $backup_entry;
         update_option('csc_routing_backup_queue', $backup_queue, false);
-        error_log("[CSC_ROUTING] Заказ {$order_number} помещен в резервную очередь из-за: {$failure_reason}");
+        csc_log("Заказ {$order_number} помещен в резервную очередь из-за: {$failure_reason}", 'error', 'ROUTING');
     }
 }
 
@@ -84,7 +84,7 @@ if (!function_exists('csc_check_routing_backup_queue')) {
             $under_max_attempts = $entry['attempts_count'] < $max_attempts;
 
             if ($order_exists && $should_retry && $under_max_attempts) {
-                error_log("[CSC_ROUTING] Повторная попытка маршрутизации для заказа {$num} из резервной очереди.");
+                csc_log("Повторная попытка маршрутизации для заказа {$num} из резервной очереди.", 'debug', 'ROUTING');
                 $backup_queue[$num]['attempts_count']++;
                 $backup_queue[$num]['last_attempt'] = time();
 
@@ -102,15 +102,15 @@ if (!function_exists('csc_check_routing_backup_queue')) {
                     if (function_exists('csc_route_order_to_next')) {
                         csc_route_order_to_next($num, 'backup_queue_retry');
                     } else {
-                        error_log("[CSC_ROUTING] ERROR: csc_route_order_to_next не найдена при повторной попытке для {$num}");
+                        csc_log("ERROR: csc_route_order_to_next не найдена при повторной попытке для {$num}", 'error', 'ROUTING');
                     }
                 } else {
                     unset($backup_queue[$num]);
-                    error_log("[CSC_ROUTING] Заказ {$num} не найден в основной очереди, удален из резервной.");
+                    csc_log("Заказ {$num} не найден в основной очереди, удален из резервной.", 'warning', 'ROUTING');
                 }
             } elseif (!$order_exists || $entry['attempts_count'] >= $max_attempts) {
                 unset($backup_queue[$num]);
-                error_log("[CSC_ROUTING] Заказ {$num} удален из резервной очереди (превышено число попыток или отменен).");
+                csc_log("Заказ {$num} удален из резервной очереди (превышено число попыток или отменен).", 'debug', 'ROUTING');
             }
         }
         update_option('csc_routing_backup_queue', $backup_queue, false);
@@ -134,7 +134,7 @@ if (!function_exists('csc_routing_log')) {
         $logs = array_slice($logs, -100);
         update_option('csc_routing_logs', $logs, false);
         if (defined('WP_DEBUG') && WP_DEBUG) {
-            error_log('[CSC_ROUTING] ' . json_encode($log_entry, JSON_UNESCAPED_UNICODE));
+            csc_log(json_encode($log_entry, JSON_UNESCAPED_UNICODE), 'debug', 'ROUTING');
         }
     }
 }
