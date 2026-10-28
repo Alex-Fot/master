@@ -4,7 +4,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Custom Service Calculator 9.0\n"
 "Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/custom-service-calculator\n"
-"POT-Creation-Date: 2026-10-28T17:53:30+00:00\n"
+"POT-Creation-Date: 2026-10-28T19:11:39+00:00\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
@@ -29,6 +29,18 @@ msgstr[2] ""
 msgid "(создание)"
 msgstr ""
 
+msgid ". Проверьте вкладку «Ожидают»."
+msgstr ""
+
+msgid "Адрес не указан"
+msgstr ""
+
+msgid "Активен"
+msgstr ""
+
+msgid "Без имени"
+msgstr ""
+
 msgid "Ваша заявка передана диспетчеру!"
 msgstr ""
 
@@ -41,7 +53,19 @@ msgstr ""
 msgid "В работе"
 msgstr ""
 
+msgid "В работе:"
+msgstr ""
+
 msgid "Время вышло или заказ забрал другой мастер."
+msgstr ""
+
+msgid "Все уведомления удалены"
+msgstr ""
+
+msgid "Всё хорошо!"
+msgstr ""
+
+msgid "Вы активны"
 msgstr ""
 
 msgid "Выберите время"
@@ -56,10 +80,19 @@ msgstr ""
 msgid "Выбранное время уже прошло. Пожалуйста, выберите более позднее время или другой день."
 msgstr ""
 
+msgid "Вы деактивированы"
+msgstr ""
+
+msgid "\nВы начнёте получать новые заказы."
+msgstr ""
+
 msgid "Вы отказались от заказа."
 msgstr ""
 
 msgid "Вы отклонили заказ."
+msgstr ""
+
+msgid "\nВы перестанете получать новые заказы."
 msgstr ""
 
 msgid "Выполнено"
@@ -71,7 +104,16 @@ msgstr ""
 msgid "Вы приняли этот заказ."
 msgstr ""
 
+msgid "Готов к работе"
+msgstr ""
+
+msgid "Готово"
+msgstr ""
+
 msgid "Дата начала должна быть меньше или равна дате окончания"
+msgstr ""
+
+msgid "Достигнут лимит в"
 msgstr ""
 
 msgid "Доступ запрещен"
@@ -84,6 +126,21 @@ msgid "Доступ запрещен. Ссылка недействительн�
 msgstr ""
 
 msgid "Доступ запрещён"
+msgstr ""
+
+msgid "Завершённые заказы появятся здесь"
+msgstr ""
+
+msgid "Загружено"
+msgstr ""
+
+msgid "Загрузка..."
+msgstr ""
+
+msgid "Загрузка заказа"
+msgstr ""
+
+msgid "Заказ"
 msgstr ""
 
 msgid "Заказ #%s успешно выполнен!"
@@ -110,7 +167,13 @@ msgstr ""
 msgid "Заявки не найдены за последние 6 месяцев"
 msgstr ""
 
+msgid "Зона обслуживания обновлена"
+msgstr ""
+
 msgid "Кабинет мастера"
+msgstr ""
+
+msgid "Клиент"
 msgstr ""
 
 msgid "Клиент: %s (%s)\nАдрес: %s\nВремя: %s в %s"
@@ -120,6 +183,9 @@ msgid "Максимальный период — 5 лет"
 msgstr ""
 
 msgid "Минимальная сумма заказа: %s ₽. Добавьте услуги."
+msgstr ""
+
+msgid "Неактивен"
 msgstr ""
 
 msgid "Неверный телефон"
@@ -149,22 +215,70 @@ msgstr ""
 msgid "Необходимо принять условия"
 msgstr ""
 
+msgid "Нет выполненных заказов"
+msgstr ""
+
+msgid "Нет доступа"
+msgstr ""
+
 msgid "Нет доступа к этой заявке"
+msgstr ""
+
+msgid "Нет заказов в работе"
 msgstr ""
 
 msgid "Нет мастеров"
 msgstr ""
 
+msgid "Нет ожидающих заказов"
+msgstr ""
+
+msgid "Нет отменённых заказов"
+msgstr ""
+
+msgid "Не удалось выполнить действие"
+msgstr ""
+
+msgid "Не удалось загрузить баланс"
+msgstr ""
+
+msgid "Не удалось загрузить заказы"
+msgstr ""
+
+msgid "Не удалось загрузить отзывы"
+msgstr ""
+
+msgid "Не удалось изменить статус"
+msgstr ""
+
+msgid "Не удалось очистить"
+msgstr ""
+
+msgid "Не удалось сохранить зону"
+msgstr ""
+
 msgid "Не указано"
 msgstr ""
 
+msgid "Нечего очищать"
+msgstr ""
+
 msgid "Ни один заказ не обновлен"
+msgstr ""
+
+msgid "Новые заказы появятся здесь"
 msgstr ""
 
 msgid "Ожидает"
 msgstr ""
 
 msgid "Ожидает оплаты"
+msgstr ""
+
+msgid "Ожидают:"
+msgstr ""
+
+msgid "Отзывы клиентов появятся здесь после выполнения заказов"
 msgstr ""
 
 msgid "Отклонить"
@@ -182,10 +296,25 @@ msgstr ""
 msgid "Отменено администратором (зависший заказ в ожидании оплаты)"
 msgstr ""
 
+msgid "Отметить выполненным"
+msgstr ""
+
+msgid "Очистка недоступна"
+msgstr ""
+
+msgid "Очищено"
+msgstr ""
+
+msgid "Ошибка"
+msgstr ""
+
 msgid "Ошибка: Заказ %s больше не существует."
 msgstr ""
 
 msgid "Ошибка: время поиска истекло"
+msgstr ""
+
+msgid "Ошибка авторизации"
 msgstr ""
 
 msgid "Ошибка безопасности"
@@ -203,10 +332,31 @@ msgstr ""
 msgid "Ошибка доступа"
 msgstr ""
 
+msgid "Ошибка загрузки"
+msgstr ""
+
+msgid "Ошибка подтверждения"
+msgstr ""
+
+msgid "Ошибка сервера"
+msgstr ""
+
+msgid "Ошибка сети"
+msgstr ""
+
+msgid "Ошибка сети. Проверьте подключение."
+msgstr ""
+
 msgid "Перейти в кабинет"
 msgstr ""
 
+msgid "Пишет debug-события в файл /wp-content/uploads/csc-logs/csc.log. Отключите в рабочем режиме."
+msgstr ""
+
 msgid "Подождите 2 минуты перед повторной отправкой"
+msgstr ""
+
+msgid "Подтвердите действие"
 msgstr ""
 
 msgid "Поздно! Заказ уже передан или отменен."
@@ -215,16 +365,37 @@ msgstr ""
 msgid "Поиск мастера"
 msgstr ""
 
+msgid "Пока нет отзывов"
+msgstr ""
+
 msgid "Предложение больше не актуально."
 msgstr ""
 
+msgid "Прикрепите хотя бы один файл"
+msgstr ""
+
+msgid "Примите заказ из вкладки «Ожидают»"
+msgstr ""
+
 msgid "Принять"
+msgstr ""
+
+msgid "Принять заказ"
+msgstr ""
+
+msgid "Проверьте подключение"
+msgstr ""
+
+msgid "Расширенное журналирование (отладка)"
 msgstr ""
 
 msgid "Расширить заказ"
 msgstr ""
 
 msgid "Слишком много неудачных попыток входа. Повторите через %d минут."
+msgstr ""
+
+msgid "Сохранено"
 msgstr ""
 
 msgid "Список услуг пуст"
@@ -239,10 +410,25 @@ msgstr ""
 msgid "Телефон не указан"
 msgstr ""
 
+msgid "Токен доступа недействителен. Обновите страницу."
+msgstr ""
+
+msgid "Точка выезда"
+msgstr ""
+
 msgid "УПС! Заявка не найдена"
 msgstr ""
 
 msgid "У вас есть 5 минут на принятие решения."
+msgstr ""
+
+msgid "Уведомление"
+msgstr ""
+
+msgid "Уведомлений нет"
+msgstr ""
+
+msgid "активировать"
 msgstr ""
 
 msgid "год"
@@ -251,13 +437,28 @@ msgstr[0] ""
 msgstr[1] ""
 msgstr[2] ""
 
+msgid "деактивировать"
+msgstr ""
+
 msgid "мастер"
 msgid_plural "мастеров"
 msgstr[0] ""
 msgstr[1] ""
 msgstr[2] ""
 
+msgid "обновлён"
+msgstr ""
+
+msgid "файл(ов)"
+msgstr ""
+
+msgid "файлов"
+msgstr ""
+
 msgid "✅ Мастер принял заявку #%s"
+msgstr ""
+
+msgid "🆕 Новый заказ #"
 msgstr ""
 
 msgid "🏁 <b>Заказ #%s ВЫПОЛНЕН</b>\nМастер завершил работу."
@@ -266,6 +467,15 @@ msgstr ""
 msgid "🏁 <b>Заказ #%s отмечен как выполнен!</b>\nСпасибо за работу."
 msgstr ""
 
+msgid "💾 Сохранить зону"
+msgstr ""
+
+msgid "🔄 Обновить"
+msgstr ""
+
 msgid "🔔 Напоминание по заказу #%s\nКлиент: %s (%s)\nВремя: %s в %s"
+msgstr ""
+
+msgid "🟢 Активен - принимаете заказы"
 msgstr ""
 

@@ -272,19 +272,19 @@
     function handleNewOrderDetected(orderNumber, orderData) {
         playNotificationSound();
     
-        const clientName = orderData?.name || 'Клиент';
+        const clientName = orderData?.name || __c('client_label', 'Клиент');
         const services = (orderData?.services_for_master || orderData?.services || []).slice(0, 2).join(', ');
     
         showToast(
             'info',
-            '🆕 Новый заказ #' + orderNumber,
-            'Клиент: ' + clientName + (services ? ' · ' + services : ''),
+            __c('new_order_toast', '🆕 Новый заказ #') + orderNumber,
+            __c('client_label', 'Клиент') + ': ' + clientName + (services ? ' · ' + services : ''),
             6000
         );
     
         showBrowserNotification(
-            '🆕 Новый заказ #' + orderNumber,
-            'Клиент: ' + clientName + '. Проверьте вкладку «Ожидают».'
+            __c('new_order_toast', '🆕 Новый заказ #') + orderNumber,
+            __c('client_label', 'Клиент') + ': ' + clientName + __c('check_waiting_tab', '. Проверьте вкладку «Ожидают».')
         );
     }
     
@@ -333,7 +333,7 @@
             if (res.status === 401 || res.status === 403) {
                 console.error('[CSC] Auth failed (HTTP ' + res.status + '). Token may be invalid.');
                 if (typeof showToast === 'function') {
-                    showToast('error', 'Ошибка авторизации', 'Токен доступа недействителен. Обновите страницу.');
+                    showToast('error', __c('auth_error', 'Ошибка авторизации'), __c('auth_error_text', 'Токен доступа недействителен. Обновите страницу.'));
                 }
                 throw new Error('Auth failed: HTTP ' + res.status);
             }
@@ -360,7 +360,7 @@
         if (res.status === 401 || res.status === 403) {
             console.error('[CSC] Auth failed (HTTP ' + res.status + '). Token may be invalid.');
             if (typeof showToast === 'function') {
-                showToast('error', 'Ошибка авторизации', 'Токен доступа недействителен. Обновите страницу.');
+                showToast('error', __c('auth_error', 'Ошибка авторизации'), __c('auth_error_text', 'Токен доступа недействителен. Обновите страницу.'));
             }
             throw new Error('Auth failed: HTTP ' + res.status);
         }
@@ -409,7 +409,7 @@
         try {
             const data = await apiCall('orders');
             if (!data.success) {
-                showToast('error', 'Ошибка', data.message || 'Не удалось загрузить заказы');
+                showToast('error', __c('error', 'Ошибка'), data.message || __c('orders_load_fail', 'Не удалось загрузить заказы'));
                 return;
             }
 
@@ -441,7 +441,7 @@
         } catch (e) {
             console.error('Load orders error:', e);
             if (!STATE.isFirstLoad) {
-                showToast('error', 'Ошибка сети', 'Проверьте подключение');
+                showToast('error', __c('network_error', 'Ошибка сети'), __c('net_check_conn', 'Проверьте подключение'));
             }
         }
     }
@@ -453,7 +453,7 @@
         try {
             const data = await apiCall('reviews');
             if (!data.success) {
-                showToast('error', 'Ошибка', data.message || 'Не удалось загрузить отзывы');
+                showToast('error', __c('error', 'Ошибка'), data.message || __c('reviews_load_fail', 'Не удалось загрузить отзывы'));
                 return;
             }
 
@@ -470,7 +470,7 @@
             }
         } catch (e) {
             console.error('Load reviews error:', e);
-            showToast('error', 'Ошибка сети', 'Не удалось загрузить отзывы');
+            showToast('error', __c('network_error', 'Ошибка сети'), __c('reviews_load_fail', 'Не удалось загрузить отзывы'));
         }
     }
 
@@ -504,11 +504,11 @@
                 renderBalance();
                 updateBalanceBadge();
             } else {
-                showToast('error', 'Ошибка', data.message || 'Не удалось загрузить баланс');
+                showToast('error', __c('error', 'Ошибка'), data.message || __c('balance_load_fail', 'Не удалось загрузить баланс'));
             }
         } catch (e) {
             console.error('Load balance error:', e);
-            showToast('error', 'Ошибка сети', 'Проверьте подключение');
+            showToast('error', __c('network_error', 'Ошибка сети'), __c('net_check_conn', 'Проверьте подключение'));
         }
     }
 
@@ -555,7 +555,7 @@
                     STATE.balanceLoaded = false;
                     await loadBalance();
                     this.disabled = false;
-                    this.innerHTML = '🔄 Обновить';
+                    this.innerHTML = __c('refresh', '🔄 Обновить');
                 });
             }
         }
@@ -704,10 +704,10 @@
                 const emptyText = $('#csc-empty-text');
 
                 const emptyStates = {
-                    waiting: { icon: '⏳', title: 'Нет ожидающих заказов', text: 'Новые заказы появятся здесь' },
-                    active: { icon: '🔧', title: 'Нет заказов в работе', text: 'Примите заказ из вкладки «Ожидают»' },
-                    completed: { icon: '✅', title: 'Нет выполненных заказов', text: 'Завершённые заказы появятся здесь' },
-                    cancelled: { icon: '❌', title: 'Нет отменённых заказов', text: 'Всё хорошо!' },
+                    waiting: { icon: '⏳', title: __c('no_waiting_orders', 'Нет ожидающих заказов'), text: __c('new_orders_here', 'Новые заказы появятся здесь') },
+                    active: { icon: '🔧', title: __c('no_active_orders', 'Нет заказов в работе'), text: __c('accept_from_waiting', 'Примите заказ из вкладки «Ожидают»') },
+                    completed: { icon: '✅', title: __c('no_completed_orders', 'Нет выполненных заказов'), text: __c('completed_here', 'Завершённые заказы появятся здесь') },
+                    cancelled: { icon: '❌', title: __c('no_cancelled_orders', 'Нет отменённых заказов'), text: __c('all_good', 'Всё хорошо!') },
                 };
 
                 const es = emptyStates[STATE.currentTab] || emptyStates.waiting;
@@ -754,7 +754,7 @@
                     </div>
                     <div class="csc-order-row">
                         <span class="csc-order-row-icon">📍</span>
-                        <span class="csc-order-row-text">${escapeHtml(order.address || 'Адрес не указан')}</span>
+                        <span class="csc-order-row-text">${escapeHtml(order.address || __c('no_address', 'Адрес не указан'))}</span>
                     </div>
                     <div class="csc-order-row">
                         <span class="csc-order-row-icon">📅</span>
@@ -799,8 +799,8 @@
                 const emptyTitle = $('#csc-empty-title');
                 const emptyText = $('#csc-empty-text');
                 if (emptyIcon) emptyIcon.textContent = '⭐';
-                if (emptyTitle) emptyTitle.textContent = 'Пока нет отзывов';
-                if (emptyText) emptyText.textContent = 'Отзывы клиентов появятся здесь после выполнения заказов';
+                if (emptyTitle) emptyTitle.textContent = __c('no_reviews', 'Пока нет отзывов');
+                if (emptyText) emptyText.textContent = __c('no_reviews_text', 'Отзывы клиентов появятся здесь после выполнения заказов');
             }
             return;
         }
@@ -974,15 +974,15 @@
             if (counts.active > 0) {
                 statusDot.style.background = 'var(--csc-warning)';
                 statusDot.style.boxShadow = '0 0 0 2px var(--csc-warning)';
-                statusText.textContent = 'В работе: ' + counts.active;
+                statusText.textContent = __c('in_progress_n', 'В работе:') + ' ' + counts.active;
             } else if (counts.waiting > 0) {
                 statusDot.style.background = 'var(--csc-accent)';
                 statusDot.style.boxShadow = '0 0 0 2px var(--csc-accent)';
-                statusText.textContent = 'Ожидают: ' + counts.waiting;
+                statusText.textContent = __c('waiting_n', 'Ожидают:') + ' ' + counts.waiting;
             } else {
                 statusDot.style.background = 'var(--csc-success)';
                 statusDot.style.boxShadow = '0 0 0 2px var(--csc-success)';
-                statusText.textContent = 'Готов к работе';
+                statusText.textContent = __c('ready_to_work', 'Готов к работе');
             }
         }
 
@@ -1052,7 +1052,7 @@
             <div class="csc-modal-row">
                 <span class="csc-modal-row-label">Клиент</span>
                 <span class="csc-modal-row-value">
-                    ${escapeHtml(order.name || 'Без имени')}
+                    ${escapeHtml(order.name || __c('no_name', 'Без имени'))}
                     ${phone ? '<br><a href="tel:' + escapeHtml(phone) + '" class="csc-phone-link">' + escapeHtml(phoneFormatted) + '</a>' : ''}
                 </span>
             </div>
@@ -1162,11 +1162,11 @@
         if (!action || !orderNumber) return;
 
         const labels = {
-            accept: 'Принять заказ',
-            complete: 'Отметить выполненным',
+            accept: __c('act_accept', 'Принять заказ'),
+            complete: __c('act_complete', 'Отметить выполненным'),
         };
 
-        if (!confirm((labels[action] || 'Подтвердите действие') + ' #' + orderNumber + '?')) return;
+        if (!confirm((labels[action] || __c('confirm_action_n', 'Подтвердите действие')) + ' #' + orderNumber + '?')) return;
 
         btn.disabled = true;
         const originalText = btn.innerHTML;
@@ -1175,16 +1175,16 @@
         try {
             const data = await apiCall('action', { action: action, order_number: orderNumber });
             if (data.success) {
-                showToast('success', 'Готово', 'Заказ #' + orderNumber + ' обновлён');
+                showToast('success', __c('done', 'Готово'), __c('order_updated_prefix', 'Заказ') + ' #' + orderNumber + ' ' + __c('order_updated', 'обновлён'));
                 closeModal();
                 await loadOrders();
             } else {
-                showToast('error', 'Ошибка', data.message || 'Не удалось выполнить действие');
+                showToast('error', __c('error', 'Ошибка'), data.message || __c('action_fail_msg', 'Не удалось выполнить действие'));
                 btn.disabled = false;
                 btn.innerHTML = originalText;
             }
         } catch (e) {
-            showToast('error', 'Ошибка сети', 'Проверьте подключение');
+            showToast('error', __c('network_error', 'Ошибка сети'), __c('net_check_conn', 'Проверьте подключение'));
             btn.disabled = false;
             btn.innerHTML = originalText;
         }
@@ -1501,7 +1501,7 @@
         const available = COMPLETION_STATE.maxFiles - currentCount;
 
         if (available <= 0) {
-            showCompletionError('Достигнут лимит в ' + COMPLETION_STATE.maxFiles + ' файлов');
+            showCompletionError(__c('upload_limit', 'Достигнут лимит в') + ' ' + COMPLETION_STATE.maxFiles + ' ' + __c('files_count_max', 'файлов'));
             return;
         }
 
@@ -1575,13 +1575,13 @@
                 const order = STATE.orders.find(o => o.order_number === COMPLETION_STATE.orderNumber);
                 if (order) order.completion_files = COMPLETION_STATE.files;
 
-                showToast('success', 'Загружено', response.data.files.length + ' файл(ов)');
+                showToast('success', __c('uploaded', 'Загружено'), response.data.files.length + ' ' + __c('files_count', 'файл(ов)'));
             } else {
-                showCompletionError(response.message || 'Ошибка загрузки');
+                showCompletionError(response.message || __c('upload_error', 'Ошибка загрузки'));
             }
         } catch (e) {
             showProgress(false);
-            showCompletionError('Ошибка сети. Проверьте подключение.');
+            showCompletionError(__c('network_error_2', 'Ошибка сети. Проверьте подключение.'));
         }
     }
 
@@ -1597,7 +1597,7 @@
         const fill = $('#csc-progress-fill');
         const text = $('#csc-progress-text');
         if (fill) fill.style.width = percent + '%';
-        if (text) text.textContent = 'Загрузка... ' + percent + '%';
+        if (text) text.textContent = __c('uploading', 'Загрузка...') + ' ' + percent + '%';
     }
 
     function showCompletionError(msg) {
@@ -1683,7 +1683,7 @@
 
     async function confirmCompletion() {
         if (COMPLETION_STATE.files.length === 0) {
-            showCompletionError('Прикрепите хотя бы один файл');
+            showCompletionError(__c('attach_min_file_q', 'Прикрепите хотя бы один файл'));
             return;
         }
 
@@ -1702,14 +1702,14 @@
             });
 
             if (data.success) {
-                showToast('success', 'Заказ выполнен', '#' + COMPLETION_STATE.orderNumber + ' отмечен как выполненный');
+                showToast('success', __c('order_completed', 'Заказ выполнен'), '#' + COMPLETION_STATE.orderNumber + ' отмечен как выполненный');
                 closeCompletionModal();
                 const orderModal = $('#csc-order-modal');
                 if (orderModal) orderModal.setAttribute('hidden', '');
                 document.body.style.overflow = '';
                 await loadOrders();
             } else {
-                showCompletionError(data.message || 'Ошибка подтверждения');
+                showCompletionError(data.message || __c('confirm_fail', 'Ошибка подтверждения'));
                 if (btn) {
                     btn.disabled = false;
                     updateConfirmButton();
@@ -1734,9 +1734,9 @@
         toggleBtn.addEventListener('click', async function() {
             if (this.classList.contains('loading')) return;
             const isOnline = this.classList.contains('active');
-            const actionText = isOnline ? 'деактивировать' : 'активировать';
+            const actionText = isOnline ? __c('deactivate_word', 'деактивировать') : __c('activate_word', 'активировать');
 
-            if (!confirm(`Вы уверены что хотите ${actionText} статус?` + (isOnline ? '\nВы перестанете получать новые заказы.' : '\nВы начнёте получать новые заказы.'))) {
+            if (!confirm(`Вы уверены что хотите ${actionText} статус?` + (isOnline ? __c('stop_new_orders', '\nВы перестанете получать новые заказы.') : __c('start_new_orders', '\nВы начнёте получать новые заказы.')))) {
                 return;
             }
 
@@ -1776,25 +1776,25 @@
                     const newStatus = data.data.is_online;
                     this.classList.toggle('active', newStatus);
                     const label = this.querySelector('.csc-toggle-label');
-                    if (label) label.textContent = newStatus ? 'Активен' : 'Неактивен';
+                    if (label) label.textContent = newStatus ? __c('active_label', 'Активен') : __c('inactive_label', 'Неактивен');
                     const statusText = $('#csc-status-text');
                     if (statusText) {
-                        statusText.innerHTML = newStatus ? '🟢 Активен - принимаете заказы' : '⚪ Неактивен';
+                        statusText.innerHTML = newStatus ? __c('status_active_full', '🟢 Активен - принимаете заказы') : '⚪ Неактивен';
                     }
                     const statusDot = $('#csc-status-dot');
                     if (statusDot) {
                         statusDot.style.background = newStatus ? 'var(--csc-success)' : 'var(--csc-text-tertiary)';
                     }
-                    showToast('success', newStatus ? 'Вы активны' : 'Вы деактивированы', data.message);
+                    showToast('success', newStatus ? __c('you_active', 'Вы активны') : __c('you_inactive', 'Вы деактивированы'), data.message);
                     if (newStatus) {
                         await loadOrders();
                     }
                 } else {
-                    showToast('error', 'Ошибка', data.message || 'Не удалось изменить статус');
+                    showToast('error', __c('error', 'Ошибка'), data.message || __c('status_change_fail', 'Не удалось изменить статус'));
                 }
             } catch (e) {
                 console.error('[CSC] Toggle activity error:', e);
-                showToast('error', 'Ошибка', e.message || 'Проверьте подключение');
+                showToast('error', __c('error', 'Ошибка'), e.message || __c('net_check_conn', 'Проверьте подключение'));
             } finally {
                 this.classList.remove('loading');
                 this.innerHTML = originalHtml;
@@ -1840,7 +1840,7 @@
         // Перетаскиваемый маркер точки выезда
         serviceMarker = L.marker(center, {
             draggable: true,
-            title: 'Точка выезда',
+            title: __c('exit_point', 'Точка выезда'),
         }).addTo(serviceMap);
 
         // Круг радиуса обслуживания
@@ -1917,16 +1917,16 @@
             const data = await response.json();
 
             if (data.success) {
-                showToast('success', 'Сохранено', 'Зона обслуживания обновлена');
+                showToast('success', __c('saved', 'Сохранено'), __c('zone_updated', 'Зона обслуживания обновлена'));
             } else {
-                showToast('error', 'Ошибка', data.message || 'Не удалось сохранить зону');
+                showToast('error', __c('error', 'Ошибка'), data.message || __c('zone_save_fail', 'Не удалось сохранить зону'));
             }
         } catch (e) {
-            showToast('error', 'Ошибка сети', 'Проверьте подключение');
+            showToast('error', __c('network_error', 'Ошибка сети'), __c('net_check_conn', 'Проверьте подключение'));
         } finally {
             if (saveBtn) {
                 saveBtn.disabled = false;
-                saveBtn.innerHTML = '💾 Сохранить зону';
+                saveBtn.innerHTML = __c('save_zone_btn', '💾 Сохранить зону');
             }
         }
     }
@@ -1995,8 +1995,8 @@
      */
     function handleNewNotification(n) {
         playNotificationSound();
-        showToast('info', n.title || 'Уведомление', n.message || '', 5000);
-        showBrowserNotification(n.title || 'Уведомление', n.message || '');
+        showToast('info', n.title || __c('notification', 'Уведомление'), n.message || '', 5000);
+        showBrowserNotification(n.title || __c('notification', 'Уведомление'), n.message || '');
     }
 
     /**
@@ -2060,7 +2060,7 @@
                     <div class="csc-notif-icon">${icon}</div>
                     <div class="csc-notif-body">
                         <div class="csc-notif-title">
-                            ${escapeHtml(n.title || 'Уведомление')}
+                            ${escapeHtml(n.title || __c('notification', 'Уведомление'))}
                             ${orderBadge}
                         </div>
                         <div class="csc-notif-message">${escapeHtml(n.message || '')}</div>
@@ -2097,7 +2097,7 @@
                 setTimeout(() => openOrderModal(order), 200);
             } else {
                 // Заказ не в текущем списке — подгружаем и открываем
-                showToast('info', 'Загрузка заказа', '#' + orderNumber, 2000);
+                showToast('info', __c('loading_order', 'Загрузка заказа'), '#' + orderNumber, 2000);
                 loadOrders().then(() => {
                     const freshOrder = STATE.orders.find(o => o.order_number === orderNumber);
                     if (freshOrder) openOrderModal(freshOrder);
@@ -2135,7 +2135,7 @@
      */
     async function clearAllNotifications() {
         if (STATE.notifications.length === 0) {
-            showToast('info', 'Уведомлений нет', 'Нечего очищать', 2000);
+            showToast('info', __c('no_notifications', 'Уведомлений нет'), __c('nothing_to_clear', 'Нечего очищать'), 2000);
             return;
         }
         if (!confirm('Удалить все уведомления? Это действие необратимо.')) return;
@@ -2155,7 +2155,7 @@
                 STATE.knownNotifIds = new Set();
                 updateNotifBadge();
                 renderNotifications();
-                showToast('success', 'Очищено', 'Все уведомления удалены');
+                showToast('success', __c('cleared', 'Очищено'), __c('all_notif_cleared', 'Все уведомления удалены'));
                 return;
             }
             // Сервер вернул HTTP 200, но success:false — эндпоинт не выполнил очистку
@@ -2169,7 +2169,7 @@
         if (statusCode === 401 || statusCode === 403) {
             // Ошибка авторизации: ничего локально не меняем, предлагаем перезайти
             console.error('[CSC] Clear notifications: auth error HTTP ' + statusCode);
-            showToast('error', 'Нет доступа',
+            showToast('error', __c('no_access', 'Нет доступа'),
                 'Сессия истекла или токен недействителен. Обновите страницу и повторите попытку.', 5000);
             return;
         }
@@ -2177,7 +2177,7 @@
         if (statusCode !== null && statusCode >= 500) {
             // Серверная ошибка: данные на сервере не тронуты, предупреждаем явно
             console.error('[CSC] Clear notifications: server error HTTP ' + statusCode);
-            showToast('error', 'Ошибка сервера',
+            showToast('error', __c('server_error', 'Ошибка сервера'),
                 'Не удалось удалить уведомления на сервере (HTTP ' + statusCode + '). Попробуйте позже.', 5000);
             return;
         }
@@ -2185,7 +2185,7 @@
         if (statusCode === 404) {
             // Эндпоинт действительно отсутствует — единственный допустимый случай фолбэка
             console.warn('[CSC] Clear endpoint not available (404). Falling back to mark-as-read.');
-            showToast('warning', 'Очистка недоступна',
+            showToast('warning', __c('clear_unavailable', 'Очистка недоступна'),
                 'Сервер не поддерживает удаление уведомлений. Уведомления будут только помечены как прочитанные, а не удалены.', 6000);
             await markAllNotificationsRead();
             return;
@@ -2197,7 +2197,7 @@
             ? 'Сервер отклонил запрос (HTTP ' + statusCode + ')'
             : 'Сервер не подтвердил удаление';
         console.warn('[CSC] Clear notifications failed:', reason);
-        showToast('error', 'Не удалось очистить',
+        showToast('error', __c('clear_failed', 'Не удалось очистить'),
             reason + '. Уведомления не удалены. Попробуйте ещё раз.', 6000);
     }
 

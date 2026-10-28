@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  static-checks:
+    name: Lint & smoke tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP 8.2
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Static checks (php -l, node --check, i18n consistency)
+        run: bash tools/lint.sh
+
+      - name: Smoke test plugin activation
+        run: php tools/smoke-activation.php
+
+  i18n-build:
+    name: Translation build (.pot/.po/.mo)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP 8.2
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+
+      - name: Regenerate POT and verify it is non-empty
+        run: php tools/i18n/make-pot.php
+
+      - name: Sync PO from POT
+        run: python3 tools/i18n/sync-po.py .
+
+      - name: Compile MO binary
+        run: php tools/i18n/po-to-mo.php languages/csc-ru_RU.po languages/csc-ru_RU.mo
+
+      - name: Fail if translations became empty
+        run: |
+          n=$(grep -c '^msgid ' languages/csc-ru_RU.po)
+          echo "PO msgids: $n"
+          test "$n" -ge 50
