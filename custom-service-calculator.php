@@ -4,6 +4,8 @@
  * Description: Веб-приложение для расчёта и бронирования услуг с плиточным выбором разделов.
  * Version: 9.0
  * Author: Александр Федотов
+ * License: GPLv2 or later
+ * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Requires PHP: 7.4
  * Requires at least: 6.0
  * Text Domain: csc
