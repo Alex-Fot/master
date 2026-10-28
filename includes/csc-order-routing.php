@@ -19,9 +19,18 @@ require_once plugin_dir_path(__FILE__) . 'csc-notifications.php';
 // ХЕЛПЕРЫ СБРОСА КЭША (ЕДИНЫЕ ДЛЯ ВСЕХ МОДУЛЕЙ)
 // ============================================================
 if (!function_exists('csc_cache_delete_orders')) {
+    /**
+    * ЕДИНАЯ ТОЧКА ИНВАЛИДАЦИИ КЭША ЗАКАЗОВ (Кэш заказов).
+    * Удаляет ключ объектного кэша, который питает csc_get_all_orders(),
+    * а также сбрасывает трансиентный снапшот для Telegram-бота.
+    * Должна вызываться ПОСЛЕ ЛЮБОЙ записи в хранилище заказов
+    * (прямые $wpdb->update()/insert() мимо csc_update_order — тоже здесь).
+    */
     function csc_cache_delete_orders() {
         wp_cache_delete('csc_all_orders_v2');
         wp_cache_delete('csc_all_orders_tg_v2');
+        // Совместимость: старый трансиентный снапшот списка заказов
+        delete_transient('csc_all_orders_tg_v2');
     }
 }
 
