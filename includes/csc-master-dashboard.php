@@ -1717,6 +1717,7 @@ if (!function_exists('csc_format_time_ago')) {
 // ============================================================
 if (!function_exists('csc_handle_master_balance')) {
     function csc_handle_master_balance($request) {
+        global $wpdb;
         $auth = csc_verify_master_auth($request);
         if (is_wp_error($auth)) return $auth;
         $mid = $auth['mid'];
@@ -1823,14 +1824,47 @@ if (!function_exists('csc_handle_master_balance')) {
             ];
         }
 
-        // --- Выплаты (если хранятся у мастера) ---
-        $payouts = $master['payouts'] ?? [];
+        // --- Выплаты ---
+        // Источник истины — транзакции csc_transactions (создаются админкой при
+        // «расчёте» мастера). Массив $master['payouts'] используется как legacy-фолбэк,
+        // чтобы не задвоить суммы, уже учтённые в транзакциях.
         $total_payout = 0.0;
+        $txn_payout_ids = []; // 'amount|date' — для дедупликации с payouts[]
+        if ($wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $wpdb->prefix . 'csc_transactions'))) {
+            $paid_txns = $wpdb->get_results($wpdb->prepare(
+                "SELECT amount, method, description, created_at, COALESCE(paid_at, updated_at, created_at) AS paid_at
+                 FROM {$wpdb->prefix}csc_transactions
+                 WHERE master_id = %s AND type = 'payout' AND status = 'completed'
+                 ORDER BY paid_at DESC",
+                $mid
+            ), ARRAY_A);
+            foreach (($paid_txns ?: []) as $pt) {
+                $p_amount = floatval($pt['amount']);
+                $total_payout += $p_amount;
+                $txn_payout_ids[round($p_amount, 2) . '|' . substr($pt['paid_at'], 0, 10)] = true;
+                $transactions[] = [
+                    'type'        => 'payout',
+                    'label'       => 'Выплата' . (!empty($pt['method']) ? ' (' . $pt['method'] . ')' : ''),
+                    'amount'      => -$p_amount,
+                    'commission'  => 0,
+                    'total'       => $p_amount,
+                    'date'        => $pt['paid_at'],
+                    'order_number'=> '',
+                    'icon'        => '💸',
+                ];
+            }
+        }
+        $payouts = $master['payouts'] ?? [];
         if (is_array($payouts)) {
             foreach ($payouts as $p) {
                 $p_amount = floatval($p['amount'] ?? 0);
                 $p_status = $p['status'] ?? '';
+                $p_date   = $p['date'] ?? '';
                 if ($p_status === 'completed' || $p_status === 'выплачено') { // 'выплачено' — legacy-статус выплаты (не статус заказа)
+                    // Пропускаем записи, уже учтённые через completed-транзакции
+                    if (isset($txn_payout_ids[round($p_amount, 2) . '|' . substr($p_date, 0, 10)])) {
+                        continue;
+                    }
                     $total_payout += $p_amount;
                     $transactions[] = [
                         'type'        => 'payout',
@@ -1838,12 +1872,22 @@ if (!function_exists('csc_handle_master_balance')) {
                         'amount'      => -$p_amount,
                         'commission'  => 0,
                         'total'       => $p_amount,
-                        'date'        => $p['date'] ?? '',
+                        'date'        => $p_date,
                         'order_number'=> '',
                         'icon'        => '💸',
                     ];
                 }
             }
+        }
+
+        // --- Очередь выплат (pending) — мастер видит, что уже заявлено/в обработке ---
+        $pending_payout_total = 0.0;
+        if (!empty($paid_txns) || $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $wpdb->prefix . 'csc_transactions'))) {
+            $pending_payout_total = floatval($wpdb->get_var($wpdb->prepare(
+                "SELECT COALESCE(SUM(amount), 0) FROM {$wpdb->prefix}csc_transactions
+                 WHERE master_id = %s AND type = 'payout' AND status IN ('pending','processing')",
+                $mid
+            )));
         }
 
         // --- Текущий баланс (к выплате) ---
@@ -1871,6 +1915,7 @@ if (!function_exists('csc_handle_master_balance')) {
                 'pending_amount'  => round($pending_amount, 2),
                 'total_commission'=> round($total_commission, 2),
                 'total_payout'    => round($total_payout, 2),
+                'pending_payout'  => round($pending_payout_total, 2),
                 'penalties_amount'=> round($penalties_amount, 2),
                 'penalties_total' => $penalties_total,
                 'completed_count' => $completed_count,

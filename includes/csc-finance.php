@@ -605,6 +605,34 @@ if (!function_exists('csc_finance_on_penalty')) {
 }
 
 /**
+ * Запись выплаты в карточку мастера (опция csc_masters_list).
+ * Используется и при legacy-выплате через do_action('csc_finance_payout'),
+ * и при подтверждении выплаты из админки (csc_finance_confirm_payout),
+ * чтобы ЛК мастера («Выплачено», «Баланс») видел те же суммы, что и админка.
+ */
+if (!function_exists('csc_finance_record_master_payout')) {
+    function csc_finance_record_master_payout($master_id, $amount, $method = 'cash', $description = '') {
+        $masters = function_exists('csc_get_masters') ? csc_get_masters() : [];
+        if (!isset($masters[$master_id])) return false;
+        if (!isset($masters[$master_id]['payouts']) || !is_array($masters[$master_id]['payouts'])) {
+            $masters[$master_id]['payouts'] = [];
+        }
+        $masters[$master_id]['payouts'][] = [
+            'amount'      => abs(floatval($amount)),
+            'method'      => $method,
+            'date'        => current_time('mysql'),
+            'status'      => 'completed',
+            'description' => $description,
+        ];
+        update_option('csc_masters_list', $masters, false);
+        if (function_exists('csc_cache_delete_masters')) {
+            csc_cache_delete_masters();
+        }
+        return true;
+    }
+}
+
+/**
  * Триггер: выплата мастеру.
  * Вызывается через do_action('csc_finance_payout', $master_id, $amount, $method, $description)
  */
@@ -1628,10 +1656,17 @@ if (!isset($masters[$master_id])) {
 return ['success' => false, 'message' => 'Мастер не найден', 'master_name' => ''];
 }
 $master_name = $masters[$master_id]['name'] ?? 'Без имени';
-// Проверяем баланс
-$balance = csc_finance_get_balance('master_' . $master_id);
-if ($amount > $balance) {
-return ['success' => false, 'message' => 'Недостаточно средств. Баланс: ' . csc_finance_format_money($balance), 'master_name' => $master_name];
+// Проверяем доступный баланс: начисления мастера минус уже созданные (pending)
+// выплаты. Проводка при создании НЕ пишется — списание происходит только в
+// csc_finance_confirm_payout() («расчёт» в админке).
+$ledger_balance  = csc_finance_get_balance('master_' . $master_id); // за всё время (учитывает прошлые списания)
+$pending_payouts = floatval($wpdb->get_var($wpdb->prepare(
+"SELECT COALESCE(SUM(amount), 0) FROM {$wpdb->prefix}csc_transactions WHERE master_id = %s AND type = 'payout' AND status IN ('pending','processing')",
+$master_id
+)));
+$available = $earned_total - $pending_payouts;
+if ($amount > $available + 0.01) {
+return ['success' => false, 'message' => 'Недостаточно средств. Доступно к выплате: ' . csc_finance_format_money(max(0, $available)), 'master_name' => $master_name];
 }
 // Валидация метода
 $valid_methods = ['cash', 'transfer', 'sbp', 'card'];
@@ -1658,21 +1693,11 @@ $wpdb->insert($txn_table, [
 'updated_at' => current_time('mysql'),
 ], ['%s','%s','%s','%s','%s','%s','%s','%f','%s','%s','%s','%s','%s','%s']);
 $txn_id = $wpdb->insert_id;
-// Проводка: Дебет platform_cash → Кредит master_{id}
-// Это уменьшает баланс мастера
-if (function_exists('csc_finance_record_entry')) {
-csc_finance_record_entry([
-'account_debit' => 'platform_cash',
-'account_credit' => 'master_' . $master_id,
-'amount' => $amount,
-'entity_type' => 'master',
-'entity_id' => $master_id,
-'transaction_id' => $txn_id,
-'description' => 'Выплата мастеру ' . $master_name,
-'created_by' => 'admin',
-'created_by_id' => (string)get_current_user_id(),
-]);
-}
+// ВАЖНО (фикс расхождения ЛК мастера с админкой): при создании выплаты проводка
+// НЕ пишется — деньги ещё не выданы. Списание с баланса мастера выполняется в
+// csc_finance_confirm_payout() при подтверждении («расчёте»). Ранее проводка
+// писалась здесь, из-за чего сумма списывалась дважды и баланс/«выплачено»
+// в кабинете мастера не сходились с данными админки.
 // Логирование
 if (function_exists('csc_log_financial_event')) {
 csc_log_financial_event('', 'payout_created', [
@@ -1711,6 +1736,26 @@ $wpdb->update($txn_table, [
 'paid_at' => current_time('mysql'),
 'updated_at' => current_time('mysql'),
 ], ['id' => $txn_id], ['%s', '%s', '%s'], ['%d']);
+// ВАЖНО (фикс расхождения с ЛК мастера): проводка списания пишется только здесь,
+// при подтверждении выплаты («расчёт» в админке). Ранее она писалась и при
+// создании — сумма списывалась дважды, из-за чего «выплачено/баланс» в кабинете
+// мастера не совпадали с админкой.
+if (function_exists('csc_finance_record_entry')) {
+csc_finance_record_entry([
+'account_debit' => 'platform_cash',
+'account_credit' => 'master_' . $txn['master_id'],
+'amount' => floatval($txn['amount']),
+'entity_type' => 'master',
+'entity_id' => $txn['master_id'],
+'transaction_id' => intval($txn['id']),
+'description' => 'Выплата мастеру (подтверждена): ' . ($txn['description'] ?: ''),
+'created_by' => 'admin',
+'created_by_id' => (string)get_current_user_id(),
+]);
+}
+// Дублируем выплату в карточку мастера (опция csc_masters_list) — именно оттуда
+// кабинет мастера берёт сумму «Выплачено» (см. csc_handle_master_balance).
+csc_finance_record_master_payout($txn['master_id'], floatval($txn['amount']), $txn['method'] ?? 'cash', $txn['description'] ?? '');
 // Логирование
 if (function_exists('csc_log_financial_event')) {
 csc_log_financial_event('', 'payout_completed', [
