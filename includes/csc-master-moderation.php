@@ -37,7 +37,10 @@ add_action('admin_menu', 'csc_add_master_moderation_page');
 // ============================================================
 if (!function_exists('csc_add_master_notification')) {
 function csc_add_master_notification($master_id, $type, $title, $message, $data = []) {
-$option_key = 'csc_master_notifications_' . $master_id;
+// ИСПРАВЛЕНО (личные уведомления мастера): дашборд читает уведомления из ключа
+// 'csc_in_cabinet_master_{$mid}' — запись в 'csc_master_notifications_{$mid}'
+// делала все уведомления (модерация, новые заявки) невидимыми в ЛК.
+$option_key = 'csc_in_cabinet_master_' . $master_id;
 $notifications = get_option($option_key, []);
 if (!is_array($notifications)) $notifications = [];
 array_unshift($notifications, [
@@ -70,7 +73,8 @@ csc_log_notification('', 'master', $master_id, 'internal', $title, $message, $da
 // ============================================================
 if (!function_exists('csc_get_master_notifications')) {
 function csc_get_master_notifications($master_id) {
-$option_key = 'csc_master_notifications_' . $master_id;
+// ИСПРАВЛЕНО: чтение из того же ключа, который использует дашборд ЛК.
+$option_key = 'csc_in_cabinet_master_' . $master_id;
 $notifications = get_option($option_key, []);
 if (!is_array($notifications)) return [];
 return $notifications;
@@ -81,7 +85,8 @@ return $notifications;
 // ============================================================
 if (!function_exists('csc_mark_master_notifications_read')) {
 function csc_mark_master_notifications_read($master_id) {
-$option_key = 'csc_master_notifications_' . $master_id;
+// ИСПРАВЛЕНО: тот же ключ хранилища, что у дашборда ЛК.
+$option_key = 'csc_in_cabinet_master_' . $master_id;
 $notifications = get_option($option_key, []);
 if (!is_array($notifications)) return;
 foreach ($notifications as &$n) {
