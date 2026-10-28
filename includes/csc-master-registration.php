@@ -2025,6 +2025,9 @@ if (!function_exists('csc_handle_reverse_geocode')) {
             ], 200);
         }
         
+        // Лимит OSM: не чаще 1 запроса/сек (общий счётчик с csc_nominatim_search)
+        csc_nominatim_throttle(1);
+
         $url = add_query_arg([
             'format'          => 'json',
             'lat'             => $lat,
@@ -2037,7 +2040,8 @@ if (!function_exists('csc_handle_reverse_geocode')) {
         $response = wp_remote_get($url, [
             'timeout' => 10,
             'headers' => [
-                'User-Agent' => 'CustomServiceCalculator/5.1 (WordPress Plugin)',
+                // Единый User-Agent для Nominatim (OSM Usage Policy)
+                'User-Agent' => function_exists('csc_nominatim_user_agent') ? csc_nominatim_user_agent() : ('CustomServiceCalculator/' . (defined('CSC_PLUGIN_VERSION') ? CSC_PLUGIN_VERSION : '9.0') . ' (WordPress plugin; contact: ' . get_option('admin_email', 'admin@example.com') . ')'),
             ],
         ]);
         
