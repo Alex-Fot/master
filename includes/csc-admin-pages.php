@@ -1416,7 +1416,7 @@ function csc_orders_admin_page() {
                 $master_id = $all_orders[$ord_num]['master_id'] ?? '';
                 csc_log_notification($ord_num, 'customer', $phone, 'web', "📌 Статус изменен вручную", "Статус заявки #$ord_num изменен администратором на \"$new_status\".", ['action' => 'manual_status_change']);
                 if ($master_id) {
-                    cscАМ_log_notification($ord_num, 'master', $master_id, 'web', "📦 Статус заказа изменен", "Администратор установил статус \"$new_status\" для заказа #$ord_num.", ['action' => 'manual_status_change']);
+                    csc_log_notification($ord_num, 'master', $master_id, 'web', "📦 Статус заказа изменен", "Администратор установил статус \"$new_status\" для заказа #$ord_num.", ['action' => 'manual_status_change']);
                 }
             }
             } // else (защита от изменения уже оплаченного заказа)
