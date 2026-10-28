@@ -113,9 +113,9 @@ $masters[$master_id]['status'] = 'active';
 $masters[$master_id]['is_online'] = true;
 $masters[$master_id]['approved_at'] = current_time('mysql');
 $masters[$master_id]['rejection_reason'] = '';
-// Отправка ссылки мастеру
-$dashboard_token = isset($master['dashboard_token']) ? $master['dashboard_token'] : '';
-$dashboard_url = home_url('/?csc_master_dashboard=1&mid=' . urlencode($master_id) . '&token=' . urlencode($dashboard_token));
+// Отправка ссылки мастеру (одноразовый креденшел вместо stored-хэша)
+$login_cred = function_exists('csc_issue_master_login_token') ? csc_issue_master_login_token($master_id) : '';
+$dashboard_url = home_url('/?csc_master_dashboard=1&mid=' . urlencode($master_id)) . ($login_cred !== '' ? '&token=' . urlencode($login_cred) : '');
 $subject = '✅ Ваша заявка одобрена!';
 $message = "Здравствуйте, {$master['name']}!
 
@@ -225,8 +225,8 @@ $masters[$master_id]['penalties_total'] = 0;
 $masters[$master_id]['penalties_amount'] = 0;
 // === НОВОЕ 1.3: ВНУТРИКАБИНЕТНОЕ УВЕДОМЛЕНИЕ + PUSH ===
 if (function_exists('csc_add_master_notification')) {
-$dashboard_token = isset($master['dashboard_token']) ? $master['dashboard_token'] : '';
-$dashboard_url = home_url('/?csc_master_dashboard=1&mid=' . urlencode($master_id) . '&token=' . urlencode($dashboard_token));
+$login_cred = function_exists('csc_issue_master_login_token') ? csc_issue_master_login_token($master_id) : '';
+$dashboard_url = home_url('/?csc_master_dashboard=1&mid=' . urlencode($master_id)) . ($login_cred !== '' ? '&token=' . urlencode($login_cred) : '');
 csc_add_master_notification(
 $master_id,
 'unblock',
