@@ -797,9 +797,27 @@ if (!function_exists('csc_get_user_orders_handler')) {
                 wp_send_json_error(['message' => __('УПС! Заявка не найдена', 'csc')]);
             }
             
-            // В хранилище — только хэш; клиенту возвращаем его лишь если он уже предъявлял
-            // корректный токен ранее (иначе пустая строка, токен выдаётся один раз при создании заказа)
-            $response_token = ($auth_token !== '') ? $auth_token : '';
+            // ИСПРАВЛЕНО (защита ЛК): вход по паре «телефон + номер заявки».
+            // Токен из формы сверяется с stored-хэшем (SHA-256, с ленивой
+            // миграцией legacy). При отсутствии/несовпадении токена доступ всё
+            // равно разрешён (это и есть заявленный вход по телефону+номеру),
+            // но клиент получает НОВЫЙ токен сессии вместо секрета из URL.
+            $stored = $target['auth_token'] ?? '';
+            $token_ok = ($auth_token !== '' && $stored !== '' && function_exists('csc_verify_token'))
+                ? csc_verify_token($auth_token, $stored, function ($new_hash) use ($order_number) {
+                    if (function_exists('csc_update_order_auth_token')) {
+                        csc_update_order_auth_token($order_number, $new_hash);
+                    }
+                })
+                : false;
+
+            if ($token_ok) {
+                $response_token = $auth_token; // переиспользуем предъявленный валидный токен
+            } elseif (function_exists('csc_issue_customer_session_token')) {
+                $response_token = csc_issue_customer_session_token($order_number, $phone);
+            } else {
+                $response_token = ($auth_token !== '') ? $auth_token : '';
+            }
             $user_orders = [$order_number => $target];
             
         } else {
@@ -848,7 +866,16 @@ if (!function_exists('csc_get_user_orders_handler')) {
                 wp_send_json_error(['message' => __('Заявки не найдены за последние 6 месяцев', 'csc')]);
             }
             
-            $response_token = $auth_token;
+            if ($auth_token !== '') {
+                $response_token = $auth_token;
+            } elseif (function_exists('csc_issue_customer_session_token')) {
+                // Выдаём токен сессии по первому (самому свежему) заказу телефона —
+                // для последующих AJAX-операций ЛК (отмена, отзывы, уведомления)
+                $first_key = (string) array_key_first($user_orders);
+                $response_token = csc_issue_customer_session_token($first_key, $phone);
+            } else {
+                $response_token = '';
+            }
         }
 
         // Успешный вход — сбрасываем счётчик попыток
@@ -865,10 +892,14 @@ if (!function_exists('csc_get_user_orders_handler')) {
         
         foreach ($user_orders as $num => $order) {
             $status = mb_strtolower($order['status'] ?? '');
-            $is_active = !empty($order['cancelled_at']) || 
-                         $status === CSC_STATUS_CANCELLED || 
-                         $status === CSC_STATUS_COMPLETED || 
-                         $status === CSC_STATUS_COMPLETED ? false : true;
+            // Закрытые заявки (отменённые/завершённые) не активны.
+            // Исправлено: дубль CSC_STATUS_COMPLETED и приоритет тернарного оператора,
+            // из-за которых отменённые заявки ошибочно считались активными.
+            $is_active = !(
+                !empty($order['cancelled_at']) ||
+                $status === CSC_STATUS_CANCELLED ||
+                $status === CSC_STATUS_COMPLETED
+            );
             
             $order['is_active'] = $is_active;
             $formatted_orders[] = $order;

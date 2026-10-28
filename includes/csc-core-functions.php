@@ -787,15 +787,18 @@ if (!function_exists('csc_update_order_auth_token')) {
      */
     function csc_update_order_auth_token($order_number, $new_hash) {
         global $wpdb;
-        $table = $wpdb->prefix . 'csc_orders';
         $ok = false;
-        if ($wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table)) === $table) {
-            $affected = (int) $wpdb->update(
-                $table,
-                ['auth_token' => $new_hash],
-                ['order_number' => $order_number]
-            );
-            $ok = ($affected >= 0);
+        // Защита от вызова вне контекста WordPress (например, в тестах): таблица — опционально
+        if (isset($wpdb) && is_object($wpdb)) {
+            $table = $wpdb->prefix . 'csc_orders';
+            if ($wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table)) === $table) {
+                $affected = (int) $wpdb->update(
+                    $table,
+                    ['auth_token' => $new_hash],
+                    ['order_number' => $order_number]
+                );
+                $ok = ($affected >= 0);
+            }
         }
         $all_orders = get_option('csc_all_orders', []);
         if (is_array($all_orders) && isset($all_orders[$order_number]) && is_array($all_orders[$order_number])) {
@@ -963,6 +966,49 @@ if (!function_exists('csc_verify_master_login_token')) {
         if (!$data || !is_array($data) || empty($data['mid'])) return false;
         delete_transient($key); // однократность
         return (string)$data['mid'];
+    }
+}
+
+/**
+* ИСПРАВЛЕНО (защита ЛК клиента): выдача «живого» токена сессии клиента при входе
+* по телефону (+ номеру заявки).
+*
+* В хранилище заказа лежит только SHA-256 хэш auth_token, из которого открытый
+* токен не восстанавливается, а исходный токен был показан клиенту один раз при
+* создании заявки. Поэтому при входе без предъявления валидного токена генерируется
+* НОВЫЙ токен сессии: его хэш заменяет stored-значение заказа, открытая часть
+* возвращается клиенту и живёт до перезагрузки страницы. Повторные AJAX-операции
+* ЛК (отмена, отзывы, платежи) сверяются через csc_verify_token как обычно.
+*
+* @param string $order_number Номер заказа
+* @param string $phone        Нормализованный телефон владельца (доп. проверка)
+* @return string Открытый токен сессии ('' если заказ не найден или чужой телефон)
+*/
+if (!function_exists('csc_issue_customer_session_token')) {
+    function csc_issue_customer_session_token($order_number, $phone = '') {
+        if (empty($order_number)) return '';
+        $all = function_exists('csc_get_all_orders') ? csc_get_all_orders() : get_option('csc_all_orders', []);
+        $order = $all[$order_number] ?? null;
+        if (!is_array($order)) return '';
+
+        // Токен выдаём только владельцу телефона (или при поиске без указания телефона)
+        if ($phone !== '') {
+            $order_phone = function_exists('csc_normalize_phone')
+                ? csc_normalize_phone($order['phone'] ?? '')
+                : ($order['phone'] ?? '');
+            if ($order_phone !== $phone) return '';
+        }
+
+        $fresh = wp_generate_password(32, false);
+        $hash  = csc_hash_token($fresh);
+        if (function_exists('csc_update_order_auth_token')) {
+            csc_update_order_auth_token($order_number, $hash);
+        } else {
+            $order['auth_token'] = $hash;
+            $all[$order_number]  = $order;
+            update_option('csc_all_orders', $all, false);
+        }
+        return $fresh;
     }
 }
 
