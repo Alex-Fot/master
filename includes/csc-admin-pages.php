@@ -1387,6 +1387,16 @@ function csc_orders_admin_page() {
                     $all_orders[$ord_num]['cancel_reason'] = 'Отменено администратором (зависший заказ в ожидании оплаты)';
                 }
             }
+            // Перевод заказа В статус «Ожидает оплаты» из админки: фиксируем ожидание платежа,
+            // чтобы заказ не считался «зависшим без платежа» и корректно обрабатывался кроном.
+            if ($new_status === CSC_STATUS_AWAITING_PAYMENT && empty($all_orders[$ord_num]['payment_status'])) {
+                $all_orders[$ord_num]['payment_status'] = 'pending';
+                // Ориентир по времени: существующий awaiting_payment_since (или дата заказа),
+                // иначе крон зависших платежей не «состарит» заказ до фактической оплаты.
+                $all_orders[$ord_num]['awaiting_payment_since'] = $all_orders[$ord_num]['awaiting_payment_since']
+                    ?? trim(($all_orders[$ord_num]['date'] ?? '') . ' ' . ($all_orders[$ord_num]['time'] ?? ''))
+                    ?: current_time('mysql');
+            }
             if (in_array($new_status, [CSC_STATUS_PROCESSING, CSC_STATUS_COMPLETED]) && ($all_orders[$ord_num]['routing_status'] ?? '') === 'searching') {
                 $all_orders[$ord_num]['routing_status'] = 'manual_override';
             }
@@ -1416,7 +1426,7 @@ function csc_orders_admin_page() {
                 $master_id = $all_orders[$ord_num]['master_id'] ?? '';
                 csc_log_notification($ord_num, 'customer', $phone, 'web', "📌 Статус изменен вручную", "Статус заявки #$ord_num изменен администратором на \"$new_status\".", ['action' => 'manual_status_change']);
                 if ($master_id) {
-                    cscАМ_log_notification($ord_num, 'master', $master_id, 'web', "📦 Статус заказа изменен", "Администратор установил статус \"$new_status\" для заказа #$ord_num.", ['action' => 'manual_status_change']);
+                    csc_log_notification($ord_num, 'master', $master_id, 'web', "📦 Статус заказа изменен", "Администратор установил статус \"$new_status\" для заказа #$ord_num.", ['action' => 'manual_status_change']);
                 }
             }
             } // else (защита от изменения уже оплаченного заказа)

@@ -1492,6 +1492,16 @@ if (!function_exists('csc_bulk_update_status_handler')) {
                     }
                 }
 
+                // Перевод заказа В статус «Ожидает оплаты» из админки: фиксируем ожидание платежа,
+                // чтобы заказ корректно обрабатывался кроном зависших платежей.
+                if ($new_status === CSC_STATUS_AWAITING_PAYMENT && empty($all_orders[$num]['payment_status'])) {
+                    $all_orders[$num]['payment_status'] = 'pending';
+                    // Ориентир по времени: существующий awaiting_payment_since (или дата заказа).
+                    $all_orders[$num]['awaiting_payment_since'] = $all_orders[$num]['awaiting_payment_since']
+                        ?? trim(($all_orders[$num]['date'] ?? '') . ' ' . ($all_orders[$num]['time'] ?? ''))
+                        ?: current_time('mysql');
+                }
+
                 // ИСПРАВЛЕНО: Сохраняем измененный заказ через унифицированную функцию
                 if (function_exists('csc_update_order')) {
                     csc_update_order($num, $all_orders[$num]);
