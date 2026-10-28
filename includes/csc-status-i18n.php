@@ -63,6 +63,22 @@ if (!function_exists('csc_status_label')) {
     }
 }
 
+if (!function_exists('csc_status_labels_js')) {
+    /**
+     * Карта «латинский ключ => локализованная подпись» для передачи во фронтенд (JS).
+     * Позволяет перевести статусы, отображаемые на клиенте (ЛК клиента/мастера).
+     *
+     * @return array<string,string>
+     */
+    function csc_status_labels_js() {
+        $map = [];
+        foreach (csc_get_all_statuses() as $st) {
+            $map[$st] = csc_status_label($st);
+        }
+        return $map;
+    }
+}
+
 if (!function_exists('csc_status_normalize')) {
     /**
      * Нормализация статуса в латинский канонический ключ.

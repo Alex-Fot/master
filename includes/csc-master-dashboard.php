@@ -62,7 +62,7 @@ if (!function_exists('csc_render_master_dashboard')) {
 
         $masters = function_exists('csc_get_masters') ? csc_get_masters() : [];
         if (!isset($masters[$mid])) {
-        wp_die('Доступ запрещен. Мастер не найден.', 'Ошибка доступа', ['response' => 403]);
+        wp_die(__('Доступ запрещен. Мастер не найден.', 'csc'), __('Ошибка доступа', 'csc'), ['response' => 403]);
         }
         $stored_token = isset($masters[$mid]['dashboard_token']) ? (string)$masters[$mid]['dashboard_token'] : '';
         // ИСПРАВЛЕНО: Поддержка одноразовых токенов из Telegram + фолбэк на постоянный токен
@@ -76,7 +76,7 @@ if (!function_exists('csc_render_master_dashboard')) {
         $is_valid_token = true;
         }
         if (!$is_valid_token) {
-        wp_die('Доступ запрещен. Ссылка недействительна или истекла.', 'Ошибка доступа', ['response' => 403]);
+        wp_die(__('Доступ запрещен. Ссылка недействительна или истекла.', 'csc'), __('Ошибка доступа', 'csc'), ['response' => 403]);
         }
         // Автогенерация токена если отсутствует
         if ($stored_token === '' || strlen($stored_token) < 16) {
@@ -92,7 +92,7 @@ if (!function_exists('csc_render_master_dashboard')) {
         }
 
         if (!hash_equals($stored_token, (string)$token)) {
-            wp_die('Доступ запрещен. Ссылка недействительна или истекла.', 'Ошибка доступа', ['response' => 403]);
+            wp_die(__('Доступ запрещен. Ссылка недействительна или истекла.', 'csc'), __('Ошибка доступа', 'csc'), ['response' => 403]);
         }
 
         // Проверка статуса модерации

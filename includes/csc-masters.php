@@ -418,7 +418,7 @@ if (!function_exists('csc_masters_admin_page')) {
             <?php if ($pending_count > 0): ?>
             <div style="background:#fef3c7; border:1px solid #fbbf24; padding:12px 20px; border-radius:6px; margin-bottom:15px; display:flex; justify-content:space-between; align-items:center; gap:15px;">
                 <div>
-                    <strong>⏳ На модерации: <?php echo $pending_count; ?> <?php echo _n('мастер', 'мастера', $pending_count); ?></strong>
+                    <strong>⏳ На модерации: <?php echo (int) $pending_count; ?> <?php echo esc_html(_n('мастер', 'мастеров', $pending_count, 'csc')); ?></strong>
                     <span style="color:#64748b; margin-left:10px;">Требуется ваше решение</span>
                 </div>
                 <button type="button" class="button button-primary" onclick="cscBulkApproveMasters()" style="background:#10b981; border-color:#10b981;">
@@ -1900,17 +1900,16 @@ if (!function_exists('csc_get_master_details_ajax')) {
         // ============================================================
         // ВОССТАНОВЛЕНО 6.2: МАОППИНГ ОПЫТА РАБОТЫ СО СКЛОНЕНИЕМ (из 3.6)
         // ============================================================
-        $experience_val = 'Не указано';
+        $experience_val = __('Не указано', 'csc');
         if (isset($master['experience_years']) && $master['experience_years'] > 0) {
             $exp_years = intval($master['experience_years']);
-            $experience_val = $exp_years . ' ' . _n('год', 'года', $exp_years >= 2 && $exp_years <= 4 ? $exp_years : 5);
-            // Более точное склонение: 1 год, 2-4 года, 5+ лет
-            if ($exp_years === 1) {
-                $experience_val = '1 год';
-            } elseif ($exp_years >= 2 && $exp_years <= 4) {
-                $experience_val = $exp_years . ' года';
-            } else {
-                $experience_val = $exp_years . ' лет';
+            // Склонение через _n() с корректным числовым аргументом:
+            // 1 год / 2-4 года / 5+ лет. Для десятков (11-15) и т.п. используем
+            // остаток от деления на 10 — стандартный приём для славянских языков.
+            $plural_n = ($exp_years % 100 >= 11 && $exp_years % 100 <= 14) ? 5 : ($exp_years % 10 == 1 ? 1 : ($exp_years % 10 >= 2 && $exp_years % 10 <= 4 ? 2 : 5));
+            $experience_val = $exp_years . ' ' . _n('год', 'лет', $plural_n, 'csc');
+            if ($plural_n === 2) {
+                $experience_val = $exp_years . ' ' . _n('год', 'года', 2, 'csc');
             }
         } elseif (!empty($master['experience'])) {
             $experience_val = $master['experience'];
