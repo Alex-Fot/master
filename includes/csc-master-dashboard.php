@@ -97,29 +97,16 @@ if (!function_exists('csc_render_master_dashboard')) {
             && function_exists('csc_verify_token') && csc_verify_token($token, $stored_token)) {
         $is_valid_token = true;
         }
-        // Устранена мёртвая ветка: прежний второй `if (!hash_equals(...))` после проверки
-        // одноразового токена отклонял корректные одноразовые ссылки — удалён.
+        // ИСПРАВЛЕНО (защита ЛК мастера): учёт неудачной попытки входа (подбор токена).
+        // Счётчик инкрементируется в csc_check_master_login_rate_limit при каждом
+        // запросе входа; при успехе ниже сбрасывается полностью.
         if (!$is_valid_token) {
-        wp_die(__('Доступ запрещен. Ссылка недействительна или истекла.', 'csc'), __('Ошибка доступа', 'csc'), ['response' => 403]);
-        }
-
-        // Автогенерация постоянного токена, если отсутствует (всегда в хэшированном виде).
-        if ($stored_token === '' || strlen($stored_token) < 16) {
-        $masters[$mid]['dashboard_token'] = function_exists('csc_hash_token')
-            ? csc_hash_token(wp_generate_password(32, false))
-            : wp_generate_password(32, false);
-        update_option('csc_masters_list', $masters, false);
-        if (function_exists('csc_cache_delete_masters')) {
-        csc_cache_delete_masters();
-        }
-        $new_token = $masters[$mid]['dashboard_token'];
-        $new_url = home_url('/?csc_master_dashboard=1&mid=' . urlencode($mid) . '&token=' . urlencode($new_token));
-        wp_redirect($new_url);
-        exit;
-        }
-
-        if (!hash_equals($stored_token, (string)$token)) {
             wp_die(__('Доступ запрещен. Ссылка недействительна или истекла.', 'csc'), __('Ошибка доступа', 'csc'), ['response' => 403]);
+        }
+
+        // Успешный вход — сброс счётчика попыток подбора токена
+        if (function_exists('csc_reset_master_login_rate_limit')) {
+            csc_reset_master_login_rate_limit($mid);
         }
 
         // Проверка статуса модерации
@@ -130,13 +117,30 @@ if (!function_exists('csc_render_master_dashboard')) {
         $penalties_amount = $masters[$mid]['penalties_amount'] ?? 0;
 
         // ИСПРАВЛЕНО (защита ЛК мастера): в страницу/JS больше НЕ попадает хэш
-        // постоянного токена. Для REST-вызовов выдаётся короткий-lived креденшел
-        // (1 час), хранящийся только в транзиенте.
-        $session_token = function_exists('csc_issue_master_login_token')
-            ? csc_issue_master_login_token($mid, $masters, HOUR_IN_SECONDS)
-            : '';
+        // постоянного токена. Токен из URL мог быть ОДНОКРАТНЫМ (Telegram/админ-ссылка,
+        // transient уже удалён при сверке) или legacy-постоянным. Для авторизации
+        // REST/AJAX-вызовов страницы нормализуем его к «живому» открытому токену:
+        // если stored — хэш, генерируется новый постоянный токен этой сессии (в
+        // хранилище сохраняется только его хэш); если stored — legacy открытый,
+        // он остаётся working значением (ленивая миграция в хэш — при первой сверке).
+        $session_token = '';
+        if (function_exists('csc_normalize_master_session_token')) {
+            $session_token = csc_normalize_master_session_token($mid, $masters);
+        } elseif ($stored_token !== '' && !csc_is_hashed_token($stored_token)) {
+            $session_token = $stored_token; // фолбэк без ядра: legacy-открытый токен
+        }
         if ($session_token === '') {
-            $session_token = $token; // фолбэк: используем уже предъявленный валидный токен
+            // Мастер вошёл по одноразовому креденшелу, но постоянного токена в
+            // хранилище нет/он пуст — создаём новый (хранится только хэш).
+            $fresh = wp_generate_password(32, false);
+            $masters[$mid]['dashboard_token'] = function_exists('csc_hash_token')
+                ? csc_hash_token($fresh)
+                : $fresh;
+            update_option('csc_masters_list', $masters, false);
+            if (function_exists('csc_cache_delete_masters')) {
+                csc_cache_delete_masters();
+            }
+            $session_token = $fresh;
         }
         $site_url = esc_url(home_url());
         $ajax_nonce = wp_create_nonce('csc_cabinet_nonce');

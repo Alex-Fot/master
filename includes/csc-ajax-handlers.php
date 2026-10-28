@@ -1019,9 +1019,17 @@ if (!function_exists('csc_cancel_order_handler')) {
             }
             
             if ($master_chat) {
-                $dash_token = $m_list[$master_id]['dashboard_token'] ?? '';
-                $dash_url = home_url("/?csc_master_dashboard=1&mid={$master_id}&token={$dash_token}");
-                $cancel_msg .= "\n📲 <a href='{$dash_url}'>Перейти в кабинет</a>";
+                // ИСПРАВЛЕНО (SHA-256): в хранилище лежит только хэш dashboard_token —
+                // в Telegram-ссылку подставляется одноразовый входной креденшел.
+                $dash_token = function_exists('csc_issue_master_login_token')
+                    ? csc_issue_master_login_token($master_id, $m_list)
+                    : '';
+                if ($dash_token !== '') {
+                    $dash_url = home_url("/?csc_master_dashboard=1&mid={$master_id}&token=" . urlencode($dash_token));
+                    $cancel_msg .= "\n📲 <a href='{$dash_url}'>Перейти в кабинет</a>";
+                } else {
+                    $cancel_msg .= "\n📲 Кабинет: " . home_url('/?csc_master_dashboard=1');
+                }
                 
                 wp_remote_post("https://api.telegram.org/bot{$tg_token}/sendMessage", [
                     'body' => ['chat_id' => $master_chat, 'text' => $cancel_msg, 'parse_mode' => 'HTML']
