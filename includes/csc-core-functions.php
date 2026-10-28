@@ -1549,11 +1549,8 @@ function csc_geocode_address($address, $country = 'ru') {
     $address_variants = csc_prepare_address_variants($original_address);
     
     foreach ($address_variants as $index => $variant) {
-        // Задержка между запросами к Nominatim (лимит 1 запрос/сек)
-        if ($index > 0) {
-            usleep(1100000); // 1.1 секунды
-        }
-        
+        // Задержка между запросами к Nominatim (лимит 1 запрос/сек) выдерживается
+        // централизованно в csc_nominatim_search() -> csc_nominatim_throttle()
         $result = csc_nominatim_search($variant, $country);
         
         if ($result['status'] === 'ok' && csc_validate_coordinates($result['lat'], $result['lng'])) {
@@ -1630,10 +1627,52 @@ function csc_prepare_address_variants($address) {
 }
 
 /**
+ * Единый User-Agent для всех запросов к Nominatim (требование OSM Usage Policy).
+ * Версия берётся из константы плагина, добавлен контактный e-mail администратора.
+ */
+if (!function_exists('csc_nominatim_user_agent')) {
+function csc_nominatim_user_agent() {
+    static $ua = null;
+    if ($ua !== null) {
+        return $ua;
+    }
+    $version = defined('CSC_PLUGIN_VERSION') ? CSC_PLUGIN_VERSION : '9.0';
+    $contact = sanitize_email(get_option('admin_email', 'admin@example.com'));
+    if (empty($contact)) {
+        $contact = 'admin@example.com';
+    }
+    $ua = 'CustomServiceCalculator/' . $version . ' (WordPress plugin; contact: ' . $contact . ')';
+    return $ua;
+}
+}
+
+/**
+ * Троттлинг запросов к Nominatim: не чаще 1 запроса в секунду (лимит OSM).
+ * Учитывает ВСЕ точки вызова (search + reverse) внутри одного PHP-процесса:
+ * досыпает остаток до минимального интервала перед каждым запросом.
+ */
+if (!function_exists('csc_nominatim_throttle')) {
+function csc_nominatim_throttle($min_interval = 1) {
+    global $csc_last_nominatim_request;
+    $now = microtime(true);
+    if (isset($csc_last_nominatim_request) && $csc_last_nominatim_request > 0) {
+        $elapsed = $now - $csc_last_nominatim_request;
+        if ($elapsed < $min_interval) {
+            usleep((int) ceil(($min_interval - $elapsed) * 1000000));
+        }
+    }
+    $csc_last_nominatim_request = microtime(true);
+}
+}
+
+/**
  * Запрос к Nominatim API с правильными заголовками
  */
 if (!function_exists('csc_nominatim_search')) {
 function csc_nominatim_search($query, $country = 'ru') {
+    // Лимит OSM: не чаще 1 запроса/сек (между всеми запросами, включая reverse)
+    csc_nominatim_throttle(1);
+
     $url = add_query_arg([
         'format'     => 'json',
         'q'          => $query,
@@ -1645,8 +1684,8 @@ function csc_nominatim_search($query, $country = 'ru') {
     $response = wp_remote_get($url, [
         'timeout' => 15,
         'headers' => [
-            // Nominatim требует осмысленный User-Agent
-            'User-Agent' => 'CSC-Booking/9.0 (WordPress plugin; contact: ' . get_option('admin_email', 'admin@example.com') . ')',
+            // Nominatim требует осмысленный User-Agent — единый для всего плагина
+            'User-Agent' => function_exists('csc_nominatim_user_agent') ? csc_nominatim_user_agent() : ('CustomServiceCalculator/9.0 (WordPress plugin; contact: ' . get_option('admin_email', 'admin@example.com') . ')'),
             'Accept'     => 'application/json',
             'Accept-Language' => 'ru,en',
         ],
