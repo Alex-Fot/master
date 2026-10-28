@@ -1164,12 +1164,20 @@ if (!function_exists('csc_handle_upload_completion')) {
 
         // ИСПРАВЛЕНО (защита ЛК мастера): URL прокси-файлов не должен содержать
         // секрет доступа (раньше сюда попадал хэш постоянного dashboard_token).
-        // Генерируем короткий-lived креденшел только для ссылок на загруженные файлы.
-        $file_proxy_token = function_exists('csc_issue_master_login_token')
-            ? csc_issue_master_login_token($mid, $auth['masters'], 6 * HOUR_IN_SECONDS)
-            : '';
+        // В ссылки file-proxy подставляется «живой» токен сессии из текущего
+        // авторизованного запроса (заголовок X-CSC-Token или параметр token) —
+        // тот же, что использует страница кабинета. Одноразовые креденшелы сюда
+        // не годятся: transient удаляется после первой сверки, и повторные
+        // загрузки/просмотры файлов страницы ломались бы; stored-хэш не является
+        // валидным предъявляемым значением. Если открытый токен запроса недоступен
+        // (stored уже хэш) — файлы отдаются без токена в URL (см. фолбэк ниже),
+        // доступ к ним возможен только через REST с заголовком авторизации.
+        $file_proxy_token = sanitize_text_field($request->get_header('X-CSC-Token'));
         if ($file_proxy_token === '') {
-            $file_proxy_token = $auth['masters'][$mid]['dashboard_token'] ?? '';
+            $file_proxy_token = sanitize_text_field($request->get_param('token'));
+        }
+        if ($file_proxy_token === '' || strlen($file_proxy_token) < 16) {
+            $file_proxy_token = '';
         }
 
         if (empty($order_number)) {
@@ -1322,13 +1330,17 @@ if (!function_exists('csc_handle_upload_completion')) {
                 if (move_uploaded_file($tmp_name, $dest_path)) {
                     @chmod($dest_path, 0644);
 
-                    // URL через прокси с параметрами авторизации
-                    $file_url = add_query_arg([
+                    // URL через прокси; токен включается только если доступен
+                    // «живой» открытый токен сессии (иначе — доступ по заголовку)
+                    $proxy_args = [
                         'order_number' => $order_number,
                         'filename'     => $unique_name,
                         'mid'          => $mid,
-                        'token'        => $file_proxy_token,
-                    ], rest_url('csc/v1/master/file-proxy'));
+                    ];
+                    if ($file_proxy_token !== '') {
+                        $proxy_args['token'] = $file_proxy_token;
+                    }
+                    $file_url = add_query_arg($proxy_args, rest_url('csc/v1/master/file-proxy'));
 
                     $uploaded[] = [
                         'url'       => $file_url,

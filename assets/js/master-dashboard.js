@@ -1724,13 +1724,17 @@
             this.innerHTML = '<span class="csc-spinner"></span>';
 
             try {
-                const url = CONFIG.restUrl + 'toggle-activity'
-                    + '?mid=' + encodeURIComponent(CONFIG.mid)
-                    + '&token=' + encodeURIComponent(CONFIG.token);
+                // ИСПРАВЛЕНО (защита): токен не светится в URL — сверка через
+                // csc_verify_master_auth (параметры POST + заголовок X-CSC-Token)
+                const url = CONFIG.restUrl + 'toggle-activity';
 
                 const response = await fetch(url, {
                     method: 'POST',
                     credentials: 'omit',
+                    headers: {
+                        'X-CSC-Token': CONFIG.token
+                    },
+                    body: new URLSearchParams({ mid: CONFIG.mid }),
                 });
 
                 let data;
