@@ -4,7 +4,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Custom Service Calculator 9.0\n"
 "Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/custom-service-calculator\n"
-"POT-Creation-Date: 2026-10-28T21:00:00+00:00\n"
+"POT-Creation-Date: 2026-10-28T21:41:50+00:00\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
@@ -221,7 +221,13 @@ msgstr ""
 msgid "Максимальный период — 5 лет"
 msgstr ""
 
+msgid "Мастер не найден"
+msgstr ""
+
 msgid "Минимальная сумма заказа: %s ₽. Добавьте услуги."
+msgstr ""
+
+msgid "Модуль мастеров недоступен"
 msgstr ""
 
 msgid "Неактивен"
@@ -300,6 +306,9 @@ msgid "Не удалось очистить"
 msgstr ""
 
 msgid "Не удалось сохранить зону"
+msgstr ""
+
+msgid "Не указан ID мастера"
 msgstr ""
 
 msgid "Не указано"
@@ -461,6 +470,9 @@ msgstr ""
 msgid "Расширить заказ"
 msgstr ""
 
+msgid "Слишком короткий токен (минимум 16 символов)"
+msgstr ""
+
 msgid "Слишком много неудачных попыток входа. Повторите через %d минут."
 msgstr ""
 
@@ -486,6 +498,9 @@ msgid "Телефон не указан"
 msgstr ""
 
 msgid "Токен доступа недействителен. Обновите страницу."
+msgstr ""
+
+msgid "Токен сохранен"
 msgstr ""
 
 msgid "Точка выезда"
