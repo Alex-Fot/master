@@ -479,4 +479,4 @@ if (!function_exists('csc_push_test_send_ajax')) {
             'message' => "Отправлено: {$sent}, ошибок: {$failed}",
         ]);
     }
-}
+}
