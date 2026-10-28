@@ -1463,7 +1463,7 @@ if (!function_exists('csc_bulk_update_status_handler')) {
             wp_send_json_error(['message' => __('Не выбраны заказы или статус', 'csc')]);
         }
         
-        $valid_statuses = [CSC_STATUS_PENDING, CSC_STATUS_PROCESSING, CSC_STATUS_COMPLETED, CSC_STATUS_CANCELLED];
+        $valid_statuses = [CSC_STATUS_PENDING, CSC_STATUS_SEARCHING, CSC_STATUS_AWAITING_PAYMENT, CSC_STATUS_PROCESSING, CSC_STATUS_COMPLETED, CSC_STATUS_CANCELLED];
         if (!in_array($new_status, $valid_statuses)) {
             wp_send_json_error(['message' => __('Недопустимый статус', 'csc')]);
         }
@@ -1484,6 +1484,12 @@ if (!function_exists('csc_bulk_update_status_handler')) {
                 if ($new_status === CSC_STATUS_CANCELLED) {
                     $all_orders[$num]['routing_status'] = 'cancelled';
                     $all_orders[$num]['cancelled_at'] = current_time('mysql');
+                    // Зависшие заказы «Ожидает оплаты»: при ручной отмене помечаем платёж как
+                    // неоплаченный, чтобы крон-проверка зависших платежей больше не трогала заказ.
+                    if ($old_status === CSC_STATUS_AWAITING_PAYMENT && in_array($all_orders[$num]['payment_status'] ?? '', ['pending', ''], true)) {
+                        $all_orders[$num]['payment_status'] = 'unpaid';
+                        $all_orders[$num]['cancel_reason'] = __('Отменено администратором (зависший заказ в ожидании оплаты)', 'csc');
+                    }
                 }
 
                 // ИСПРАВЛЕНО: Сохраняем измененный заказ через унифицированную функцию

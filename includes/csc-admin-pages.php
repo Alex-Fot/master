@@ -1372,10 +1372,20 @@ function csc_orders_admin_page() {
         $all_orders = csc_get_all_orders();
         if (isset($all_orders[$ord_num])) {
             $old_status = $all_orders[$ord_num]['status'] ?? '';
+            // Защита от гонки с вебхуком оплаты: если заказ уже оплачен, не переводим его из awaiting_payment «в никуда».
+            if ($old_status === CSC_STATUS_AWAITING_PAYMENT && ($all_orders[$ord_num]['payment_status'] ?? '') === 'paid') {
+                echo '<div class="notice notice-warning is-dismissible"><p>Заказ ' . esc_html($ord_num) . ' уже оплачен — статус изменён быть не может. Сначала оформите возврат в модуле платежей.</p></div>';
+            } else {
             $all_orders[$ord_num]['status'] = $new_status;
             if ($new_status === CSC_STATUS_CANCELLED) {
                 $all_orders[$ord_num]['routing_status'] = 'cancelled';
                 $all_orders[$ord_num]['cancelled_at'] = current_time('mysql');
+                // Зависшие заказы «Ожидает оплаты»: при ручной отмене помечаем платёж как
+                // неоплаченный, чтобы крон-проверка зависших платежей больше не трогала заказ.
+                if ($old_status === CSC_STATUS_AWAITING_PAYMENT && in_array($all_orders[$ord_num]['payment_status'] ?? '', ['pending', ''], true)) {
+                    $all_orders[$ord_num]['payment_status'] = 'unpaid';
+                    $all_orders[$ord_num]['cancel_reason'] = 'Отменено администратором (зависший заказ в ожидании оплаты)';
+                }
             }
             if (in_array($new_status, [CSC_STATUS_PROCESSING, CSC_STATUS_COMPLETED]) && ($all_orders[$ord_num]['routing_status'] ?? '') === 'searching') {
                 $all_orders[$ord_num]['routing_status'] = 'manual_override';
@@ -1409,6 +1419,7 @@ function csc_orders_admin_page() {
                     cscАМ_log_notification($ord_num, 'master', $master_id, 'web', "📦 Статус заказа изменен", "Администратор установил статус \"$new_status\" для заказа #$ord_num.", ['action' => 'manual_status_change']);
                 }
             }
+            } // else (защита от изменения уже оплаченного заказа)
         }
     }
 
@@ -1418,6 +1429,28 @@ function csc_orders_admin_page() {
     });
     $masters = function_exists('csc_get_masters') ? csc_get_masters() : [];
     $view = sanitize_key($_GET['view'] ?? 'list');
+
+    // Фильтр по статусу (в т.ч. быстрый доступ к зависшим заказам «Ожидает оплаты»)
+    $status_filter = sanitize_text_field(wp_unslash($_GET['status_filter'] ?? ''));
+    if ($status_filter !== '' && strpos($status_filter, ':') !== false) {
+        list($status_filter, $payment_status_filter) = explode(':', $status_filter, 2);
+    } else {
+        $payment_status_filter = '';
+    }
+    if ($status_filter !== '') {
+        $all_orders = array_filter($all_orders, function ($o) use ($status_filter, $payment_status_filter) {
+            if (($o['status'] ?? '') !== $status_filter) return false;
+            if ($payment_status_filter !== '' && ($o['payment_status'] ?? '') !== $payment_status_filter) return false;
+            return true;
+        });
+    }
+
+    // Счётчики для чипов быстрой фильтрации
+    $status_counts = [];
+    foreach (csc_get_all_orders() as $o) {
+        $st = $o['status'] ?? '';
+        $status_counts[$st] = ($status_counts[$st] ?? 0) + 1;
+    }
 
     // ============================================================
     // УЛУЧШЕНИЕ №4: ПАГИНАЦИЯ
@@ -1438,8 +1471,25 @@ function csc_orders_admin_page() {
 
     // Базовые URL для навигации (сохраняем все GET-параметры кроме paged)
     $base_admin_url = esc_url(add_query_arg(['page' => 'csc_orders_admin'], admin_url('options-general.php')));
-    $admin_url_list = esc_url(add_query_arg(['page' => 'csc_orders_admin', 'view' => 'list'], admin_url('options-general.php')));
+    // Сохраняем активный фильтр в ссылках навигации (view/list, пагинация)
+    $admin_url_list = esc_url(add_query_arg(array_filter([
+        'page' => 'csc_orders_admin',
+        'view' => 'list',
+        'status_filter' => ($status_filter !== '' ? $status_filter . ($payment_status_filter !== '' ? ':' . $payment_status_filter : '') : null),
+    ]), admin_url('options-general.php')));
     $admin_url_calendar = esc_url(add_query_arg(['page' => 'csc_orders_admin', 'view' => 'calendar'], admin_url('options-general.php')));
+
+    // Чипы быстрой фильтрации по статусу (включая зависшие «Ожидает оплаты»)
+    $filter_chips = [
+        ''                                  => 'Все',
+        CSC_STATUS_PENDING                   => 'Ожидает',
+        CSC_STATUS_SEARCHING                 => 'Поиск мастера',
+        CSC_STATUS_AWAITING_PAYMENT          => '💳 Ожидает оплаты (зависшие)',
+        CSC_STATUS_AWAITING_PAYMENT . ':pending' => 'Ожидает оплаты: платёж в процессе',
+        CSC_STATUS_PROCESSING                => 'В работе',
+        CSC_STATUS_COMPLETED                 => 'Выполнено',
+        CSC_STATUS_CANCELLED                 => 'Отменено',
+    ];
     ?>
     <div class="wrap">
     <h1>Управление заявками <span class="title-count" style="color:#64748b; font-size:14px; font-weight:normal;">(<?php echo esc_html($total_orders); ?> всего)</span></h1>
@@ -1450,6 +1500,25 @@ function csc_orders_admin_page() {
     </h2>
 
     <?php if ($view == 'list'): ?>
+
+    <!-- ЧИПЫ БЫСТРОЙ ФИЛЬТРАЦИИ ПО СТАТУСУ -->
+    <div class="tablenav" style="margin: 10px 0;">
+        <div class="tablenav-pages" style="float:none; text-align:left;">
+            <span class="displaying-num">Фильтр:</span>
+            <?php foreach ($filter_chips as $chip_key => $chip_label):
+                $chip_count = $chip_key === '' ? array_sum($status_counts) : ($status_counts[$chip_key] ?? 0);
+                $chip_url = esc_url(add_query_arg(array_filter([
+                    'page' => 'csc_orders_admin',
+                    'view' => 'list',
+                    'status_filter' => $chip_key !== '' ? $chip_key : null,
+                ]), admin_url('options-general.php')));
+                $is_active = ($status_filter . ($payment_status_filter !== '' ? ':' . $payment_status_filter : '')) === $chip_key;
+                ?>
+                <a class="page-numbers<?php echo $is_active ? ' current' : ''; ?>" href="<?php echo $chip_url; ?>"><?php echo esc_html($chip_label); ?> (<?php echo esc_html($chip_count); ?>)</a>
+            <?php endforeach; ?>
+        </div>
+    </div>
+
     <!-- ============================================================
     УЛУЧШЕНИЕ №4: ИНФО-БЛОК ПАГИНАЦИИ
     ============================================================ -->
@@ -1470,6 +1539,8 @@ function csc_orders_admin_page() {
         <select id="csc-bulk-status" style="height: 30px; padding: 0 8px;">
             <option value="">— Изменить статус на —</option>
             <option value="pending">Ожидает</option>
+            <option value="searching">Поиск мастера</option>
+            <option value="awaiting_payment">Ожидает оплаты</option>
             <option value="processing">В работе</option>
             <option value="completed">Выполнено</option>
             <option value="cancelled">Отменено</option>
@@ -1527,8 +1598,15 @@ function csc_orders_admin_page() {
                     <form method="post" class="csc-single-status-form" style="display: flex; gap: 5px;">
                         <?php wp_nonce_field('csc_update_status_' . $o['order_number'], '_csc_status_nonce'); ?>
                         <input type="hidden" name="order_number" value="<?php echo esc_attr($o['order_number']); ?>">
+                        <?php if (($o['status'] ?? '') === CSC_STATUS_AWAITING_PAYMENT): ?>
+                            <!-- Быстрая ручная отмена зависшего заказа «Ожидает оплаты» -->
+                            <button type="submit" name="csc_update_status" value="1" class="button button-small" style="color:#d63638;" data-confirm="Отменить зависший заказ #<?php echo esc_attr($o['order_number']); ?> (ожидает оплаты)?">❌ Отменить</button>
+                            <input type="hidden" name="new_status" value="cancelled">
+                        <?php endif; ?>
                         <select name="new_status" style="font-size: 12px; height: 28px;">
                             <option value="pending" <?php selected($o['status'] ?? '', CSC_STATUS_PENDING); ?>>Ожидает</option>
+                            <option value="searching" <?php selected($o['status'] ?? '', CSC_STATUS_SEARCHING); ?>>Поиск мастера</option>
+                            <option value="awaiting_payment" <?php selected($o['status'] ?? '', CSC_STATUS_AWAITING_PAYMENT); ?>>Ожидает оплаты</option>
                             <option value="processing" <?php selected($o['status'] ?? '', CSC_STATUS_PROCESSING); ?>>В работе</option>
                             <option value="completed" <?php selected($o['status'] ?? '', CSC_STATUS_COMPLETED); ?>>Выполнено</option>
                             <option value="cancelled" <?php selected($o['status'] ?? '', CSC_STATUS_CANCELLED); ?>>Отменено</option>
@@ -1582,6 +1660,14 @@ function csc_orders_admin_page() {
     const CSC_REMINDER_NONCE = '<?php echo esc_js(wp_create_nonce("csc_admin_nonce")); ?>';
     const CSC_AJAX_URL = '<?php echo esc_url(admin_url("admin-ajax.php")); ?>';
     jQuery(document).ready(function($){
+        // Подтверждение быстрой отмены зависшего заказа «Ожидает оплаты»
+        $(document).on('click', '.csc-single-status-form button[data-confirm]', function(e){
+            if (!confirm($(this).data('confirm'))) {
+                e.preventDefault();
+                return false;
+            }
+        });
+
         $('#csc-select-all-header').on('change', function(){
             $('.csc-order-checkbox').prop('checked', this.checked);
         });
