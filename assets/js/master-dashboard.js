@@ -621,6 +621,12 @@
                         <span class="csc-balance-detail-label">💸 Выплачено</span>
                         <span class="csc-balance-detail-value csc-text-muted">−${formatMoney(b.total_payout)}</span>
                     </div>
+                    ${b.pending_payout > 0 ? `
+                    <div class="csc-balance-detail-row">
+                        <span class="csc-balance-detail-label">⏳ Ожидает выплаты</span>
+                        <span class="csc-balance-detail-value csc-text-warning">${formatMoney(b.pending_payout)}</span>
+                    </div>
+                    ` : ''}
                     ${b.penalties_amount > 0 ? `
                     <div class="csc-balance-detail-row">
                         <span class="csc-balance-detail-label">⚠️ Штрафы (${b.penalties_total} шт.)</span>
