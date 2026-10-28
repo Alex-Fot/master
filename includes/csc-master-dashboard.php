@@ -136,6 +136,25 @@ if (!function_exists('csc_render_master_dashboard')) {
         if ($session_token === '') {
             $session_token = $token; // фолбэк: используем уже предъявленный валидный токен
         }
+        // Токен из URL мог быть ОДНОКРАТНЫМ (Telegram/админ-ссылка) или legacy-постоянным.
+        // Для авторизации REST/AJAX-запросов страницы нормализуем его до постоянного
+        // открытого токена мастера: если stored — legacy (открытый), берём его как есть;
+        // если stored — хэш, генерируем новый постоянный токен (его хэш сохраняется).
+        if (function_exists('csc_is_hashed_token') && csc_is_hashed_token($stored_token)) {
+            $fresh_persistent = wp_generate_password(32, false);
+            $masters[$mid]['dashboard_token'] = csc_hash_token($fresh_persistent);
+            update_option('csc_masters_list', $masters, false);
+            if (function_exists('csc_cache_delete_masters')) {
+                csc_cache_delete_masters();
+            }
+            $session_token = $fresh_persistent;
+        } elseif ($stored_token !== '' && strlen($stored_token) >= 16) {
+            // Legacy открытый токен — оставляем его working значением для сессии
+            // (ленивая миграция в хэш произойдёт при первой сверке csc_verify_token).
+            $session_token = $stored_token;
+        }
+        // Если у мастера не было токена вовсе — csc_issue_master_login_token выше
+        // создал новый и вернул открытую часть; она остаётся в $session_token.
         $site_url = esc_url(home_url());
         $ajax_nonce = wp_create_nonce('csc_cabinet_nonce');
 
@@ -157,7 +176,7 @@ if (!function_exists('csc_render_master_dashboard')) {
 
         wp_localize_script('csc-master-dashboard', 'CSC_MASTER_CONFIG', [
             'mid'           => $mid,
-            'token'         => $current_token,
+            'token'         => $session_token,
             'nonce'         => $ajax_nonce,
             'masterName'    => $master_name,
             'masterStatus'  => $master_status,
@@ -595,16 +614,14 @@ if (!function_exists('csc_register_master_routes')) {
                     return new WP_Error('missing_auth', 'Не передан mid или token', ['status' => 400]);
                 }
 
-                // Проверка токена мастера
-                $masters = function_exists('csc_get_masters') ? csc_get_masters() : [];
-                if (!isset($masters[$mid])) {
-                    return new WP_Error('not_found', 'Мастер не найден', ['status' => 404]);
+                // ИСПРАВЛЕНО (SHA-256 миграция): проверка через единую функцию авторизации.
+                // Прежний hash_equals по stored-значению ломался после хэширования токенов
+                // и не поддерживал одноразовые входные креденшелы.
+                $auth = csc_verify_master_auth($request);
+                if (is_wp_error($auth)) {
+                    return $auth;
                 }
-                $master = $masters[$mid];
-                $stored_token = isset($master['dashboard_token']) ? (string)$master['dashboard_token'] : '';
-                if ($stored_token === '' || strlen($stored_token) < 16 || !hash_equals($stored_token, (string)$token)) {
-                    return new WP_Error('unauthorized', 'Неверный токен доступа', ['status' => 401]);
-                }
+                $master = $auth['masters'][$mid];
 
                 if (!function_exists('csc_finance_get_master_report')) {
                     return new WP_Error('module_missing', 'Финансовый модуль не подключён', ['status' => 500]);
@@ -765,6 +782,15 @@ if (!function_exists('csc_verify_master_auth')) {
             return new WP_Error('unauthorized', 'Missing credentials', ['status' => 401]);
         }
 
+        // ИСПРАВЛЕНО (защита ЛК мастера): лимит попыток подбора токена.
+        // Тот же счётчик, что и на странице входа кабинета.
+        if (function_exists('csc_check_master_login_rate_limit')) {
+            $rl = csc_check_master_login_rate_limit($mid);
+            if (!$rl['allowed']) {
+                return new WP_Error('rate_limited', 'Слишком много неудачных попыток. Повторите позже.', ['status' => 429]);
+            }
+        }
+
         $masters = function_exists('csc_get_masters') ? csc_get_masters() : [];
 
         // ИСПРАВЛЕНО 6.2: защита от пустого/некорректного списка мастеров
@@ -782,8 +808,41 @@ if (!function_exists('csc_verify_master_auth')) {
             return new WP_Error('unauthorized', 'Invalid token configuration', ['status' => 401]);
         }
 
-        if (!hash_equals($stored_token, (string)$token)) {
+        // ИСПРАВЛЕНО (SHA-256 миграция): сверка через csc_verify_token — поддерживает
+        // хэш stored-значения + ленивую миграцию legacy открытых токенов; hash_equals
+        // напрямую по хэшу ломал бы все REST-вызовы после миграции.
+        $is_valid = false;
+        if (function_exists('csc_verify_token')) {
+            $on_migrate = null;
+            if (!csc_is_hashed_token($stored_token)) {
+                $on_migrate = function ($new_hash) use (&$masters, $mid) {
+                    $masters[$mid]['dashboard_token'] = $new_hash;
+                    update_option('csc_masters_list', $masters, false);
+                    if (function_exists('csc_cache_delete_masters')) {
+                        csc_cache_delete_masters();
+                    }
+                };
+            }
+            $is_valid = csc_verify_token($token, $stored_token, $on_migrate);
+        } else {
+            $is_valid = hash_equals($stored_token, (string)$token);
+        }
+
+        // Дополнительный путь: одноразовый входной креденшел (csc_issue_master_login_token).
+        if (!$is_valid && function_exists('csc_verify_master_login_token')) {
+            $login_mid = csc_verify_master_login_token($token);
+            if ($login_mid === $mid) {
+                $is_valid = true;
+            }
+        }
+
+        if (!$is_valid) {
             return new WP_Error('unauthorized', 'Invalid credentials', ['status' => 401]);
+        }
+
+        // Успех — сброс счётчика попыток
+        if (function_exists('csc_reset_master_login_rate_limit')) {
+            csc_reset_master_login_rate_limit($mid);
         }
 
         return ['mid' => $mid, 'masters' => $masters];
@@ -1116,6 +1175,16 @@ if (!function_exists('csc_handle_upload_completion')) {
         $order_number = sanitize_text_field($request->get_param('order_number'));
         $action = sanitize_text_field($request->get_param('action') ?? 'upload');
 
+        // ИСПРАВЛЕНО (защита ЛК мастера): URL прокси-файлов не должен содержать
+        // секрет доступа (раньше сюда попадал хэш постоянного dashboard_token).
+        // Генерируем короткий-lived креденшел только для ссылок на загруженные файлы.
+        $file_proxy_token = function_exists('csc_issue_master_login_token')
+            ? csc_issue_master_login_token($mid, $auth['masters'], 6 * HOUR_IN_SECONDS)
+            : '';
+        if ($file_proxy_token === '') {
+            $file_proxy_token = $auth['masters'][$mid]['dashboard_token'] ?? '';
+        }
+
         if (empty($order_number)) {
             return new WP_Error('bad_request', 'Missing order_number', ['status' => 400]);
         }
@@ -1271,7 +1340,7 @@ if (!function_exists('csc_handle_upload_completion')) {
                         'order_number' => $order_number,
                         'filename'     => $unique_name,
                         'mid'          => $mid,
-                        'token'        => $auth['masters'][$mid]['dashboard_token'],
+                        'token'        => $file_proxy_token,
                     ], rest_url('csc/v1/master/file-proxy'));
 
                     $uploaded[] = [

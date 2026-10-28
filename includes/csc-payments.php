@@ -841,7 +841,16 @@ if (!function_exists('csc_poll_payment_status_handler')) {
         }
 
         $stored_token = $order['auth_token'] ?? '';
-        if (empty($stored_token) || !hash_equals($stored_token, $auth_token)) {
+        // ИСПРАВЛЕНО (SHA-256 миграция): сверка через csc_verify_token с ленивой
+        // миграцией legacy-токена в хэш; прямой hash_equals ломается после миграции.
+        if (empty($stored_token) || !csc_verify_token(
+            $auth_token, $stored_token,
+            function ($new_hash) use ($order_number) {
+                if (function_exists('csc_update_order_auth_token')) {
+                    csc_update_order_auth_token($order_number, $new_hash);
+                }
+            }
+        )) {
             wp_send_json_error(['message' => 'Доступ запрещён']);
         }
 
@@ -1160,7 +1169,15 @@ if (!function_exists('csc_create_payment_ajax')) {
         }
 
         $stored_token = $order['auth_token'] ?? '';
-        if (empty($stored_token) || !hash_equals($stored_token, $auth_token)) {
+        // ИСПРАВЛЕНО (SHA-256 миграция): сверка через csc_verify_token с ленивой миграцией.
+        if (empty($stored_token) || !csc_verify_token(
+            $auth_token, $stored_token,
+            function ($new_hash) use ($order_number) {
+                if (function_exists('csc_update_order_auth_token')) {
+                    csc_update_order_auth_token($order_number, $new_hash);
+                }
+            }
+        )) {
             wp_send_json_error(['message' => 'Доступ запрещён']);
         }
 
@@ -1208,7 +1225,15 @@ if (!function_exists('csc_pay_remaining_ajax')) {
         }
 
         $stored_token = $order['auth_token'] ?? '';
-        if (empty($stored_token) || !hash_equals($stored_token, $auth_token)) {
+        // ИСПРАВЛЕНО (SHA-256 миграция): сверка через csc_verify_token с ленивой миграцией.
+        if (empty($stored_token) || !csc_verify_token(
+            $auth_token, $stored_token,
+            function ($new_hash) use ($order_number) {
+                if (function_exists('csc_update_order_auth_token')) {
+                    csc_update_order_auth_token($order_number, $new_hash);
+                }
+            }
+        )) {
             wp_send_json_error(['message' => 'Доступ запрещён']);
         }
 
