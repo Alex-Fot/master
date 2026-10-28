@@ -1796,7 +1796,7 @@ function csc_orders_admin_page() {
     </script>
 
     <?php else: // РЕЖИМ КАЛЕНДАРЯ ?>
-    <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js'></script>
+    <script src='<?php echo esc_url(CSC_PLUGIN_URL . 'assets/vendor/fullcalendar/index.global.min.js'); ?>'></script>
     <div id='csc-calendar' style="background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-top: 20px;"></div>
     <script>
     document.addEventListener('DOMContentLoaded', function() {

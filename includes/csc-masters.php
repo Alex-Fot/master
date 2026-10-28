@@ -394,8 +394,8 @@ if (!function_exists('csc_masters_admin_page')) {
         $masters_count = count($masters);
 
         // === ПОДКЛЮЧЕНИЕ LEAFLET ДЛЯ КАРТЫ ЗОНЫ ОБСЛУЖИВАНИЯ ===
-        echo '<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />';
-        echo '<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>';
+        echo '<link rel="stylesheet" href="' . esc_url(CSC_PLUGIN_URL . 'assets/vendor/leaflet/leaflet.css') . '" />';
+        echo '<script src="' . esc_url(CSC_PLUGIN_URL . 'assets/vendor/leaflet/leaflet.js') . '"></script>';
         ?>
         <div class="wrap">
             <h1>Управление Сотрудниками (Мастерами)</h1>
