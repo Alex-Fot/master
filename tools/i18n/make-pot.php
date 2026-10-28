@@ -165,6 +165,32 @@ foreach ($files as $file) {
     }
 }
 
+// ============================================================
+// Сканирование JS: вызовы __c('Оригинал') / __c('key', 'Оригинал')
+// и cscI18n.t(...). Берётся последний строковый литерал аргумента —
+// это русский оригинал (fallback), он же ключ в словаре CSC_I18N.
+// ============================================================
+$js_re = "/\\b(?:__c|cscI18n\\.t)\\s*\\(\\s*((?:(?:'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'|\"[^\"\\\\]*(?:\\\\.[^\"\\\\]*)*\")\\s*,?\\s*)+)\\)/u";
+foreach ($files_js as $file) {
+    $src = file_get_contents($file);
+    if (!preg_match_all($js_re, $src, $m)) continue;
+    foreach ($m[1] as $argsStr) {
+        // все литеральные аргументы вызова
+        preg_match_all("/'([^'\\\\]*(?:\\\\.[^'\\\\]*)*)'|\"([^\"\\\\]*(?:\\\\.[^\"\\\\]*)*)\"/", $argsStr, $am);
+        $lits = [];
+        foreach ($am[0] as $idx => $whole) {
+            $raw = ($am[1][$idx] !== '') ? $am[1][$idx] : $am[2][$idx];
+            $val = stripcslashes($raw);
+            if ($val === '' || $val === 'csc') continue;
+            $lits[] = $val;
+        }
+        if (!$lits) continue;
+        $msgid = end($lits); // fallback-строка = оригинал для перевода
+        if (!preg_match('/\\p{L}/u', $msgid)) continue;
+        $single[$msgid] = true;
+    }
+}
+
 ksort($single, SORT_NATURAL | SORT_FLAG_CASE);
 
 $out  = "# Copyright (C) 2026 Custom Service Calculator\n";
