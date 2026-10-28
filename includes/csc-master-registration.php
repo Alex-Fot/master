@@ -223,7 +223,10 @@ if (!function_exists('csc_render_become_master_form')) {
             'radiusMax' => 20,
             'radiusDefault' => 10,
             'nonce' => wp_create_nonce('wp_rest'),
+            // i18n: словарь строк интерфейса формы регистрации (cscI18n.t('key'))
+            'i18n'  => function_exists('csc_js_strings_registration') ? csc_js_strings_registration() : [],
         ]);
+        wp_localize_script('csc-master-registration', 'CSC_I18N', function_exists('csc_js_strings_registration') ? csc_js_strings_registration() : []);
 
         ob_start();
         

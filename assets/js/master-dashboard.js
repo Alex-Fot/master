@@ -1,6 +1,10 @@
 /**
  * Custom Service Calculator - Master Dashboard JS
  * Version: 6.2 (добавлена вкладка «Баланс» с финансовой сводкой и историей транзакций)
+ *
+ * i18n: словарь переводов приходит из PHP (wp_localize_script -> window.CSC_I18N,
+ * см. includes/csc-js-i18n.php). Хелпер cscI18n.t(key, fallback) ниже; жёстко
+ * закодированные русские строки остаются фолбэком при отсутствии словаря.
  * 
  * СОХРАНЕНО ИЗ 6.0:
  * - Карта зоны обслуживания (Leaflet) с перетаскиваемым маркером
@@ -21,6 +25,18 @@
  */
 (function() {
     'use strict';
+
+    // ============================================================
+    // i18n: доступ к серверному словарю переводов (window.CSC_I18N,
+    // формируется в PHP csc_js_strings_dashboard()). Фолбэк — оригинал.
+    // ============================================================
+    window.cscI18n = window.cscI18n || {
+        t: function (key, fallback) {
+            var d = (typeof CSC_I18N !== 'undefined' && CSC_I18N) ? CSC_I18N : {};
+            return (d[key] !== undefined && d[key] !== null) ? d[key] : (fallback !== undefined ? fallback : key);
+        }
+    };
+    const __c = window.cscI18n.t;
 
     // ============================================================
     // 1. CONFIG & STATE

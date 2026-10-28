@@ -182,7 +182,11 @@ if (!function_exists('csc_render_master_dashboard')) {
             'soundUrl'       => $sound_url, // <--- ДОБАВЛЕНО: URL звукового файла или пустая строка
             // i18n: локализованные подписи статусов для инлайнового JS (getStatusLabel)
             'statusLabels'   => function_exists('csc_status_labels_js') ? csc_status_labels_js() : [],
+            // i18n: общий словарь строк интерфейса JS (cscI18n.t('key'))
+            'i18n'           => function_exists('csc_js_strings_dashboard') ? csc_js_strings_dashboard() : [],
         ]);
+        // window.CSC_I18N — то же содержимое, единое имя для всех скриптов страницы.
+        wp_localize_script('csc-master-dashboard', 'CSC_I18N', function_exists('csc_js_strings_dashboard') ? csc_js_strings_dashboard() : []);
 
         nocache_headers();
         ?>

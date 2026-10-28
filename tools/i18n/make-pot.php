@@ -27,6 +27,19 @@ foreach ($it as $f) {
 }
 sort($files);
 
+// JS-файлы плагина: сканируем вызовы __c('key', 'Фолбэк') / cscI18n.t('key', 'Фолбэк').
+// Второй литеральный аргумент (русский оригинал) добавляется в POT как переводимая строка.
+$files_js = [];
+$jit = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS));
+foreach ($jit as $f) {
+    if ($f->isFile() && strtolower($f->getExtension()) === 'js') {
+        $path = str_replace('\\', '/', $f->getPathname());
+        if (strpos($path, '/node_modules/') !== false) continue;
+        $files_js[] = $f->getPathname();
+    }
+}
+sort($files_js);
+
 $single   = [];  // msgid => true
 $plurals  = [];  // msgid => msgid_plural
 $contexts = [];  // msgid => context

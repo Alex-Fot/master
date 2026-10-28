@@ -435,6 +435,10 @@ require_once CSC_PLUGIN_DIR . 'includes/csc-logger.php';
 // до csc-core-functions.php и остальных модулей, использующих CSC_STATUS_*.
 require_once CSC_PLUGIN_DIR . 'includes/csc-status-i18n.php';
 
+// i18n-словари для JS (csc_t(), csc_js_strings_*): подключаются до модулей,
+// которые локализуют скрипты (csc-master-dashboard / csc-master-registration).
+require_once CSC_PLUGIN_DIR . 'includes/csc-js-i18n.php';
+
 require_once CSC_PLUGIN_DIR . 'includes/csc-core-functions.php';
 require_once CSC_PLUGIN_DIR . 'includes/csc-admin-pages.php';
 require_once CSC_PLUGIN_DIR . 'includes/csc-calculator-shortcode.php';
