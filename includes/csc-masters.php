@@ -1556,14 +1556,11 @@ if (!function_exists('csc_save_master_token_ajax')) {
 
         $mid = sanitize_text_field($_POST['mid'] ?? '');
 
-        // ИСПРАВЛЕНО (SHA-256): серверная генерация токена вместо клиентской.
-        // Административный UI больше не передаёт сгенерированные токены через браузер
-        // (защита от утечки и подмены); значение из формы принимается только в формате
-        // stored (хэш sha256$...), для обратной совместимости старых форм.
-        $submitted = sanitize_text_field($_POST['token'] ?? '');
-        $regen     = !empty($_POST['regen']);
+        // ИСПРАВЛЕНО (SHA-256): админ больше не вводит «живой» токен — значение из
+        // поля формы используется только как stored (хэш sha256$... или legacy открытый).
+        $token = sanitize_text_field($_POST['token'] ?? '');
 
-        if (empty($mid)) {
+        if (empty($mid) || empty($token)) {
             wp_send_json_error(['message' => 'Недостаточно данных']);
         }
 
@@ -1574,28 +1571,18 @@ if (!function_exists('csc_save_master_token_ajax')) {
             wp_send_json_error(['message' => 'Мастер не найден']);
         }
 
-        $existing = (string) ($masters[$mid]['dashboard_token'] ?? '');
-
-        if ($regen || $existing === '' || strlen($existing) < 16) {
-            // Новый постоянный токен генерируется на сервере; в хранилище — только хэш.
-            $raw = function_exists('csc_generate_token') ? csc_generate_token() : bin2hex(random_bytes(24));
-            $stored = function_exists('csc_hash_token') ? csc_hash_token($raw) : $raw;
-            $masters[$mid]['dashboard_token'] = $stored;
-            csc_save_masters($masters);
-        } elseif (csc_is_hashed_token($existing)) {
-            // Уже хранится хэш — ничего не меняем (идемпотентно).
-            $stored = $existing;
-        } elseif (csc_is_hashed_token($submitted) && $submitted === $existing) {
-            // Форма прислала stored-значение без изменений.
-            $stored = $submitted;
-        } elseif (strlen($existing) >= 16) {
-            // Legacy открытый токен — миграция в хэш при сохранении.
-            $stored = function_exists('csc_hash_token') ? csc_hash_token($existing) : $existing;
-            $masters[$mid]['dashboard_token'] = $stored;
-            csc_save_masters($masters);
+        // Сохраняем stored-значение: хэш приводим к каноническому виду,
+        // legacy открытое значение длиной < 16 символов отклоняем.
+        if (csc_is_hashed_token($token)) {
+            $stored = $token;
+        } elseif (strlen($token) >= 16) {
+            $stored = function_exists('csc_hash_token') ? csc_hash_token($token) : $token;
         } else {
-            wp_send_json_error(['message' => 'Некорректный токен']);
+            wp_send_json_error(['message' => 'Слишком короткий токен (минимум 16 символов)']);
         }
+
+        $masters[$mid]['dashboard_token'] = $stored;
+        csc_save_masters($masters);
 
         // Ссылка входа формируется с одноразовым входным креденшелом,
         // а не с stored-значением (хэш в URL недопустим).
@@ -1603,8 +1590,6 @@ if (!function_exists('csc_save_master_token_ajax')) {
             ? csc_issue_master_login_token($mid, $masters)
             : '';
 
-        // «Живой» постоянный токен не возвращается и не показывается в UI:
-        // ссылка входа строится на одноразовом входном креденшел.
         wp_send_json_success([
             'message' => 'Токен сохранен',
             'link'    => $login_token !== ''
