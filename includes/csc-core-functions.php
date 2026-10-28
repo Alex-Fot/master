@@ -967,6 +967,52 @@ if (!function_exists('csc_verify_master_login_token')) {
 }
 
 /**
+* ИСПРАВЛЕНО (защита ЛК мастера): нормализация «живого» токена сессии после входа в кабинет.
+*
+* В хранилище после миграции лежит только SHA-256 хэш, из которого открытый токен
+* не восстанавливается, а входной креденшел из URL — одноразовый (повторно сверить
+* его нельзя). Поэтому для REST/AJAX-вызовов страницы выдаётся НОВЫЙ постоянный
+* открытый токен: его хэш сохраняется в хранилище, открытая часть хранится только
+* в памяти страницы (wp_localize_script) и живёт до перезагрузки кабинета.
+* Legacy-мастера с открытым stored-токеном сохраняют своё значение (ленивая
+* миграция в хэш произойдёт при первой же сверке csc_verify_token).
+*
+* @param string       $master_id    ID мастера
+* @param array        $masters      Список мастеров (по ссылке — обновляется in-place)
+* @param callable|null $on_save     Колбэк сохранения списка (по умолчанию update_option + сброс кэша)
+* @return string Открытый токен для текущей сессии ('' если данных нет)
+*/
+if (!function_exists('csc_normalize_master_session_token')) {
+    function csc_normalize_master_session_token($master_id, &$masters, $on_save = null) {
+        if (empty($master_id) || empty($masters[$master_id])) return '';
+
+        $stored = isset($masters[$master_id]['dashboard_token']) ? (string)$masters[$master_id]['dashboard_token'] : '';
+
+        // Хэш в хранилище → новый постоянный открытый токен этой сессии
+        if (function_exists('csc_is_hashed_token') && csc_is_hashed_token($stored)) {
+            $fresh = wp_generate_password(32, false);
+            $masters[$master_id]['dashboard_token'] = csc_hash_token($fresh);
+            if (is_callable($on_save)) {
+                call_user_func($on_save, $masters);
+            } else {
+                update_option('csc_masters_list', $masters, false);
+                if (function_exists('csc_cache_delete_masters')) {
+                    csc_cache_delete_masters();
+                }
+            }
+            return $fresh;
+        }
+
+        // Legacy открытый токен — оставляем working значением сессии
+        if ($stored !== '' && strlen($stored) >= 16) {
+            return $stored;
+        }
+
+        return '';
+    }
+}
+
+/**
 * Получить IP клиента с учётом прокси / балансировщика.
 * ИСПРАВЛЕНО: поддержка X-Forwarded-For, X-Real-IP.
 */

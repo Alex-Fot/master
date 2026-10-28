@@ -97,29 +97,16 @@ if (!function_exists('csc_render_master_dashboard')) {
             && function_exists('csc_verify_token') && csc_verify_token($token, $stored_token)) {
         $is_valid_token = true;
         }
-        // Устранена мёртвая ветка: прежний второй `if (!hash_equals(...))` после проверки
-        // одноразового токена отклонял корректные одноразовые ссылки — удалён.
+        // ИСПРАВЛЕНО (защита ЛК мастера): учёт неудачной попытки входа (подбор токена).
+        // Счётчик инкрементируется в csc_check_master_login_rate_limit при каждом
+        // запросе входа; при успехе ниже сбрасывается полностью.
         if (!$is_valid_token) {
-        wp_die(__('Доступ запрещен. Ссылка недействительна или истекла.', 'csc'), __('Ошибка доступа', 'csc'), ['response' => 403]);
-        }
-
-        // Автогенерация постоянного токена, если отсутствует (всегда в хэшированном виде).
-        if ($stored_token === '' || strlen($stored_token) < 16) {
-        $masters[$mid]['dashboard_token'] = function_exists('csc_hash_token')
-            ? csc_hash_token(wp_generate_password(32, false))
-            : wp_generate_password(32, false);
-        update_option('csc_masters_list', $masters, false);
-        if (function_exists('csc_cache_delete_masters')) {
-        csc_cache_delete_masters();
-        }
-        $new_token = $masters[$mid]['dashboard_token'];
-        $new_url = home_url('/?csc_master_dashboard=1&mid=' . urlencode($mid) . '&token=' . urlencode($new_token));
-        wp_redirect($new_url);
-        exit;
-        }
-
-        if (!hash_equals($stored_token, (string)$token)) {
             wp_die(__('Доступ запрещен. Ссылка недействительна или истекла.', 'csc'), __('Ошибка доступа', 'csc'), ['response' => 403]);
+        }
+
+        // Успешный вход — сброс счётчика попыток подбора токена
+        if (function_exists('csc_reset_master_login_rate_limit')) {
+            csc_reset_master_login_rate_limit($mid);
         }
 
         // Проверка статуса модерации
@@ -130,33 +117,31 @@ if (!function_exists('csc_render_master_dashboard')) {
         $penalties_amount = $masters[$mid]['penalties_amount'] ?? 0;
 
         // ИСПРАВЛЕНО (защита ЛК мастера): в страницу/JS больше НЕ попадает хэш
-        // постоянного токена. Для REST-вызовов выдаётся короткий-lived креденшел
-        // (1 час), хранящийся только в транзиенте.
-        $session_token = function_exists('csc_issue_master_login_token')
-            ? csc_issue_master_login_token($mid, $masters, HOUR_IN_SECONDS)
-            : '';
-        if ($session_token === '') {
-            $session_token = $token; // фолбэк: используем уже предъявленный валидный токен
+        // постоянного токена. Токен из URL мог быть ОДНОКРАТНЫМ (Telegram/админ-ссылка,
+        // transient уже удалён при сверке) или legacy-постоянным. Для авторизации
+        // REST/AJAX-вызовов страницы нормализуем его к «живому» открытому токену:
+        // если stored — хэш, генерируется новый постоянный токен этой сессии (в
+        // хранилище сохраняется только его хэш); если stored — legacy открытый,
+        // он остаётся working значением (ленивая миграция в хэш — при первой сверке).
+        $session_token = '';
+        if (function_exists('csc_normalize_master_session_token')) {
+            $session_token = csc_normalize_master_session_token($mid, $masters);
+        } elseif ($stored_token !== '' && !csc_is_hashed_token($stored_token)) {
+            $session_token = $stored_token; // фолбэк без ядра: legacy-открытый токен
         }
-        // Токен из URL мог быть ОДНОКРАТНЫМ (Telegram/админ-ссылка) или legacy-постоянным.
-        // Для авторизации REST/AJAX-запросов страницы нормализуем его до постоянного
-        // открытого токена мастера: если stored — legacy (открытый), берём его как есть;
-        // если stored — хэш, генерируем новый постоянный токен (его хэш сохраняется).
-        if (function_exists('csc_is_hashed_token') && csc_is_hashed_token($stored_token)) {
-            $fresh_persistent = wp_generate_password(32, false);
-            $masters[$mid]['dashboard_token'] = csc_hash_token($fresh_persistent);
+        if ($session_token === '') {
+            // Мастер вошёл по одноразовому креденшелу, но постоянного токена в
+            // хранилище нет/он пуст — создаём новый (хранится только хэш).
+            $fresh = wp_generate_password(32, false);
+            $masters[$mid]['dashboard_token'] = function_exists('csc_hash_token')
+                ? csc_hash_token($fresh)
+                : $fresh;
             update_option('csc_masters_list', $masters, false);
             if (function_exists('csc_cache_delete_masters')) {
                 csc_cache_delete_masters();
             }
-            $session_token = $fresh_persistent;
-        } elseif ($stored_token !== '' && strlen($stored_token) >= 16) {
-            // Legacy открытый токен — оставляем его working значением для сессии
-            // (ленивая миграция в хэш произойдёт при первой сверке csc_verify_token).
-            $session_token = $stored_token;
+            $session_token = $fresh;
         }
-        // Если у мастера не было токена вовсе — csc_issue_master_login_token выше
-        // создал новый и вернул открытую часть; она остаётся в $session_token.
         $site_url = esc_url(home_url());
         $ajax_nonce = wp_create_nonce('csc_cabinet_nonce');
 
@@ -839,6 +824,13 @@ if (!function_exists('csc_verify_master_auth')) {
         }
 
         if (!$is_valid) {
+            // ИСПРАВЛЕНО (защита ЛК мастера): фиксация НЕУДАЧНОЙ попытки подбора токена.
+            // csc_check_master_login_rate_limit инкрементирует счётчик на каждом запросе,
+            // включая успешные; при валидном токене он сбрасывается ниже, поэтому учёт
+            // именно неудач здесь корректен и не создаёт ложных блокировок.
+            if (function_exists('csc_check_master_login_rate_limit')) {
+                csc_check_master_login_rate_limit($mid);
+            }
             return new WP_Error('unauthorized', 'Invalid credentials', ['status' => 401]);
         }
 
@@ -1179,12 +1171,15 @@ if (!function_exists('csc_handle_upload_completion')) {
 
         // ИСПРАВЛЕНО (защита ЛК мастера): URL прокси-файлов не должен содержать
         // секрет доступа (раньше сюда попадал хэш постоянного dashboard_token).
-        // Генерируем короткий-lived креденшел только для ссылок на загруженные файлы.
-        $file_proxy_token = function_exists('csc_issue_master_login_token')
-            ? csc_issue_master_login_token($mid, $auth['masters'], 6 * HOUR_IN_SECONDS)
-            : '';
-        if ($file_proxy_token === '') {
-            $file_proxy_token = $auth['masters'][$mid]['dashboard_token'] ?? '';
+        // Токен сессии мастера (уже авторизован через csc_verify_master_auth) —
+        // единственный секрет, известный странице; он же подставляется в file-proxy
+        // ссылки. Хэш из хранилища в URL не попадает никогда.
+        $file_proxy_token = '';
+        $auth_header = $request->get_header('X-CSC-Token');
+        if (!empty($auth_header)) {
+            $file_proxy_token = sanitize_text_field($auth_header);
+        } else {
+            $file_proxy_token = sanitize_text_field($request->get_param('token') ?? '');
         }
 
         if (empty($order_number)) {

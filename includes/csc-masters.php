@@ -1576,9 +1576,12 @@ if (!function_exists('csc_save_master_token_ajax')) {
         }
 
         $mid = sanitize_text_field($_POST['mid'] ?? '');
+
+        // ИСПРАВЛЕНО (SHA-256): админ больше не вводит «живой» токен — значение из
+        // поля формы используется только как stored (хэш sha256$... или legacy открытый).
         $token = sanitize_text_field($_POST['token'] ?? '');
 
-        if (empty($mid) || empty($token) || strlen($token) < 16) {
+        if (empty($mid) || empty($token)) {
             wp_send_json_error(['message' => 'Недостаточно данных']);
         }
 
@@ -1589,13 +1592,30 @@ if (!function_exists('csc_save_master_token_ajax')) {
             wp_send_json_error(['message' => 'Мастер не найден']);
         }
 
-        // Сохраняем токен
-        $masters[$mid]['dashboard_token'] = $token;
+        // Сохраняем stored-значение: хэш приводим к каноническому виду,
+        // legacy открытое значение длиной < 16 символов отклоняем.
+        if (csc_is_hashed_token($token)) {
+            $stored = $token;
+        } elseif (strlen($token) >= 16) {
+            $stored = function_exists('csc_hash_token') ? csc_hash_token($token) : $token;
+        } else {
+            wp_send_json_error(['message' => 'Слишком короткий токен (минимум 16 символов)']);
+        }
+
+        $masters[$mid]['dashboard_token'] = $stored;
         csc_save_masters($masters);
+
+        // Ссылка входа формируется с одноразовым входным креденшелом,
+        // а не с stored-значением (хэш в URL недопустим).
+        $login_token = function_exists('csc_issue_master_login_token')
+            ? csc_issue_master_login_token($mid, $masters)
+            : '';
 
         wp_send_json_success([
             'message' => 'Токен сохранен',
-            'link' => home_url('/?csc_master_dashboard=1&mid=' . urlencode($mid) . '&token=' . urlencode($token))
+            'link'    => $login_token !== ''
+                ? home_url('/?csc_master_dashboard=1&mid=' . urlencode($mid) . '&token=' . urlencode($login_token))
+                : home_url('/?csc_master_dashboard=1'),
         ]);
     }
 }
@@ -1681,8 +1701,14 @@ if (!function_exists('csc_moderate_master_ajax')) {
         // ============================================================
         $master_email = isset($master['email']) ? $master['email'] : '';
         if (!empty($master_email)) {
-            $dashboard_token = isset($master['dashboard_token']) ? $master['dashboard_token'] : '';
-            $dashboard_url = home_url('/?csc_master_dashboard=1&mid=' . urlencode($mid) . '&token=' . urlencode($dashboard_token));
+            // ИСПРАВЛЕНО (SHA-256): stored-значение — хэш, в e-mail подставляется
+            // одноразовый входной креденшел (ссылка активна 24 часа).
+            $dashboard_token = function_exists('csc_issue_master_login_token')
+                ? csc_issue_master_login_token($mid, $masters)
+                : '';
+            $dashboard_url = $dashboard_token !== ''
+                ? home_url('/?csc_master_dashboard=1&mid=' . urlencode($mid) . '&token=' . urlencode($dashboard_token))
+                : home_url('/?csc_master_dashboard=1');
 
             if ($action === 'approve') {
                 $subject = '✅ Ваша заявка одобрена!';
