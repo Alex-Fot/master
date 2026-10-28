@@ -1491,14 +1491,14 @@ function csc_orders_admin_page() {
 
     // Чипы быстрой фильтрации по статусу (включая зависшие «Ожидает оплаты»)
     $filter_chips = [
-        ''                                  => 'Все',
-        CSC_STATUS_PENDING                   => 'Ожидает',
-        CSC_STATUS_SEARCHING                 => 'Поиск мастера',
-        CSC_STATUS_AWAITING_PAYMENT          => '💳 Ожидает оплаты (зависшие)',
-        CSC_STATUS_AWAITING_PAYMENT . ':pending' => 'Ожидает оплаты: платёж в процессе',
-        CSC_STATUS_PROCESSING                => 'В работе',
-        CSC_STATUS_COMPLETED                 => 'Выполнено',
-        CSC_STATUS_CANCELLED                 => 'Отменено',
+        ''                                  => __('Все', 'csc'),
+        CSC_STATUS_PENDING                   => __('Ожидает', 'csc'),
+        CSC_STATUS_SEARCHING                 => __('Поиск мастера', 'csc'),
+        CSC_STATUS_AWAITING_PAYMENT          => '💳 ' . __('Ожидает оплаты (зависшие)', 'csc'),
+        CSC_STATUS_AWAITING_PAYMENT . ':pending' => __('Ожидает оплаты: платёж в процессе', 'csc'),
+        CSC_STATUS_PROCESSING                => __('В работе', 'csc'),
+        CSC_STATUS_COMPLETED                 => __('Выполнено', 'csc'),
+        CSC_STATUS_CANCELLED                 => __('Отменено', 'csc'),
     ];
     ?>
     <div class="wrap">
