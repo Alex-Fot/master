@@ -1796,3 +1796,4 @@ function csc_sw_loader() {
         </script>";
     }
 }
+}
