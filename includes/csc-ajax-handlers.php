@@ -772,7 +772,7 @@ if (!function_exists('csc_get_user_orders_handler')) {
         // ИСПРАВЛЕНО: подключён лимит попыток входа против подбора телефона/заявки/token.
         // 5 попыток на номер за 15 минут (функция была определена, но не вызывалась).
         if (function_exists('csc_check_login_rate_limit') && !csc_check_login_rate_limit($phone)) {
-            wp_send_json_error(['message' => __('Слишком много попыток входа. Повторите через 15 минут.', 'csc')]);
+            wp_send_json_error(['message' => 'Слишком много попыток входа. Повторите через 15 минут.']);
         }
 
         // Получаем все заказы
