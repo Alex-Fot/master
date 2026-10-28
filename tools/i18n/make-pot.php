@@ -47,22 +47,29 @@ function csc_parse_args(array $tokens, int &$i): array
     $args = [];
     $cur = '';
     $cur_pure = true; // только литералы без переменных
+    $cur_has_lit = false; // в текущем аргументе был хотя бы один строковый литерал
     $depth = 0;
     $n = count($tokens);
 
-    $flush = function () use (&$cur, &$cur_pure, &$args) {
+    $flush = function () use (&$cur, &$cur_pure, &$cur_has_lit, &$args) {
         $val = trim($cur);
-        if ($val === '') {
-            $args[] = null;
+        if ($val === '' || !$cur_has_lit) {
+            $args[] = null; // пусто или выражение без литерала (переменные и т.п.)
         } elseif ($cur_pure) {
-            $args[] = $val; // литералы (в т.ч. с %s и знаками препинания)
+            $args[] = $val; // чистый литерал (в т.ч. склеенный конкатенацией, с %s и знаками препинания)
         } else {
-            $args[] = null; // выражение с переменными — не извлекаем
+            $args[] = null; // смешанное выражение — не извлекаем
         }
         $cur = '';
         $cur_pure = true;
+        $cur_has_lit = false;
     };
 
+    // Отладка: CSC_POT_DEBUG=<подстрока msgid> — печатает разобранные аргументы вызовов,
+    // содержащих эту подстроку (для диагностики пропущенных строк).
+    $dbg = getenv('CSC_POT_DEBUG');
+
+    // Вызывающий код передал позицию сразу за открывающей скобкой '('.
     for (; $i < $n; $i++) {
         $t = $tokens[$i];
         if (is_array($t)) {
@@ -74,6 +81,9 @@ function csc_parse_args(array $tokens, int &$i): array
                     $str = stripcslashes($str);
                 }
                 $cur .= $str;
+                $cur_has_lit = true;
+            } elseif ($t[0] === T_ENCAPSED_AND_WHITESPACE) {
+                $cur .= $t[1];
             } else {
                 $cur_pure = false;
                 if (!in_array($t[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
@@ -81,19 +91,36 @@ function csc_parse_args(array $tokens, int &$i): array
                 }
             }
         } else {
-            if ($t === '(') { $depth++; continue; }
-            if ($t === ')') {
+            if ($t === '(') { $depth++; $cur .= $t; $cur_pure = false; }
+            elseif ($t === ')') {
                 if ($depth === 0) { $flush(); break; }
                 $depth--;
                 $cur .= $t;
-            } elseif ($t === ',') {
-                if ($depth === 0) { $flush(); }
-                else { $cur .= $t; }
+            } elseif ($t === '[' || $t === ']') {
+                // скобки массивов внутри аргумента (например, ['message' => __('...','csc')]) —
+                // не прерывают разбор литерала и НЕ помечают его «нечистым»
+                $cur .= $t;
+            } elseif ($t === '{' || $t === '}') {
+                $cur .= $t;
+                $cur_pure = false;
+            } elseif ($t === ',' && $depth === 0) {
+                $flush();
             } else {
-                if ($t !== '.') $cur .= $t;
-                // '.' (конкатенация) просто склеивает части; если есть переменные — cur_pure=false уже стоит
+                if ($t === '.') {
+                    // конкатенация: склеивает части литерала; переменные уже пометили cur_pure=false
+                    continue;
+                }
+                if ($t === '"' || $t === "'" || $t === '`') {
+                    // маркеры строк/наследия от heredoc-разборов — игнорируем как шум
+                    continue;
+                }
+                $cur .= $t;
+                $cur_pure = false;
             }
         }
+    }
+    if ($dbg !== false && $dbg !== '' && strpos(json_encode($args, JSON_UNESCAPED_UNICODE), $dbg) !== false) {
+        fwrite(STDERR, "DEBUG parse_args at start: " . json_encode($args, JSON_UNESCAPED_UNICODE) . "\n");
     }
     return $args;
 }
