@@ -774,15 +774,18 @@ if (!function_exists('csc_get_user_orders_handler')) {
             wp_send_json_error(['message' => 'Слишком много попыток входа. Повторите через 15 минут.']);
         }
 
-        // Получаем все заказы
-        $all = function_exists('csc_get_all_orders') ? csc_get_all_orders() : get_option('csc_all_orders', []);
+        // ОПТИМИЗАЦИЯ (Кэш заказов): не тянем весь список — поиск по номеру
+        // заявки идёт по первичному индексу order_number (csc_get_order),
+        // список заявок телефона — по idx_phone_created (csc_get_orders_by_phone).
         $response_token = '';
         $user_orders = [];
         
         // === НОВАЯ ЛОГИКА: Поиск по номеру заявки ИЛИ по телефону за 6 месяцев ===
         if ($order_number) {
             // Поиск конкретной заявки
-            $target = $all[$order_number] ?? null;
+            $target = function_exists('csc_get_order')
+                ? csc_get_order($order_number)
+                : ((function_exists('csc_get_all_orders') ? csc_get_all_orders() : get_option('csc_all_orders', []))[$order_number] ?? null);
             
             if (!$target) {
                 wp_send_json_error(['message' => __('УПС! Заявка не найдена', 'csc')]);
@@ -820,45 +823,45 @@ if (!function_exists('csc_get_user_orders_handler')) {
             $user_orders = [$order_number => $target];
             
         } else {
-            // Поиск всех заявок за последние 6 месяцев по телефону
-            $six_months_ago = strtotime('-6 months');
-            
-            foreach ($all as $num => $order) {
-                $order_phone = function_exists('csc_normalize_phone') 
-                    ? csc_normalize_phone($order['phone'] ?? '')
-                    : ($order['phone'] ?? '');
-                
-                if ($order_phone !== $phone) continue;
-                
-                // Проверяем дату создания
-                $created_at = strtotime($order['created_at'] ?? '');
-                if ($created_at && $created_at < $six_months_ago) continue;
-                
-                $user_orders[$num] = $order;
+            // Поиск всех заявок за последние 6 месяцев по телефону — через SQL
+            // с индексом idx_phone_created (вместо полного скана кэша в PHP).
+            if (function_exists('csc_get_orders_by_phone')) {
+                $user_orders = csc_get_orders_by_phone($phone, 6);
+            } else {
+                $all = function_exists('csc_get_all_orders') ? csc_get_all_orders() : get_option('csc_all_orders', []);
+                $six_months_ago = strtotime('-6 months');
+
+                foreach ($all as $num => $order) {
+                    $order_phone = function_exists('csc_normalize_phone')
+                        ? csc_normalize_phone($order['phone'] ?? '')
+                        : ($order['phone'] ?? '');
+
+                    if ($order_phone !== $phone) continue;
+
+                    $created_at = strtotime($order['created_at'] ?? '');
+                    if ($created_at && $created_at < $six_months_ago) continue;
+
+                    $user_orders[$num] = $order;
+                }
             }
-            
-            // ИСПРАВЛЕНО: Если есть auth_token, проверяем его (всегда, а не только когда пусто)
+
+            // ИСПРАВЛЕНО: Если есть auth_token, проверяем его (всегда, а не только когда пусто).
+            // Сверка выполняется только по заказам клиента (уже выбраны по индексу),
+            // а не по всей таблице.
             if ($auth_token) {
-                $token_orders = array_filter($all, function($o) use ($phone, $auth_token) {
-                    $o_phone = function_exists('csc_normalize_phone') 
-                        ? csc_normalize_phone($o['phone'] ?? '')
-                        : ($o['phone'] ?? '');
-                    
-                    if ($o_phone !== $phone) return false;
-                    
+                foreach ($user_orders as $num => $o) {
                     $order_token = $o['auth_token'] ?? '';
-                    if (empty($order_token)) return false;
+                    if (empty($order_token)) continue;
 
                     // ИСПРАВЛЕНО: в хранилище лежит SHA-256 хэш; сверка через csc_verify_token
                     // (поддерживает и старые открытые значения — ленивая миграция не меняет исходный массив)
-                    if (function_exists('csc_verify_token')) {
-                        return csc_verify_token($auth_token, $order_token);
+                    $ok = function_exists('csc_verify_token')
+                        ? csc_verify_token($auth_token, $order_token)
+                        : hash_equals($order_token, $auth_token);
+                    if (!$ok) {
+                        unset($user_orders[$num]);
                     }
-                    return hash_equals($order_token, $auth_token);
-                });
-                
-                // Объединяем результаты (уникальные заказы)
-                $user_orders = array_unique(array_merge($user_orders, $token_orders), SORT_REGULAR);
+                }
             }
             
             if (empty($user_orders)) {

@@ -852,32 +852,40 @@ if (!function_exists('csc_handle_master_orders')) {
 
         $mid = $auth['mid'];
         
-        // Принудительное обновление кэша для получения актуальных данных
-        $all_orders = function_exists('csc_get_all_orders') ? csc_get_all_orders(true) : get_option('csc_all_orders', []);
+        // ОПТИМИЗАЦИЯ (Кэш заказов): SQL-выборка заказов мастера по индексам
+        // (idx_master_id / idx_current_candidate) вместо загрузки ВСЕГО списка
+        // и PHP-фильтрации. Фолбэк на старый путь, если хелпер недоступен.
+        if (function_exists('csc_get_orders_for_master')) {
+            $my_orders = csc_get_orders_for_master($mid);
+            $total_count = count($my_orders);
+        } else {
+            $all_orders = function_exists('csc_get_all_orders') ? csc_get_all_orders(true) : get_option('csc_all_orders', []);
+            $total_count = count($all_orders);
 
-        // Расширенный фильтр: включаем все заказы, где мастер участвует
-        $my_orders = array_filter($all_orders, function($o) use ($mid) {
-            $orderMasterId    = $o['master_id'] ?? '';
-            $currentCandidate = $o['current_candidate'] ?? '';
-            $acceptedBy       = $o['accepted_by'] ?? '';
-            
-            // 1. Мастер назначен на заказ (выполненные, в работе, отменённые)
-            if ($orderMasterId === $mid) {
-                return true;
-            }
-            
-            // 2. Мастер принял заказ (accepted_by)
-            if ($acceptedBy === $mid) {
-                return true;
-            }
-            
-            // 3. Мастер является текущим кандидатом (ожидающие предложения)
-            if ($currentCandidate === $mid) {
-                return true;
-            }
-            
-            return false;
-        });
+            // Расширенный фильтр: включаем все заказы, где мастер участвует
+            $my_orders = array_filter($all_orders, function($o) use ($mid) {
+                $orderMasterId    = $o['master_id'] ?? '';
+                $currentCandidate = $o['current_candidate'] ?? '';
+                $acceptedBy       = $o['accepted_by'] ?? '';
+
+                // 1. Мастер назначен на заказ (выполненные, в работе, отменённые)
+                if ($orderMasterId === $mid) {
+                    return true;
+                }
+
+                // 2. Мастер принял заказ (accepted_by)
+                if ($acceptedBy === $mid) {
+                    return true;
+                }
+
+                // 3. Мастер является текущим кандидатом (ожидающие предложения)
+                if ($currentCandidate === $mid) {
+                    return true;
+                }
+
+                return false;
+            });
+        }
 
         // Сортировка: ожидание → в работе → выполнено → отменено, затем по дате
         uasort($my_orders, function($a, $b) {
@@ -888,9 +896,7 @@ if (!function_exists('csc_handle_master_orders')) {
                 CSC_STATUS_PROCESSING => 1, 
                 CSC_STATUS_COMPLETED => 2, 
                 CSC_STATUS_COMPLETED => 2,
-                'completed' => 2,
                 CSC_STATUS_CANCELLED => 3,
-                'cancelled' => 3,
             ];
             $s_a = $status_order[$a['status'] ?? ''] ?? 99;
             $s_b = $status_order[$b['status'] ?? ''] ?? 99;
@@ -906,7 +912,7 @@ if (!function_exists('csc_handle_master_orders')) {
 
         // Отладочное логирование (включите WP_DEBUG для просмотра)
         if (defined('WP_DEBUG') && WP_DEBUG) {
-            csc_log('Master: ' . $mid . ' | Total orders: ' . count($all_orders) . ' | Filtered: ' . count($my_orders));
+            csc_log('Master: ' . $mid . ' | Total orders: ' . $total_count . ' | Filtered: ' . count($my_orders));
             foreach ($my_orders as $num => $o) {
                 csc_log('#' . $num . ' status=' . ($o['status'] ?? '?') . ' master_id=' . ($o['master_id'] ?? '') . ' candidate=' . ($o['current_candidate'] ?? ''));
             }

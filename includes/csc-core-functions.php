@@ -30,9 +30,16 @@ if (!function_exists('csc_get_settings_cached')) {
 */
 if (!function_exists('csc_get_all_orders')) {
     function csc_get_all_orders($force_refresh = false) {
-        static $cached_orders = null;
-        if (!$force_refresh && $cached_orders !== null) {
-            return $cached_orders;
+        // Кэш живёт в объектном кэше WordPress (wp_cache): пер-запросовый
+        // hit без сериализации при persistent-кэше и корректная инвалидация
+        // ВЕЗДЕ (39+ точек вызова csc_cache_delete_orders), чего не мог дать
+        // static-$cached_orders. Точка инвалидации — csc_cache_delete_orders().
+        $cache_key = 'csc_all_orders_v2';
+        if (!$force_refresh) {
+            $cached = wp_cache_get($cache_key);
+            if (false !== $cached) {
+                return $cached;
+            }
         }
         global $wpdb;
         $table = $wpdb->prefix . 'csc_orders';
@@ -44,13 +51,123 @@ if (!function_exists('csc_get_all_orders')) {
                 $order_number = $row['order_number'];
                 $orders[$order_number] = csc_db_row_to_order_array($row);
             }
-            $cached_orders = $orders;
+            wp_cache_set($cache_key, $orders, '', 5 * MINUTE_IN_SECONDS);
             return $orders;
         }
         // Фолбэк: читаем из wp_options (для сайтов до миграции)
         $orders = get_option('csc_all_orders', []);
-        $cached_orders = $orders;
+        wp_cache_set($cache_key, $orders, '', 5 * MINUTE_IN_SECONDS);
         return $orders;
+    }
+}
+
+/**
+* ОПТИМИЗАЦИЯ (Кэш заказов): выборка заказов мастера через SQL с индексами
+* вместо загрузки ВСЕГО списка в память и фильтрации PHP.
+* Использует idx_master_id / idx_current_candidate (см. csc_db_schema_indexes()).
+*
+* @param string $master_id ID мастера
+* @return array Ассоциативный массив [order_number => data]
+*/
+if (!function_exists('csc_get_orders_for_master')) {
+    function csc_get_orders_for_master($master_id) {
+        global $wpdb;
+        $master_id = (string) $master_id;
+        if ($master_id === '') return [];
+        $table = $wpdb->prefix . 'csc_orders';
+        if (get_option('csc_orders_migrated', false)) {
+            $results = $wpdb->get_results($wpdb->prepare(
+                "SELECT * FROM {$table}
+                 WHERE master_id = %s OR accepted_by = %s OR current_candidate = %s",
+                $master_id, $master_id, $master_id
+            ), ARRAY_A);
+            $orders = [];
+            foreach ((array) $results as $row) {
+                $orders[$row['order_number']] = csc_db_row_to_order_array($row);
+            }
+            return $orders;
+        }
+        // Фолбэк для немигрированных данных (wp_options)
+        $all = get_option('csc_all_orders', []);
+        $orders = [];
+        foreach ($all as $num => $o) {
+            if (($o['master_id'] ?? '') === $master_id
+                || ($o['accepted_by'] ?? '') === $master_id
+                || ($o['current_candidate'] ?? '') === $master_id) {
+                $orders[$num] = $o;
+            }
+        }
+        return $orders;
+    }
+}
+
+/**
+* ОПТИМИЗАЦИЯ (Кэш заказов): выборка заказов клиента по нормализованному
+* телефону через индекс idx_phone_created + ограничение «последние 6 месяцев»
+* прямо в SQL (ORDER BY created_at DESC использует составной индекс).
+*
+* @param string $phone      Нормализованный телефон
+* @param int    $months_back Сколько месяцев назад искать (по умолчанию 6)
+* @return array [order_number => data], новые первыми
+*/
+if (!function_exists('csc_get_orders_by_phone')) {
+    function csc_get_orders_by_phone($phone, $months_back = 6) {
+        global $wpdb;
+        $phone = (string) $phone;
+        if ($phone === '') return [];
+        $table = $wpdb->prefix . 'csc_orders';
+        $months_back = max(1, intval($months_back));
+        if (get_option('csc_orders_migrated', false)) {
+            $since = gmdate('Y-m-d H:i:s', strtotime("-{$months_back} months"));
+            $results = $wpdb->get_results($wpdb->prepare(
+                "SELECT * FROM {$table} WHERE phone = %s AND created_at >= %s ORDER BY created_at DESC",
+                $phone, $since
+            ), ARRAY_A);
+            $orders = [];
+            foreach ((array) $results as $row) {
+                $orders[$row['order_number']] = csc_db_row_to_order_array($row);
+            }
+            return $orders;
+        }
+        // Фолбэк wp_options
+        $all = get_option('csc_all_orders', []);
+        $orders = [];
+        foreach ($all as $num => $o) {
+            $norm = function_exists('csc_normalize_phone') ? csc_normalize_phone($o['phone'] ?? '') : ($o['phone'] ?? '');
+            if ($norm !== $phone) continue;
+            $created = strtotime($o['created_at'] ?? '');
+            if ($created && $created < strtotime("-{$months_back} months")) continue;
+            $orders[$num] = $o;
+        }
+        uasort($orders, fn($a, $b) => strtotime($b['created_at'] ?? '') - strtotime($a['created_at'] ?? ''));
+        return $orders;
+    }
+}
+
+/**
+* ОПТИМИЗАЦИЯ (Кэш заказов): счётчики статусов через GROUP BY вместо
+* загрузки всех заказов в память (страница «Заказы» админки).
+*
+* @return array [status => count]
+*/
+if (!function_exists('csc_get_order_status_counts')) {
+    function csc_get_order_status_counts() {
+        global $wpdb;
+        $table = $wpdb->prefix . 'csc_orders';
+        if (get_option('csc_orders_migrated', false)) {
+            $rows = $wpdb->get_results("SELECT status, COUNT(*) AS cnt FROM {$table} GROUP BY status", ARRAY_A);
+            $counts = [];
+            foreach ((array) $rows as $r) {
+                $counts[$r['status']] = intval($r['cnt']);
+            }
+            return $counts;
+        }
+        $counts = [];
+        foreach (get_option('csc_all_orders', []) as $o) {
+            $st = $o['status'] ?? '';
+            $counts[$st] = ($counts[$st] ?? 0) + 1;
+        }
+        return $counts;
     }
 }
 
@@ -330,16 +447,24 @@ if (!function_exists('csc_save_order')) {
         if ($table_exists) {
             $row = csc_order_array_to_db_row($order_number, $order_data);
             $result = $wpdb->insert($table, $row);
-            // Сброс статического кэша
-            csc_get_all_orders(true);
+            // Инвалидация кэша заказов (см. csc_cache_delete_orders)
+            if (function_exists('csc_cache_delete_orders')) {
+                csc_cache_delete_orders();
+            } else {
+                wp_cache_delete('csc_all_orders_v2');
+            }
             return $result !== false;
         }
         // Фолбэк: сохраняем в wp_options
         $all_orders = get_option('csc_all_orders', []);
         $all_orders[$order_number] = $order_data;
         update_option('csc_all_orders', $all_orders, false);
-        // Сброс статического кэша
-        csc_get_all_orders(true);
+        // Инвалидация кэша заказов
+        if (function_exists('csc_cache_delete_orders')) {
+            csc_cache_delete_orders();
+        } else {
+            wp_cache_delete('csc_all_orders_v2');
+        }
         return true;
     }
 }
@@ -359,14 +484,26 @@ if (!function_exists('csc_update_order')) {
         if ($table_exists) {
             $row = csc_order_array_to_db_row($order_number, $order_data);
             $result = $wpdb->update($table, $row, ['order_number' => $order_number]);
-            csc_get_all_orders(true);
+            // ИСПРАВЛЕНО (инвалидация кэша): был «прогрев» кэша перечитыванием
+            // csc_get_all_orders(true) сразу после UPDATE — в тот же запрос он
+            // возвращал только что записанные данные, т.е. фактически не сбрасывал
+            // устаревший кэш. Теперь — явное удаление ключа.
+            if (function_exists('csc_cache_delete_orders')) {
+                csc_cache_delete_orders();
+            } else {
+                wp_cache_delete('csc_all_orders_v2');
+            }
             return $result !== false;
         }
         // Фолбэк
         $all_orders = get_option('csc_all_orders', []);
         $all_orders[$order_number] = $order_data;
         update_option('csc_all_orders', $all_orders, false);
-        csc_get_all_orders(true);
+        if (function_exists('csc_cache_delete_orders')) {
+            csc_cache_delete_orders();
+        } else {
+            wp_cache_delete('csc_all_orders_v2');
+        }
         return true;
     }
 }
@@ -415,12 +552,20 @@ if (!function_exists('csc_save_all_orders')) {
                     $wpdb->insert($table, $row);
                 }
             }
-            csc_get_all_orders(true);
+            if (function_exists('csc_cache_delete_orders')) {
+                csc_cache_delete_orders();
+            } else {
+                wp_cache_delete('csc_all_orders_v2');
+            }
             return true;
         }
         // Фолбэк
         update_option('csc_all_orders', $all_orders, false);
-        csc_get_all_orders(true);
+        if (function_exists('csc_cache_delete_orders')) {
+            csc_cache_delete_orders();
+        } else {
+            wp_cache_delete('csc_all_orders_v2');
+        }
         return true;
     }
 }

@@ -70,6 +70,10 @@ if (!function_exists('csc_db_schema_indexes')) {
             ['idx_city',           '(city)'],                  // фильтрация при маршрутизации
             ['idx_phone_created',  '(phone, created_at)'],     // ускорение личного кабинета
             ['idx_reminder_sent',  '(reminder_sent)'],         // выборка заказов для напоминаний
+            ['idx_status',         '(status)'],                // фильтры админки/крон по статусу
+            ['idx_master_id',      '(master_id)'],             // выборка заказов мастера (SQL вместо кэша всего списка)
+            ['idx_current_candidate', '(current_candidate)'],  // ожидающие предложения мастеру
+            ['idx_date',           '(date)'],                  // слоты занятости и выборки «на сегодня»
         ];
     }
 }
