@@ -174,7 +174,7 @@ if (!function_exists('csc_get_active_payment_provider')) {
     function csc_get_active_payment_provider() {
         // Если реестр не загружен, возвращаем null
         if (!function_exists('csc_payment_providers')) {
-            error_log('[CSC_PAYMENTS] Реестр провайдеров не загружен');
+            csc_log('Реестр провайдеров не загружен');
             return null;
         }
 
@@ -298,7 +298,7 @@ if (!function_exists('csc_create_payment')) {
         try {
             $result = $provider->create_payment($payment_params);
         } catch (Exception $e) {
-            error_log('[CSC_PAYMENTS] Ошибка создания платежа: ' . $e->getMessage());
+            csc_log('Ошибка создания платежа: ' . $e->getMessage());
             return ['success' => false, 'error' => 'Ошибка создания платежа: ' . $e->getMessage()];
         }
 
@@ -350,8 +350,7 @@ if (!function_exists('csc_create_payment')) {
                 CSC_STATUS_AWAITING_PAYMENT,
                 'system',
                 'payment',
-                'Создан платёж ' . $payment_id . ' на сумму ' . number_format($amount, 2, '.', ' ') . ' ₽'
-            );
+                'Создан платёж ' . $payment_id . ' на сумму ' . number_format($amount, 2, '.', ' ') . ' ₽');
         }
 
         // Логирование уведомления
@@ -475,7 +474,7 @@ if (!function_exists('csc_process_payment_webhook')) {
 
         // Проверка подписи вебхука
         if (!$provider->verify_webhook($headers, $body)) {
-            error_log('[CSC_PAYMENTS] Неверная подпись вебхука от провайдера: ' . $provider_id);
+            csc_log('Неверная подпись вебхука от провайдера: ' . $provider_id);
             return ['success' => false, 'error' => 'Invalid webhook signature'];
         }
 
@@ -499,7 +498,7 @@ if (!function_exists('csc_process_payment_webhook')) {
         ));
 
         if (!$transaction) {
-            error_log('[CSC_PAYMENTS] Транзакция не найдена: ' . $payment_id);
+            csc_log('Транзакция не найдена: ' . $payment_id);
             return ['success' => false, 'error' => 'Transaction not found'];
         }
 
@@ -733,7 +732,7 @@ if (!function_exists('csc_refund_payment')) {
         try {
             $result = $provider->refund_payment($transaction->payment_id, $refund_amount, $reason);
         } catch (Exception $e) {
-            error_log('[CSC_PAYMENTS] Ошибка возврата: ' . $e->getMessage());
+            csc_log('Ошибка возврата: ' . $e->getMessage());
             return ['success' => false, 'error' => 'Ошибка возврата: ' . $e->getMessage()];
         }
 
@@ -889,7 +888,7 @@ if (!function_exists('csc_poll_payment_status_handler')) {
                                 $payment_status = csc_get_payment_status($order_number);
                             }
                         } catch (Exception $e) {
-                            error_log('[CSC_PAYMENTS] Ошибка проверки статуса: ' . $e->getMessage());
+                            csc_log('Ошибка проверки статуса: ' . $e->getMessage());
                         }
                     }
                 }
@@ -949,7 +948,7 @@ if (!function_exists('csc_check_pending_payments')) {
             try {
                 $status_result = $provider->get_payment_status($payment_id);
             } catch (Exception $e) {
-                error_log('[CSC_PAYMENTS] Ошибка проверки зависшего платежа ' . $payment_id . ': ' . $e->getMessage());
+                csc_log('Ошибка проверки зависшего платежа ' . $payment_id . ': ' . $e->getMessage());
                 continue;
             }
 
@@ -968,7 +967,7 @@ if (!function_exists('csc_check_pending_payments')) {
                 ], ['id' => $transaction->id]);
 
                 csc_update_order_payment_status($order_number, 'succeeded', $transaction);
-                error_log('[CSC_PAYMENTS] Зависший платёж ' . $payment_id . ' оказался оплаченным');
+                csc_log('Зависший платёж ' . $payment_id . ' оказался оплаченным');
             } elseif (in_array($new_status, ['failed', 'cancelled', 'expired'], true)) {
                 // Оплата не прошла — отменяем
                 $wpdb->update($table_transactions, [
@@ -996,7 +995,7 @@ if (!function_exists('csc_check_pending_payments')) {
                         );
                     }
                 }
-                error_log('[CSC_PAYMENTS] Зависший платёж ' . $payment_id . ' отменён');
+                csc_log('Зависший платёж ' . $payment_id . ' отменён');
             }
             // Если статус ещё "pending" — оставляем как есть
         }

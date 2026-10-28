@@ -1436,7 +1436,7 @@ if (!function_exists('csc_upload_master_file')) {
         remove_filter('upload_dir', $csc_upload_dir_filter);
 
         if (isset($movefile['error'])) {
-            error_log('[CSC_UPLOAD] Error: ' . $movefile['error']);
+            csc_log('Error: ' . $movefile['error']);
             return '';
         }
 
@@ -1966,13 +1966,13 @@ if (!function_exists('csc_serve_map_tile')) {
         ]);
         
         if (is_wp_error($response)) {
-            error_log('[CSC_TILE] Error: ' . $response->get_error_message());
+            csc_log('Error: ' . $response->get_error_message());
             return new WP_Error('tile_error', 'Cannot load tile', ['status' => 502]);
         }
         
         $code = wp_remote_retrieve_response_code($response);
         if ($code !== 200) {
-            error_log('[CSC_TILE] Tile server returned: ' . $code);
+            csc_log('Tile server returned: ' . $code);
             return new WP_Error('tile_error', 'Tile server error: ' . $code, ['status' => 502]);
         }
         
@@ -2039,7 +2039,7 @@ if (!function_exists('csc_handle_reverse_geocode')) {
         ]);
         
         if (is_wp_error($response)) {
-            error_log('[CSC_REVGEO] Network error: ' . $response->get_error_message());
+            csc_log('Network error: ' . $response->get_error_message(), 'error', 'REVGEO');
             return new WP_REST_Response(['success' => false, 'address' => ''], 200);
         }
         
@@ -2051,7 +2051,7 @@ if (!function_exists('csc_handle_reverse_geocode')) {
         $body = json_decode(wp_remote_retrieve_body($response), true);
         
         if (empty($body) || !isset($body['display_name'])) {
-            error_log('[CSC_REVGEO] No address for: ' . $lat . ',' . $lng);
+            csc_log('No address for: ' . $lat . ',' . $lng, 'warning', 'REVGEO');
             return new WP_REST_Response(['success' => false, 'address' => ''], 200);
         }
         

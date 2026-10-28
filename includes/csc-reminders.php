@@ -87,7 +87,7 @@ if (!function_exists('csc_reminders_ensure_column')) {
                 "ALTER TABLE {$table} ADD COLUMN reminder_sent TINYINT(1) NOT NULL DEFAULT 0"
             );
 
-            error_log('[CSC_REMINDERS] Колонка reminder_sent добавлена в таблицу заказов.');
+            csc_log('Колонка reminder_sent добавлена в таблицу заказов.');
         }
 
         update_option('csc_reminders_column_migrated_v2', true, false);
@@ -160,7 +160,7 @@ if (!function_exists('csc_process_reminders')) {
         // Защита от параллельного выполнения
         $lock_key = 'csc_reminders_lock';
         if (get_transient($lock_key)) {
-            error_log('[CSC_REMINDERS] Напоминания уже обрабатываются, пропускаем.');
+            csc_log('Напоминания уже обрабатываются, пропускаем.');
             return;
         }
         set_transient($lock_key, 1, CSC_REMINDER_MAX_EXECUTION_TIME);
@@ -170,10 +170,10 @@ if (!function_exists('csc_process_reminders')) {
         try {
             $sent_count = csc_send_due_reminders($settings);
             if ($sent_count > 0) {
-                error_log("[CSC_REMINDERS] Отправлено напоминаний: {$sent_count}");
+                csc_log("Отправлено напоминаний: {$sent_count}", 'info', 'REMINDERS');
             }
         } catch (Exception $e) {
-            error_log('[CSC_REMINDERS] Ошибка обработки напоминаний: ' . $e->getMessage());
+            csc_log('Ошибка обработки напоминаний: ' . $e->getMessage());
         } finally {
             delete_transient($lock_key);
         }
@@ -266,7 +266,7 @@ if (!function_exists('csc_send_due_reminders')) {
 
                     $sent_count++;
                 } catch (Exception $e) {
-                    error_log("[CSC_REMINDERS] Ошибка напоминания для #{$order_number}: " . $e->getMessage());
+                    csc_log("Ошибка напоминания для #{$order_number}: " . $e->getMessage());
                 }
             }
 
@@ -311,7 +311,7 @@ if (!function_exists('csc_send_due_reminders')) {
                         $updated = true;
                         $sent_count++;
                     } catch (Exception $e) {
-                        error_log("[CSC_REMINDERS] Ошибка напоминания для #{$order_number}: " . $e->getMessage());
+                        csc_log("Ошибка напоминания для #{$order_number}: " . $e->getMessage());
                     }
                 }
             }
@@ -494,7 +494,7 @@ if (!function_exists('csc_send_reminder_for_order')) {
             );
         }
 
-        error_log("[CSC_REMINDERS] Напоминания отправлены для заказа #{$order_number} (за {$settings['hours']} ч)");
+        csc_log("Напоминания отправлены для заказа #{$order_number} (за {$settings['hours']} ч)", 'info', 'REMINDERS');
     }
 }
 
@@ -521,7 +521,7 @@ if (!function_exists('csc_admin_send_reminder')) {
 
         $order = csc_get_order($order_number);
         if (!$order) {
-            error_log("[CSC_REMINDERS] Заказ #{$order_number} не найден для ручной отправки.");
+            csc_log("Заказ #{$order_number} не найден для ручной отправки.", 'warning', 'REMINDERS');
             return false;
         }
 
@@ -535,7 +535,7 @@ if (!function_exists('csc_admin_send_reminder')) {
 
         if (in_array($status, $restart_statuses, true)) {
             if (!function_exists('csc_admin_restart_routing')) {
-                error_log("[CSC_REMINDERS] csc_admin_restart_routing() не найдена. Проверьте подключение csc-order-routing.php.");
+                csc_log("csc_admin_restart_routing() не найдена. Проверьте подключение csc-order-routing.php.", 'warning', 'REMINDERS');
                 return false;
             }
 
@@ -576,11 +576,11 @@ if (!function_exists('csc_admin_send_reminder')) {
                     );
                 }
 
-                error_log("[CSC_REMINDERS] Маршрутизация перезапущена для заказа #{$order_number} (был статус: {$status})");
+                csc_log("Маршрутизация перезапущена для заказа #{$order_number} (был статус: {$status})", 'debug', 'REMINDERS');
                 return true;
             }
 
-            error_log("[CSC_REMINDERS] Не удалось перезапустить маршрутизацию для #{$order_number}");
+            csc_log("Не удалось перезапустить маршрутизацию для #{$order_number}", 'error', 'REMINDERS');
             return false;
         }
         // ============================================================
@@ -588,7 +588,7 @@ if (!function_exists('csc_admin_send_reminder')) {
         // ============================================================
 
         if (in_array($status, [CSC_STATUS_CANCELLED, CSC_STATUS_COMPLETED])) {
-            error_log("[CSC_REMINDERS] Заказ #{$order_number} в статусе '{$status}', напоминание не отправляется.");
+            csc_log("Заказ #{$order_number} в статусе '{$status}', напоминание не отправляется.", 'debug', 'REMINDERS');
             return false;
         }
 
@@ -602,7 +602,7 @@ if (!function_exists('csc_admin_send_reminder')) {
         try {
             csc_send_reminder_for_order($order, $manual_settings);
         } catch (Exception $e) {
-            error_log("[CSC_REMINDERS] Ошибка ручной отправки для #{$order_number}: " . $e->getMessage());
+            csc_log("Ошибка ручной отправки для #{$order_number}: " . $e->getMessage());
             return false;
         }
 
@@ -644,7 +644,7 @@ if (!function_exists('csc_admin_send_reminder')) {
             );
         }
 
-        error_log("[CSC_REMINDERS] Ручное напоминание отправлено для заказа #{$order_number}");
+        csc_log("Ручное напоминание отправлено для заказа #{$order_number}", 'info', 'REMINDERS');
         return true;
     }
 }

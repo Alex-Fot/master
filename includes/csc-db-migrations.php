@@ -115,9 +115,9 @@ if (!function_exists('csc_run_db_migrations')) {
             $sql = "ALTER TABLE {$table} ADD COLUMN `{$col['name']}` {$col['ddl']}{$after_sql}";
             $res = $wpdb->query($sql);
             if ($res === false) {
-                error_log('[CSC_DB_MIGRATION] Ошибка добавления колонки ' . $col['name'] . ': ' . $wpdb->last_error);
+                csc_log('Ошибка добавления колонки ' . $col['name'] . ': ' . $wpdb->last_error);
             } else {
-                error_log('[CSC_DB_MIGRATION] Добавлена колонка ' . $col['name'] . ' в ' . $table);
+                csc_log('Добавлена колонка ' . $col['name'] . ' в ' . $table);
             }
         }
 
@@ -127,7 +127,7 @@ if (!function_exists('csc_run_db_migrations')) {
             if (empty($exists)) {
                 $res = $wpdb->query("ALTER TABLE {$table} ADD INDEX {$idx_name} {$idx_cols}");
                 if ($res === false) {
-                    error_log('[CSC_DB_MIGRATION] Ошибка добавления индекса ' . $idx_name . ': ' . $wpdb->last_error);
+                    csc_log('Ошибка добавления индекса ' . $idx_name . ': ' . $wpdb->last_error);
                 }
             }
         }

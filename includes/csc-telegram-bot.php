@@ -52,7 +52,7 @@ if (!function_exists('csc_tg_log')) {
         update_option('csc_tg_logs', $logs, false);
         
         if (defined('WP_DEBUG') && WP_DEBUG) {
-            error_log('[CSC_TG] ' . json_encode($log_entry, JSON_UNESCAPED_UNICODE));
+            csc_log(json_encode($log_entry, JSON_UNESCAPED_UNICODE), 'debug', 'TELEGRAM');
         }
     }
 }

@@ -120,14 +120,14 @@ if (!function_exists('csc_submit_review_handler_pro')) {
 
         // Проверка обязательных данных
         if (!$phone || !$order_number) {
-            error_log('[CSC_REVIEWS] Review submit failed: missing phone or order_number.');
+            csc_log('Review submit failed: missing phone or order_number.');
             wp_send_json_error(['message' => 'Сбой передачи данных. Обновите страницу и попробуйте снова.']);
             return;
         }
 
         // УСИЛЕНО (2.5): лимит попыток — защита от перебора чужих заказов
         if (!csc_check_review_rate_limit($phone)) {
-            error_log('[CSC_REVIEWS] Review rate limit exceeded for phone hash: ' . md5($phone));
+            csc_log('Review rate limit exceeded for phone hash: ' . md5($phone));
             wp_send_json_error(['message' => 'Слишком много попыток. Подождите 15 минут и попробуйте снова.'], 429);
             return;
         }

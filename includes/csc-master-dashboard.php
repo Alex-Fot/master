@@ -902,9 +902,9 @@ if (!function_exists('csc_handle_master_orders')) {
 
         // Отладочное логирование (включите WP_DEBUG для просмотра)
         if (defined('WP_DEBUG') && WP_DEBUG) {
-            error_log('[CSC_MASTER_ORDERS] Master: ' . $mid . ' | Total orders: ' . count($all_orders) . ' | Filtered: ' . count($my_orders));
+            csc_log('Master: ' . $mid . ' | Total orders: ' . count($all_orders) . ' | Filtered: ' . count($my_orders));
             foreach ($my_orders as $num => $o) {
-                error_log('[CSC_MASTER_ORDERS] #' . $num . ' status=' . ($o['status'] ?? '?') . ' master_id=' . ($o['master_id'] ?? '') . ' candidate=' . ($o['current_candidate'] ?? ''));
+                csc_log('#' . $num . ' status=' . ($o['status'] ?? '?') . ' master_id=' . ($o['master_id'] ?? '') . ' candidate=' . ($o['current_candidate'] ?? ''));
             }
         }
 

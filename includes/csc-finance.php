@@ -416,7 +416,7 @@ if (!function_exists('csc_finance_record_transaction')) {
         ], ['%s','%s','%s','%s','%s','%s','%s','%f','%s','%s','%s','%s','%s','%s','%s','%s']);
 
         if ($result === false) {
-            error_log('[CSC_FINANCE] Ошибка записи транзакции: ' . $wpdb->last_error);
+            csc_log('Ошибка записи транзакции: ' . $wpdb->last_error);
             return ['success' => false, 'transaction_id' => 0, 'error' => $wpdb->last_error];
         }
 
@@ -1827,7 +1827,7 @@ if (!function_exists('csc_finance_create_invoice')) {
         ], ['%s','%s','%s','%s','%f','%f','%f','%f','%s','%s','%s','%s','%s']);
 
         if ($result === false) {
-            error_log('[CSC_FINANCE] Ошибка создания квитанции: ' . $wpdb->last_error);
+            csc_log('Ошибка создания квитанции: ' . $wpdb->last_error);
             return ['success' => false, 'invoice_id' => 0, 'invoice_number' => '', 'error' => 'Ошибка записи в БД'];
         }
 
@@ -2104,7 +2104,7 @@ if (!function_exists('csc_finance_create_fiscal_receipt')) {
         ], ['%s','%d','%s','%s','%f','%s','%s']);
 
         if ($result === false) {
-            error_log('[CSC_FINANCE] Ошибка создания фискального чека: ' . $wpdb->last_error);
+            csc_log('Ошибка создания фискального чека: ' . $wpdb->last_error);
             return ['success' => false, 'receipt_id' => 0, 'error' => 'Ошибка записи в БД'];
         }
 
@@ -2742,7 +2742,7 @@ if (!function_exists('csc_finance_daily_cron')) {
             $cutoff_invoice
         ));
         if ($expired_drafts > 0) {
-            error_log("[CSC_FINANCE] Отменено просроченных черновиков квитанций: {$expired_drafts}");
+            csc_log("Отменено просроченных черновиков квитанций: {$expired_drafts}", 'warning', 'FINANCE');
         }
 
         // --- Незавершённые фискальные чеки (24 часа) ---
@@ -2758,7 +2758,7 @@ if (!function_exists('csc_finance_daily_cron')) {
                 (int)$fisc->id,
                 'Автоматическая отмена: чек не зарегистрирован в течение 24 часов'
             );
-            error_log("[CSC_FINANCE] Отменён зависший фискальный чек #{$fisc->id} для заказа {$fisc->order_number}");
+            csc_log("Отменён зависший фискальный чек #{$fisc->id} для заказа {$fisc->order_number}", 'debug', 'FINANCE');
         }
 
         // --- Очистка старых счётчиков квитанций (старше 7 дней) ---
@@ -3001,7 +3001,7 @@ if (!function_exists('csc_finance_retroactive_migration')) {
         }
 
         update_option('csc_finance_retroactive_done', true, false);
-        error_log("[CSC_FINANCE] Ретроактивная обработка: обработано {$processed} выполненных заказов.");
+        csc_log("Ретроактивная обработка: обработано {$processed} выполненных заказов.", 'debug', 'FINANCE');
     }
 }
 // ============================================================
