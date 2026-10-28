@@ -788,6 +788,13 @@ if (!function_exists('csc_run_token_hash_migration')) {
         global $wpdb;
         $stats = ['orders' => 0, 'masters' => 0];
 
+        // Идемпотентность: не повторяем полную конвертацию при каждом запуске
+        // (данные уже в хэшах). Повторный прогон возможен по force через
+        // delete_option('csc_token_hash_migrated').
+        if (get_option('csc_token_hash_migrated', false)) {
+            return $stats;
+        }
+
         // 1. Заказы: фолбэк-хранилище wp_options
         $all_orders = get_option('csc_all_orders', []);
         if (is_array($all_orders) && !empty($all_orders)) {
@@ -849,7 +856,79 @@ if (!function_exists('csc_run_token_hash_migration')) {
 
         // Логируем без раскрытия секретов — только количество сконвертированных значений
         error_log('[CSC_SECURITY] Миграция хэширования токенов: заказов=' . $stats['orders'] . ', мастеров=' . $stats['masters']);
+        update_option('csc_token_hash_migrated', 1, false);
         return $stats;
+    }
+}
+
+/**
+* ИСПРАВЛЕНО (защита ЛК мастера): выдача «живого» (открытого) dashboard-токена мастера.
+*
+* После внедрения SHA-256 в хранилище лежит только хэш, из которого открытый
+* токен не восстанавливается. Для формирования ссылок входа (админка, e-mail
+* модерации, Telegram) используется одноразовый токен-креденшел: генерируется
+* новый случайный токен, его хэш кладётся в transient на $ttl секунд, а ссылка
+* отдаётся с ОТКРЫТЫМ значением. Кабинет принимает такой токен как второй
+* легитимный путь входа (наряду с постоянным).
+*
+* Если у мастера ещё нет постоянного токена — создаёт и сохраняет новый
+* (в хэшированном виде) и возвращает открытую часть.
+*
+* @param string $master_id ID мастера
+* @param array|null $masters Список мастеров (опционально, для экономии запроса)
+* @param int $ttl Время жизни одноразового токена, сек (по умолчанию 24 часа)
+* @return string Открытый токен для подстановки в URL ('' если мастер не найден)
+*/
+if (!function_exists('csc_issue_master_login_token')) {
+    function csc_issue_master_login_token($master_id, $masters = null, $ttl = DAY_IN_SECONDS) {
+        if ($masters === null) {
+            $masters = function_exists('csc_get_masters') ? csc_get_masters() : [];
+        }
+        if (empty($masters[$master_id])) return '';
+
+        $stored = $masters[$master_id]['dashboard_token'] ?? '';
+
+        // Мастер без постоянного токена (или мусор короче 16 символов) —
+        // создаём новый постоянный токен и сохраняем его ХЭШ.
+        if (!is_string($stored) || $stored === '' || strlen($stored) < 16) {
+            $fresh = wp_generate_password(32, false);
+            $masters[$master_id]['dashboard_token'] = function_exists('csc_hash_token')
+                ? csc_hash_token($fresh)
+                : $fresh; // фолбэк, если ядро не загружено
+            update_option('csc_masters_list', $masters, false);
+            if (function_exists('csc_cache_delete_masters')) {
+                csc_cache_delete_masters();
+            } else {
+                wp_cache_delete('csc_masters_list_v2');
+            }
+            return $fresh;
+        }
+
+        // Постоянный токен уже есть (хэш или legacy) — формируем одноразовый
+        // входной креденшел, чтобы открытый токен не попадал в URL/почту/логи.
+        $one_time = wp_generate_password(32, false);
+        $key = 'csc_dash_login_' . md5($one_time);
+        set_transient($key, ['mid' => $master_id, 'ts' => time()], $ttl);
+        return $one_time;
+    }
+}
+
+/**
+* ИСПРАВЛЕНО (защита ЛК мастера): проверка одноразового входного токена.
+* Возвращает master_id при совпадении и УДАЛЯЕТ transient (однократное использование).
+*
+* @param string $token Предъявленный токен из URL
+* @return string|false ID мастера или false
+*/
+if (!function_exists('csc_verify_master_login_token')) {
+    function csc_verify_master_login_token($token) {
+        $token = (string)$token;
+        if ($token === '' || strlen($token) < 16) return false;
+        $key = 'csc_dash_login_' . md5($token);
+        $data = get_transient($key);
+        if (!$data || !is_array($data) || empty($data['mid'])) return false;
+        delete_transient($key); // однократность
+        return (string)$data['mid'];
     }
 }
 

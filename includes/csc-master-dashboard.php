@@ -60,27 +60,54 @@ if (!function_exists('csc_render_master_dashboard')) {
         $mid = sanitize_text_field($_GET['mid']);
         $token = sanitize_text_field($_GET['token']);
 
+        // ИСПРАВЛЕНО (защита ЛК мастера): лимит попыток входа по токену.
+        // Функция csc_check_master_login_rate_limit была определена, но не вызывалась —
+        // подбор 32-символьного токена ничем не ограничивался.
+        if (function_exists('csc_check_master_login_rate_limit')) {
+            $rl = csc_check_master_login_rate_limit($mid);
+            if (!$rl['allowed']) {
+                nocache_headers();
+                wp_die(sprintf(
+                    __('Слишком много неудачных попыток входа. Повторите через %d минут.', 'csc'),
+                    max(1, (int) ceil($rl['retry_after'] / MINUTE_IN_SECONDS))
+                ), __('Ошибка доступа', 'csc'), ['response' => 429]);
+            }
+        }
+
         $masters = function_exists('csc_get_masters') ? csc_get_masters() : [];
         if (!isset($masters[$mid])) {
         wp_die(__('Доступ запрещен. Мастер не найден.', 'csc'), __('Ошибка доступа', 'csc'), ['response' => 403]);
         }
         $stored_token = isset($masters[$mid]['dashboard_token']) ? (string)$masters[$mid]['dashboard_token'] : '';
-        // ИСПРАВЛЕНО: Поддержка одноразовых токенов из Telegram + фолбэк на постоянный токен
+        // ИСПРАВЛЕНО: три легитимных пути входа, все — без постоянного токена в URL:
+        // 1) одноразовый токен Telegram (csc_tg_get_dashboard_link);
+        // 2) одноразовый входной креденшел админки/рассылок (csc_issue_master_login_token);
+        // 3) legacy-фолбэк: постоянный токен из хранилища (для старых ссылок до миграции).
         $is_valid_token = false;
         // 1. Проверяем одноразовый токен (сгенерирован через csc_tg_get_dashboard_link)
         if (function_exists('csc_tg_verify_dashboard_token') && csc_tg_verify_dashboard_token($mid, $token)) {
         $is_valid_token = true;
         }
-        // 2. Фолбэк: проверяем постоянный токен из БД (для прямых ссылок из админки)
-        elseif ($stored_token !== '' && strlen($stored_token) >= 16 && hash_equals($stored_token, (string)$token)) {
+        // 2. Одноразовый креденшел, выданный csc_issue_master_login_token()
+        elseif (function_exists('csc_verify_master_login_token') && csc_verify_master_login_token($token) === $mid) {
         $is_valid_token = true;
         }
+        // 3. Фолбэк: сверка постоянного токена (хэш SHA-256 или legacy-открытый)
+        elseif ($stored_token !== '' && strlen($stored_token) >= 16
+            && function_exists('csc_verify_token') && csc_verify_token($token, $stored_token)) {
+        $is_valid_token = true;
+        }
+        // Устранена мёртвая ветка: прежний второй `if (!hash_equals(...))` после проверки
+        // одноразового токена отклонял корректные одноразовые ссылки — удалён.
         if (!$is_valid_token) {
         wp_die(__('Доступ запрещен. Ссылка недействительна или истекла.', 'csc'), __('Ошибка доступа', 'csc'), ['response' => 403]);
         }
-        // Автогенерация токена если отсутствует
+
+        // Автогенерация постоянного токена, если отсутствует (всегда в хэшированном виде).
         if ($stored_token === '' || strlen($stored_token) < 16) {
-        $masters[$mid]['dashboard_token'] = wp_generate_password(32, false);
+        $masters[$mid]['dashboard_token'] = function_exists('csc_hash_token')
+            ? csc_hash_token(wp_generate_password(32, false))
+            : wp_generate_password(32, false);
         update_option('csc_masters_list', $masters, false);
         if (function_exists('csc_cache_delete_masters')) {
         csc_cache_delete_masters();
@@ -102,7 +129,15 @@ if (!function_exists('csc_render_master_dashboard')) {
         $penalties_total = $masters[$mid]['penalties_total'] ?? 0;
         $penalties_amount = $masters[$mid]['penalties_amount'] ?? 0;
 
-        $current_token = $masters[$mid]['dashboard_token'];
+        // ИСПРАВЛЕНО (защита ЛК мастера): в страницу/JS больше НЕ попадает хэш
+        // постоянного токена. Для REST-вызовов выдаётся короткий-lived креденшел
+        // (1 час), хранящийся только в транзиенте.
+        $session_token = function_exists('csc_issue_master_login_token')
+            ? csc_issue_master_login_token($mid, $masters, HOUR_IN_SECONDS)
+            : '';
+        if ($session_token === '') {
+            $session_token = $token; // фолбэк: используем уже предъявленный валидный токен
+        }
         $site_url = esc_url(home_url());
         $ajax_nonce = wp_create_nonce('csc_cabinet_nonce');
 
