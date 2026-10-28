@@ -51,18 +51,17 @@ function csc_parse_args(array $tokens, int &$i): array
     $depth = 0;           // глубина вложенных ( ) / [ ] / { } относительно аргументной скобки
     $n = count($tokens);
 
-    $flush = function () use (&$cur, &$cur_pure, &$cur_has_lit, &$args) {
+    $flush = function () use (&$cur, &$cur_pure, &$args) {
         $val = trim($cur);
-        if ($val === '' || !$cur_has_lit) {
-            $args[] = null; // пусто или выражение без литерала (переменные и т.п.)
+        if ($val === '') {
+            $args[] = null;
         } elseif ($cur_pure) {
             $args[] = $val; // чистый литерал
         } else {
-            $args[] = null; // смешанное выражение — не извлекаем
+            $args[] = null; // выражение с переменными — не извлекаем
         }
         $cur = '';
         $cur_pure = true;
-        $cur_has_lit = false;
     };
 
     // Вызывающий код передал позицию сразу за открывающей скобкой '('.
