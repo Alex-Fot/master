@@ -1629,6 +1629,23 @@ if (!function_exists('csc_ajax_push_subscribe')) {
     }
 }
 
+// AJAX: проверка наличия активной push-подписки (для синхронизации состояния
+// кнопки подписки в калькуляторе после перерисовки формы).
+add_action('wp_ajax_nopriv_csc_push_status', 'csc_ajax_push_status');
+add_action('wp_ajax_csc_push_status', 'csc_ajax_push_status');
+
+if (!function_exists('csc_ajax_push_status')) {
+    function csc_ajax_push_status() {
+        $user_type = sanitize_key($_POST['user_type'] ?? 'customer');
+        $user_id   = sanitize_text_field($_POST['user_id'] ?? '');
+        if (!$user_id) {
+            wp_send_json_error(['message' => 'Missing params']);
+        }
+        $subs = get_option("csc_push_subs_{$user_type}_{$user_id}", []);
+        wp_send_json_success(['subscribed' => !empty($subs)]);
+    }
+}
+
 add_action('wp_ajax_nopriv_csc_mark_read', 'csc_ajax_mark_read');
 add_action('wp_ajax_csc_mark_read', 'csc_ajax_mark_read');
 
