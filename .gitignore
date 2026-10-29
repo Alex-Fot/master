@@ -1,2 +1,7 @@
 *.mo
 *.log
+
+# build artifacts (не должны попадать в репозиторий)
+*.patch
+*.bundle
+csc-plugin-main.tar.gz
