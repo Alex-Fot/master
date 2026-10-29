@@ -174,7 +174,7 @@ if (!function_exists('csc_log_notification')) {
 
         $result = $wpdb->insert($table, $data);
         if ($result === false) {
-            csc_log('Ошибка вставки уведомления: ' . $wpdb->last_error);
+            error_log('[CSC_NOTIF] Ошибка вставки уведомления: ' . $wpdb->last_error);
             return 0;
         }
         return $wpdb->insert_id;
@@ -553,13 +553,21 @@ if (!function_exists('csc_send_web_push_notification')) {
         }
 
         // 4. Формирование payload
+        // ИСПРАВЛЕНО (Push-иконки): раньше фолбэки '/icon-192.png' и '/badge-72.png'
+        // указывали в корень сайта, где таких файлов нет — при отсутствии Site Icon
+        // браузер получал 404 и не показывал иконку уведомления.
+        // Теперь фолбэки — полные URL к файлам плагина (assets/icon-192.png,
+        // assets/badge-72.png). SW дополнительно подставит локальные пути, если
+        // значения придут пустыми (см. csc-sw.js).
+        $plugin_url = defined('CSC_PLUGIN_URL') ? CSC_PLUGIN_URL : WP_PLUGIN_URL . '/custom-service-calculator/';
         $payload_data = [
             'title'        => $title,
             'body'         => $message,
+            'message'      => $message,
             'order_number' => $order_number,
             'user_type'    => $recipient_type,
-            'icon'         => get_site_icon_url(192, '/icon-192.png'),
-            'badge'        => get_site_icon_url(72, '/badge-72.png'),
+            'icon'         => get_site_icon_url(192, $plugin_url . 'assets/icon-192.png'),
+            'badge'        => get_site_icon_url(72, $plugin_url . 'assets/badge-72.png'),
             'tag'          => $order_number,
             'data'         => ['order' => $order_number]
         ];
