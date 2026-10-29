@@ -79,15 +79,24 @@ if (!function_exists('csc_notify_master')) {
             'icon'         => $icon,
         ]);
         
-        // 2. Telegram (если настроен и не выключен)
-        if (function_exists('csc_send_telegram_to_master')) {
+        // 2. Telegram мастеру (если у мастера привязан chat_id и настроен бот)
+        // ИСПРАВЛЕНО: раньше вызывалась несуществующая функция
+        // csc_send_telegram_to_master() — проверка function_exists() всегда
+        // давала false, и Telegram-уведомления плагина молча не отправлялись
+        // (в отличие от системных, которые шли напрямую через REST-хендлеры).
+        // Ключ поля в карточке мастера — 'tg_chat_id'.
+        if (function_exists('csc_tg_api_request')) {
             $masters = function_exists('csc_get_masters') ? csc_get_masters() : [];
             $master  = $masters[$master_id] ?? [];
-            $chat_id = $master['telegram_chat_id'] ?? '';
+            $chat_id = $master['tg_chat_id'] ?? ($master['telegram_chat_id'] ?? '');
             if (!empty($chat_id)) {
-                $text = "📩 <b>{$title}</b>\n\n{$message}";
-                if ($order_number) $text .= "\n\nЗаказ: <code>{$order_number}</code>";
-                csc_send_telegram_to_master($chat_id, $text);
+                $text = "📩 <b>" . esc_html($title) . "</b>\n\n" . esc_html($message);
+                if ($order_number) $text .= "\n\nЗаказ: <code>" . esc_html($order_number) . "</code>";
+                csc_tg_api_request('sendMessage', [
+                    'chat_id'    => $chat_id,
+                    'text'       => $text,
+                    'parse_mode' => 'HTML',
+                ]);
             }
         }
     }
@@ -126,14 +135,16 @@ if (!function_exists('csc_trigger_order_created')) {
         $date  = ($order['date'] ?? '') . ' ' . ($order['time'] ?? '');
         $phone = $order['phone'] ?? '';
         
-        // 1. Админу (через Telegram админа — он уже работает)
-        if (function_exists('csc_send_admin_telegram')) {
-            $text = "🆕 <b>Новая заявка #{$order_number}</b>\n\n";
-            $text .= "👤 {$name} ({$phone})\n";
+        // 1. Админу в Telegram
+        // ИСПРАВЛЕНО: вызов несуществующей csc_send_admin_telegram() заменён на
+        // рабочую csc_send_tg_notification() (трекинг + расшифровка токена).
+        $s = get_option('csc_main_settings', []);
+        if (!empty($s['telegram_chat_id']) && function_exists('csc_send_tg_notification')) {
+            $text = "👤 {$name} ({$phone})\n";
             $text .= "📅 {$date}\n";
             if ($addr) $text .= "📍 {$addr}\n";
             $text .= "💰 " . number_format($total, 0, '.', ' ') . " ₽";
-            csc_send_admin_telegram($text);
+            csc_send_tg_notification($s['telegram_chat_id'], "🆕 Новая заявка #{$order_number}", $text, $order_number, 'admin', 'admin');
         }
         
         // 2. Уведомляем всех активных мастеров о новой заявке

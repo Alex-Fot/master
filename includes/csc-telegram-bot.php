@@ -882,3 +882,57 @@ function csc_on_telegram_settings_saved($old_value, $new_value, $option) {
         $running = false;
     }
 }
+// ============================================================
+// САМОПРОВЕДКА WEBHOOK (самовосстановление после обновлений плагина)
+// ============================================================
+/**
+ * При каждой загрузке админки проверяем, что webhook в Telegram всё ещё
+ * указывает на наш текущий REST URL. Если нет (например, хостинг менял домен,
+ * токен был переустановлен вручную через setWebhook без secret_token или
+ * update_option не сработал при сохранении настроек) — тихо переустанавливаем.
+ * Без работающего webhook кнопки «Принять/Отклонить» и ответы бота перестают
+ * приходить, поэтому проверка критична для уведомлений о новых заявках.
+ */
+if (!function_exists('csc_tg_do_webhook_selfcheck')) {
+    function csc_tg_do_webhook_selfcheck() {
+        $s = get_option('csc_main_settings', []);
+        $tg_token = function_exists('csc_get_telegram_token')
+            ? csc_get_telegram_token()
+            : ($s['telegram_token'] ?? '');
+        if (!$tg_token) return;
+
+        $expected_url = rest_url('csc/v1/telegram');
+        $info = csc_check_telegram_webhook();
+        $current_url = $info['url'] ?? '';
+
+        // Webhook отсутствует вообще или ведёт не на наш URL — переустанавливаем
+        if ($current_url !== $expected_url) {
+            if (csc_setup_telegram_webhook()) {
+                csc_log('tg', 'info', 'webhook_selfcheck_fixed: ' . ($current_url ?: '(not set)') . ' -> ' . $expected_url);
+            } else {
+                csc_log('tg', 'warning', 'webhook_selfcheck_fix_failed: ' . ($current_url ?: '(not set)'));
+            }
+            return;
+        }
+
+        // URL верный, но секрет может отсутствовать (webhook установлен вручную
+        // строкой из инструкции в админке без secret_token) — сверяем по факту:
+        // если сохранённого секрета нет, генерируем и переустанавливаем корректно.
+        if (empty(get_option('csc_tg_webhook_secret', ''))) {
+            csc_setup_telegram_webhook();
+            csc_log('tg', 'info', 'webhook_selfcheck_secret_restored');
+        } else {
+            csc_log('tg', 'debug', 'webhook_selfcheck_ok');
+        }
+    }
+}
+
+// Запуск самотестирования не блокирует админку: делаем фоновый cron-запрос раз в час
+add_action('init', function () {
+    if (!wp_next_scheduled('csc_tg_webhook_selfcheck_hourly')) {
+        wp_schedule_event(time() + 60, 'hourly', 'csc_tg_webhook_selfcheck_hourly');
+    }
+});
+add_action('csc_tg_webhook_selfcheck_hourly', 'csc_tg_do_webhook_selfcheck');
+// Очистка при деактивации плагина выполняется штатным csc_deactivation_hook
+// (wp_clear_scheduled_hook чистит все csc_* кроны).
