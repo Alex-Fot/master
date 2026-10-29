@@ -1040,8 +1040,10 @@ if (!function_exists('csc_masters_admin_page')) {
                 cscModerateMasterFromModal(currentMasterId, 'block', reason);
             });
 
-            if (!window.cscOpenMasterView) {
-            function cscOpenMasterView(masterId) {
+            // Фикс: функции объявлены внутри IIFE и не видны из глобальной области.
+            // Экспортируем их в window, иначе делегированный обработчик клика по кнопке
+            // "Просмотр" получал ReferenceError: cscOpenMasterView is not defined.
+            window.cscOpenMasterView = function cscOpenMasterView(masterId) {
                 currentMasterId = masterId;
                 currentMasterData = null;
                 zoneMapInstance = null;
@@ -1083,15 +1085,13 @@ if (!function_exists('csc_masters_admin_page')) {
                     });
             }
 
-            if (!window.cscShowViewError) {
-            function cscShowViewError(message) {
+            window.cscShowViewError = function cscShowViewError(message) {
                 document.getElementById('csc-mv-loading').style.display = 'none';
                 document.getElementById('csc-mv-error').style.display = 'block';
                 document.getElementById('csc-mv-error-text').textContent = message;
-            }
+            };
 
-            if (!window.cscRenderMasterView) {
-            function cscRenderMasterView(data) {
+            window.cscRenderMasterView = function cscRenderMasterView(data) {
                 document.getElementById('csc-mv-loading').style.display = 'none';
                 document.getElementById('csc-mv-content').style.display = 'block';
 
@@ -1405,8 +1405,7 @@ if (!function_exists('csc_masters_admin_page')) {
                 return num.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 });
             }
 
-            if (!window.cscEscapeHtml) {
-            function cscEscapeHtml(str) {
+            window.cscEscapeHtml = function cscEscapeHtml(str) {
                 if (str === null || str === undefined) return '';
                 return String(str)
                     .replace(/&/g, '&amp;')
@@ -1414,7 +1413,7 @@ if (!function_exists('csc_masters_admin_page')) {
                     .replace(/>/g, '&gt;')
                     .replace(/"/g, '&quot;')
                     .replace(/'/g, '&#039;');
-            }
+            };
         })();
         </script>
         <?php
