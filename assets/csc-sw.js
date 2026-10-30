@@ -1,12 +1,27 @@
 // Service Worker для Web Push уведомлений
-// Версия: 1.0
+// Версия: 1.1
+//
+// ИСПРАВЛЕНО (Push-иконки): раньше использовались жёстко зашитые пути вида
+// '/wp-content/plugins/custom-service-calculator/assets/...', которые ломались
+// при нестандартном расположении plugins, на поддомене/мультисайте и при
+// регистрации SW через корневой ?csc-sw=1. Теперь пути вычисляются
+// автоматически из self.location (SW отдаётся плагином из assets/).
+
+(function () {
+    // Базовый URL папки assets/ плагина, например https://site.ru/wp-content/plugins/custom-service-calculator/assets/
+    var ASSETS_BASE = new URL('./', self.location.href).href;
+
+    self.CSC_ASSETS_BASE = ASSETS_BASE;
+    self.CSC_DEFAULT_ICON = ASSETS_BASE + 'icon-192.png';
+    self.CSC_DEFAULT_BADGE = ASSETS_BASE + 'badge-72.png';
+})();
 
 self.addEventListener('push', function(event) {
     let data = {
         title: 'Новое уведомление',
         message: '',
-        icon: '/wp-content/plugins/custom-service-calculator/assets/icon-192.png',
-        badge: '/wp-content/plugins/custom-service-calculator/assets/badge-72.png',
+        icon: self.CSC_DEFAULT_ICON,
+        badge: self.CSC_DEFAULT_BADGE,
         order_number: '',
         url: ''
     };
@@ -20,8 +35,13 @@ self.addEventListener('push', function(event) {
         }
     }
     
+    // Fallback: если сервер прислал пустой/битый путь к иконке или бейджу —
+    // подставляем локальные файлы плагина.
+    if (!data.icon)  data.icon  = self.CSC_DEFAULT_ICON;
+    if (!data.badge) data.badge = self.CSC_DEFAULT_BADGE;
+
     const options = {
-        body: data.message,
+        body: data.body || data.message || '',
         icon: data.icon,
         badge: data.badge,
         vibrate: [100, 50, 100],

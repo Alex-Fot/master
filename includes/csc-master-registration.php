@@ -181,15 +181,26 @@ if (!function_exists('csc_render_become_master_form')) {
             $token = sanitize_text_field($_GET['token']);
             $masters = function_exists('csc_get_masters') ? csc_get_masters() : [];
             
-            if (isset($masters[$mid]) && isset($masters[$mid]['dashboard_token']) && $masters[$mid]['dashboard_token'] === $token) {
-                return '<div style="padding:40px;text-align:center;background:#dcfce7;border:2px solid #86efac;border-radius:12px;max-width:700px;margin:0 auto;">Вы уже зарегистрированы. <a href="' . esc_url(home_url('/?csc_master_dashboard=1&mid=' . urlencode($mid) . '&token=' . urlencode($token))) . '">Перейти в кабинет</a></div>';
+// Проверка через csc_verify_token: поддерживает хэш (sha256$...) и legacy-открытый токен.
+            if (isset($masters[$mid]) && !empty($masters[$mid]['dashboard_token'])
+                && function_exists('csc_verify_token')
+                && csc_verify_token($token, $masters[$mid]['dashboard_token'], null)) {
+// Ссылка в кабинет — на одноразовом входном креденшеле, а не на предъявленном токене.
+                $login_token = function_exists('csc_issue_master_login_token')
+                    ? csc_issue_master_login_token($mid, $masters)
+                    : '';
+                $dash_url = $login_token !== ''
+                    ? home_url('/?csc_master_dashboard=1&mid=' . urlencode($mid) . '&token=' . urlencode($login_token))
+                    : home_url('/?csc_master_dashboard=1');
+                return '<div style="padding:40px;text-align:center;background:#dcfce7;border:2px solid #86efac;border-radius:12px;max-width:700px;margin:0 auto;">Вы уже зарегистрированы. <a href="' . esc_url($dash_url) . '">Перейти в кабинет</a></div>';
             }
         }
 
         // КРИТИЧНО ИСПРАВЛЕНО: Leaflet загружается ПЕРЕД нашим скриптом (в header, не в footer)
         // Это гарантирует что L будет доступен когда наш JS вызовет initRegistrationMap()
-        wp_enqueue_style('csc-leaflet', 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css', [], '1.9.4');
-        wp_enqueue_script('csc-leaflet', 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js', [], '1.9.4', false);
+        // Локальные копии библиотек (стабильность без интернета; CDN unpkg больше не используется)
+        wp_enqueue_style('csc-leaflet', CSC_PLUGIN_URL . 'assets/vendor/leaflet/leaflet.css', [], '1.9.4');
+        wp_enqueue_script('csc-leaflet', CSC_PLUGIN_URL . 'assets/vendor/leaflet/leaflet.js', [], '1.9.4', false);
 		
         wp_enqueue_style('csc-master-registration');
         wp_enqueue_script('csc-master-registration');
@@ -213,7 +224,14 @@ if (!function_exists('csc_render_become_master_form')) {
             'radiusMax' => 20,
             'radiusDefault' => 10,
             'nonce' => wp_create_nonce('wp_rest'),
+            // Локальные пути библиотек (Leaflet) — вместо CDN unpkg
+            'leafletCss'    => CSC_PLUGIN_URL . 'assets/vendor/leaflet/leaflet.css',
+            'leafletJs'     => CSC_PLUGIN_URL . 'assets/vendor/leaflet/leaflet.js',
+            'leafletImages' => CSC_PLUGIN_URL . 'assets/vendor/leaflet/images/',
+            // i18n: словарь строк интерфейса формы регистрации (cscI18n.t('key'))
+            'i18n'  => function_exists('csc_js_strings_registration') ? csc_js_strings_registration() : [],
         ]);
+        wp_localize_script('csc-master-registration', 'CSC_I18N', function_exists('csc_js_strings_registration') ? csc_js_strings_registration() : []);
 
         ob_start();
         
@@ -1200,7 +1218,9 @@ if (!function_exists('csc_handle_register_master')) {
 
         // Генерация ID и токена
         $master_id = 'm_' . wp_generate_password(8, false);
-        $dashboard_token = wp_generate_password(32, false);
+        // Токен сохраняется только в виде хэша (SHA-256); открытое значение не попадает в БД.
+        $raw_dashboard_token = wp_generate_password(32, false);
+        $dashboard_token = function_exists('csc_hash_token') ? csc_hash_token($raw_dashboard_token) : $raw_dashboard_token;
 
         // Формирование расписания
         $formatted_schedule = [];
@@ -1424,7 +1444,7 @@ if (!function_exists('csc_upload_master_file')) {
         remove_filter('upload_dir', $csc_upload_dir_filter);
 
         if (isset($movefile['error'])) {
-            error_log('[CSC_UPLOAD] Error: ' . $movefile['error']);
+            csc_log('Error: ' . $movefile['error']);
             return '';
         }
 
@@ -1465,7 +1485,14 @@ if (!function_exists('csc_send_registration_notifications')) {
         
         // Мастеру об одобрении
         if ($settings['auto_approve']) {
-            $dashboard_url = home_url('/?csc_master_dashboard=1&mid=' . urlencode($master['id']) . '&token=' . urlencode($master['dashboard_token']));
+            // Ссылка входа строится на одноразовом входном креденшеле:
+            // в хранилище лежит хэш, открытый токен в e-mail не подставляется.
+            $login_token = function_exists('csc_issue_master_login_token')
+                ? csc_issue_master_login_token($master['id'], csc_get_masters(true))
+                : '';
+            $dashboard_url = $login_token !== ''
+                ? home_url('/?csc_master_dashboard=1&mid=' . urlencode($master['id']) . '&token=' . urlencode($login_token))
+                : home_url('/?csc_master_dashboard=1');
             $subject = '✅ Вы зарегистрированы как мастер!';
             $message = "Здравствуйте, {$master['name']}!\n";
             $message .= "Ваша заявка на регистрацию успешно одобрена.\n";
@@ -1947,13 +1974,13 @@ if (!function_exists('csc_serve_map_tile')) {
         ]);
         
         if (is_wp_error($response)) {
-            error_log('[CSC_TILE] Error: ' . $response->get_error_message());
+            csc_log('Error: ' . $response->get_error_message());
             return new WP_Error('tile_error', 'Cannot load tile', ['status' => 502]);
         }
         
         $code = wp_remote_retrieve_response_code($response);
         if ($code !== 200) {
-            error_log('[CSC_TILE] Tile server returned: ' . $code);
+            csc_log('Tile server returned: ' . $code);
             return new WP_Error('tile_error', 'Tile server error: ' . $code, ['status' => 502]);
         }
         
@@ -2003,6 +2030,9 @@ if (!function_exists('csc_handle_reverse_geocode')) {
             ], 200);
         }
         
+        // Лимит OSM: не чаще 1 запроса/сек (общий счётчик с csc_nominatim_search)
+        csc_nominatim_throttle(1);
+
         $url = add_query_arg([
             'format'          => 'json',
             'lat'             => $lat,
@@ -2015,12 +2045,13 @@ if (!function_exists('csc_handle_reverse_geocode')) {
         $response = wp_remote_get($url, [
             'timeout' => 10,
             'headers' => [
-                'User-Agent' => 'CustomServiceCalculator/5.1 (WordPress Plugin)',
+                // Единый User-Agent для Nominatim (OSM Usage Policy)
+                'User-Agent' => function_exists('csc_nominatim_user_agent') ? csc_nominatim_user_agent() : ('CustomServiceCalculator/' . (defined('CSC_PLUGIN_VERSION') ? CSC_PLUGIN_VERSION : '9.0') . ' (WordPress plugin; contact: ' . get_option('admin_email', 'admin@example.com') . ')'),
             ],
         ]);
         
         if (is_wp_error($response)) {
-            error_log('[CSC_REVGEO] Network error: ' . $response->get_error_message());
+            csc_log('Network error: ' . $response->get_error_message(), 'error', 'REVGEO');
             return new WP_REST_Response(['success' => false, 'address' => ''], 200);
         }
         
@@ -2032,7 +2063,7 @@ if (!function_exists('csc_handle_reverse_geocode')) {
         $body = json_decode(wp_remote_retrieve_body($response), true);
         
         if (empty($body) || !isset($body['display_name'])) {
-            error_log('[CSC_REVGEO] No address for: ' . $lat . ',' . $lng);
+            csc_log('No address for: ' . $lat . ',' . $lng, 'warning', 'REVGEO');
             return new WP_REST_Response(['success' => false, 'address' => ''], 200);
         }
         
@@ -2052,6 +2083,9 @@ if (!function_exists('csc_handle_reverse_geocode')) {
 //     Метод геосетки: зона мастера покрывает ячейки, в каждой ячейке
 //     не больше zone_max_masters мастеров
 // ============================================================
+// ИСПРАВЛЕНО: дубль функции удалён — единая реализация находится в
+// includes/csc-core-functions.php (загружается раньше этого файла).
+// Оставлена только заглушка на случай прямой загрузки модуля вне ядра.
 if (!function_exists('csc_haversine_km')) {
     function csc_haversine_km($lat1, $lon1, $lat2, $lon2) {
         $earth = 6371.0;
@@ -2163,32 +2197,3 @@ if (!function_exists('csc_handle_zone_check')) {
         return new WP_REST_Response(['success' => true, 'data' => $cap], 200);
     }
 }
-// ============================================================
-// 19. МИГРАЦИЯ: добавление zone_limit существующим городам
-// ============================================================
-if (!function_exists('csc_migrate_cities_zone_limit')) {
-    function csc_migrate_cities_zone_limit() {
-        if (get_option('csc_cities_zone_limit_migrated')) return;
-        
-        $cities = get_option('csc_cities', []);
-        if (empty($cities)) {
-            update_option('csc_cities_zone_limit_migrated', true);
-            return;
-        }
-        
-        $changed = false;
-        foreach ($cities as $key => &$city) {
-            if (!array_key_exists('zone_limit', $city)) {
-                $city['zone_limit'] = 0;
-                $changed = true;
-            }
-        }
-        unset($city);
-        
-        if ($changed) {
-            update_option('csc_cities', $cities);
-        }
-        update_option('csc_cities_zone_limit_migrated', true);
-    }
-}
-add_action('admin_init', 'csc_migrate_cities_zone_limit', 10);

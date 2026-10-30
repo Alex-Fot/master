@@ -60,39 +60,53 @@ if (!function_exists('csc_render_master_dashboard')) {
         $mid = sanitize_text_field($_GET['mid']);
         $token = sanitize_text_field($_GET['token']);
 
+        // ИСПРАВЛЕНО (защита ЛК мастера): лимит попыток входа по токену.
+        // Функция csc_check_master_login_rate_limit была определена, но не вызывалась —
+        // подбор 32-символьного токена ничем не ограничивался.
+        if (function_exists('csc_check_master_login_rate_limit')) {
+            $rl = csc_check_master_login_rate_limit($mid);
+            if (!$rl['allowed']) {
+                nocache_headers();
+                wp_die(sprintf(
+                    __('Слишком много неудачных попыток входа. Повторите через %d минут.', 'csc'),
+                    max(1, (int) ceil($rl['retry_after'] / MINUTE_IN_SECONDS))
+                ), __('Ошибка доступа', 'csc'), ['response' => 429]);
+            }
+        }
+
         $masters = function_exists('csc_get_masters') ? csc_get_masters() : [];
         if (!isset($masters[$mid])) {
-        wp_die('Доступ запрещен. Мастер не найден.', 'Ошибка доступа', ['response' => 403]);
+        wp_die(__('Доступ запрещен. Мастер не найден.', 'csc'), __('Ошибка доступа', 'csc'), ['response' => 403]);
         }
         $stored_token = isset($masters[$mid]['dashboard_token']) ? (string)$masters[$mid]['dashboard_token'] : '';
-        // ИСПРАВЛЕНО: Поддержка одноразовых токенов из Telegram + фолбэк на постоянный токен
+        // ИСПРАВЛЕНО: три легитимных пути входа, все — без постоянного токена в URL:
+        // 1) одноразовый токен Telegram (csc_tg_get_dashboard_link);
+        // 2) одноразовый входной креденшел админки/рассылок (csc_issue_master_login_token);
+        // 3) legacy-фолбэк: постоянный токен из хранилища (для старых ссылок до миграции).
         $is_valid_token = false;
         // 1. Проверяем одноразовый токен (сгенерирован через csc_tg_get_dashboard_link)
         if (function_exists('csc_tg_verify_dashboard_token') && csc_tg_verify_dashboard_token($mid, $token)) {
         $is_valid_token = true;
         }
-        // 2. Фолбэк: проверяем постоянный токен из БД (для прямых ссылок из админки)
-        elseif ($stored_token !== '' && strlen($stored_token) >= 16 && hash_equals($stored_token, (string)$token)) {
+        // 2. Одноразовый креденшел, выданный csc_issue_master_login_token()
+        elseif (function_exists('csc_verify_master_login_token') && csc_verify_master_login_token($token) === $mid) {
         $is_valid_token = true;
         }
+        // 3. Фолбэк: сверка постоянного токена (хэш SHA-256 или legacy-открытый)
+        elseif ($stored_token !== '' && strlen($stored_token) >= 16
+            && function_exists('csc_verify_token') && csc_verify_token($token, $stored_token)) {
+        $is_valid_token = true;
+        }
+        // ИСПРАВЛЕНО (защита ЛК мастера): учёт неудачной попытки входа (подбор токена).
+        // Счётчик инкрементируется в csc_check_master_login_rate_limit при каждом
+        // запросе входа; при успехе ниже сбрасывается полностью.
         if (!$is_valid_token) {
-        wp_die('Доступ запрещен. Ссылка недействительна или истекла.', 'Ошибка доступа', ['response' => 403]);
-        }
-        // Автогенерация токена если отсутствует
-        if ($stored_token === '' || strlen($stored_token) < 16) {
-        $masters[$mid]['dashboard_token'] = wp_generate_password(32, false);
-        update_option('csc_masters_list', $masters, false);
-        if (function_exists('csc_cache_delete_masters')) {
-        csc_cache_delete_masters();
-        }
-        $new_token = $masters[$mid]['dashboard_token'];
-        $new_url = home_url('/?csc_master_dashboard=1&mid=' . urlencode($mid) . '&token=' . urlencode($new_token));
-        wp_redirect($new_url);
-        exit;
+            wp_die(__('Доступ запрещен. Ссылка недействительна или истекла.', 'csc'), __('Ошибка доступа', 'csc'), ['response' => 403]);
         }
 
-        if (!hash_equals($stored_token, (string)$token)) {
-            wp_die('Доступ запрещен. Ссылка недействительна или истекла.', 'Ошибка доступа', ['response' => 403]);
+        // Успешный вход — сброс счётчика попыток подбора токена
+        if (function_exists('csc_reset_master_login_rate_limit')) {
+            csc_reset_master_login_rate_limit($mid);
         }
 
         // Проверка статуса модерации
@@ -102,7 +116,32 @@ if (!function_exists('csc_render_master_dashboard')) {
         $penalties_total = $masters[$mid]['penalties_total'] ?? 0;
         $penalties_amount = $masters[$mid]['penalties_amount'] ?? 0;
 
-        $current_token = $masters[$mid]['dashboard_token'];
+        // ИСПРАВЛЕНО (защита ЛК мастера): в страницу/JS больше НЕ попадает хэш
+        // постоянного токена. Токен из URL мог быть ОДНОКРАТНЫМ (Telegram/админ-ссылка,
+        // transient уже удалён при сверке) или legacy-постоянным. Для авторизации
+        // REST/AJAX-вызовов страницы нормализуем его к «живому» открытому токену:
+        // если stored — хэш, генерируется новый постоянный токен этой сессии (в
+        // хранилище сохраняется только его хэш); если stored — legacy открытый,
+        // он остаётся working значением (ленивая миграция в хэш — при первой сверке).
+        $session_token = '';
+        if (function_exists('csc_normalize_master_session_token')) {
+            $session_token = csc_normalize_master_session_token($mid, $masters);
+        } elseif ($stored_token !== '' && !csc_is_hashed_token($stored_token)) {
+            $session_token = $stored_token; // фолбэк без ядра: legacy-открытый токен
+        }
+        if ($session_token === '') {
+            // Мастер вошёл по одноразовому креденшелу, но постоянного токена в
+            // хранилище нет/он пуст — создаём новый (хранится только хэш).
+            $fresh = wp_generate_password(32, false);
+            $masters[$mid]['dashboard_token'] = function_exists('csc_hash_token')
+                ? csc_hash_token($fresh)
+                : $fresh;
+            update_option('csc_masters_list', $masters, false);
+            if (function_exists('csc_cache_delete_masters')) {
+                csc_cache_delete_masters();
+            }
+            $session_token = $fresh;
+        }
         $site_url = esc_url(home_url());
         $ajax_nonce = wp_create_nonce('csc_cabinet_nonce');
 
@@ -124,7 +163,7 @@ if (!function_exists('csc_render_master_dashboard')) {
 
         wp_localize_script('csc-master-dashboard', 'CSC_MASTER_CONFIG', [
             'mid'           => $mid,
-            'token'         => $current_token,
+            'token'         => $session_token,
             'nonce'         => $ajax_nonce,
             'masterName'    => $master_name,
             'masterStatus'  => $master_status,
@@ -141,7 +180,20 @@ if (!function_exists('csc_render_master_dashboard')) {
             'serviceLng'     => $service_lng,
             'serviceRadius'  => $service_radius,
             'soundUrl'       => $sound_url, // <--- ДОБАВЛЕНО: URL звукового файла или пустая строка
+            // Клик по push-уведомлению/ссылке ведёт на ?open_order=N — ЛК сам
+            // переключится во вкладку «Ожидают» и откроет модалку этой заявки.
+            'openOrder'      => !isset($_GET['open_order']) ? '' : sanitize_text_field(wp_unslash($_GET['open_order'])),
+            // i18n: локализованные подписи статусов для инлайнового JS (getStatusLabel)
+            // Маршрутизация: длительность оффера (сек) — для обратного отсчёта
+            // «Принять/Отклониться» во вкладке «Ожидают».
+            'routingTimeout' => defined('CSC_ROUTING_TIMEOUT') ? intval(CSC_ROUTING_TIMEOUT) : 180,
+            'serverTime'     => time(),
+            'statusLabels'   => function_exists('csc_status_labels_js') ? csc_status_labels_js() : [],
+            // i18n: общий словарь строк интерфейса JS (cscI18n.t('key'))
+            'i18n'           => function_exists('csc_js_strings_dashboard') ? csc_js_strings_dashboard() : [],
         ]);
+        // window.CSC_I18N — то же содержимое, единое имя для всех скриптов страницы.
+        wp_localize_script('csc-master-dashboard', 'CSC_I18N', function_exists('csc_js_strings_dashboard') ? csc_js_strings_dashboard() : []);
 
         nocache_headers();
         ?>
@@ -155,9 +207,9 @@ if (!function_exists('csc_render_master_dashboard')) {
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>Кабинет мастера | <?php echo esc_html($master_name); ?></title>
     
-    <!-- Подключение Leaflet для карты зоны обслуживания -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Подключение Leaflet для карты зоны обслуживания (локальная копия) -->
+    <link rel="stylesheet" href="<?php echo esc_url(CSC_PLUGIN_URL . 'assets/vendor/leaflet/leaflet.css'); ?>" />
+    <script src="<?php echo esc_url(CSC_PLUGIN_URL . 'assets/vendor/leaflet/leaflet.js'); ?>"></script>
     
     <?php wp_head(); ?>
 </head>
@@ -562,16 +614,14 @@ if (!function_exists('csc_register_master_routes')) {
                     return new WP_Error('missing_auth', 'Не передан mid или token', ['status' => 400]);
                 }
 
-                // Проверка токена мастера
-                $masters = function_exists('csc_get_masters') ? csc_get_masters() : [];
-                if (!isset($masters[$mid])) {
-                    return new WP_Error('not_found', 'Мастер не найден', ['status' => 404]);
+                // ИСПРАВЛЕНО (SHA-256 миграция): проверка через единую функцию авторизации.
+                // Прежний hash_equals по stored-значению ломался после хэширования токенов
+                // и не поддерживал одноразовые входные креденшелы.
+                $auth = csc_verify_master_auth($request);
+                if (is_wp_error($auth)) {
+                    return $auth;
                 }
-                $master = $masters[$mid];
-                $stored_token = isset($master['dashboard_token']) ? (string)$master['dashboard_token'] : '';
-                if ($stored_token === '' || strlen($stored_token) < 16 || !hash_equals($stored_token, (string)$token)) {
-                    return new WP_Error('unauthorized', 'Неверный токен доступа', ['status' => 401]);
-                }
+                $master = $auth['masters'][$mid];
 
                 if (!function_exists('csc_finance_get_master_report')) {
                     return new WP_Error('module_missing', 'Финансовый модуль не подключён', ['status' => 500]);
@@ -732,6 +782,15 @@ if (!function_exists('csc_verify_master_auth')) {
             return new WP_Error('unauthorized', 'Missing credentials', ['status' => 401]);
         }
 
+        // ИСПРАВЛЕНО (защита ЛК мастера): лимит попыток подбора токена.
+        // Тот же счётчик, что и на странице входа кабинета.
+        if (function_exists('csc_check_master_login_rate_limit')) {
+            $rl = csc_check_master_login_rate_limit($mid);
+            if (!$rl['allowed']) {
+                return new WP_Error('rate_limited', 'Слишком много неудачных попыток. Повторите позже.', ['status' => 429]);
+            }
+        }
+
         $masters = function_exists('csc_get_masters') ? csc_get_masters() : [];
 
         // ИСПРАВЛЕНО 6.2: защита от пустого/некорректного списка мастеров
@@ -749,8 +808,41 @@ if (!function_exists('csc_verify_master_auth')) {
             return new WP_Error('unauthorized', 'Invalid token configuration', ['status' => 401]);
         }
 
-        if (!hash_equals($stored_token, (string)$token)) {
+        // ИСПРАВЛЕНО (SHA-256 миграция): сверка через csc_verify_token — поддерживает
+        // хэш stored-значения + ленивую миграцию legacy открытых токенов; hash_equals
+        // напрямую по хэшу ломал бы все REST-вызовы после миграции.
+        $is_valid = false;
+        if (function_exists('csc_verify_token')) {
+            $on_migrate = null;
+            if (!csc_is_hashed_token($stored_token)) {
+                $on_migrate = function ($new_hash) use (&$masters, $mid) {
+                    $masters[$mid]['dashboard_token'] = $new_hash;
+                    update_option('csc_masters_list', $masters, false);
+                    if (function_exists('csc_cache_delete_masters')) {
+                        csc_cache_delete_masters();
+                    }
+                };
+            }
+            $is_valid = csc_verify_token($token, $stored_token, $on_migrate);
+        } else {
+            $is_valid = hash_equals($stored_token, (string)$token);
+        }
+
+        // Дополнительный путь: одноразовый входной креденшел (csc_issue_master_login_token).
+        if (!$is_valid && function_exists('csc_verify_master_login_token')) {
+            $login_mid = csc_verify_master_login_token($token);
+            if ($login_mid === $mid) {
+                $is_valid = true;
+            }
+        }
+
+        if (!$is_valid) {
             return new WP_Error('unauthorized', 'Invalid credentials', ['status' => 401]);
+        }
+
+        // Успех — сброс счётчика попыток
+        if (function_exists('csc_reset_master_login_rate_limit')) {
+            csc_reset_master_login_rate_limit($mid);
         }
 
         return ['mid' => $mid, 'masters' => $masters];
@@ -767,32 +859,40 @@ if (!function_exists('csc_handle_master_orders')) {
 
         $mid = $auth['mid'];
         
-        // Принудительное обновление кэша для получения актуальных данных
-        $all_orders = function_exists('csc_get_all_orders') ? csc_get_all_orders(true) : get_option('csc_all_orders', []);
+        // ОПТИМИЗАЦИЯ (Кэш заказов): SQL-выборка заказов мастера по индексам
+        // (idx_master_id / idx_current_candidate) вместо загрузки ВСЕГО списка
+        // и PHP-фильтрации. Фолбэк на старый путь, если хелпер недоступен.
+        if (function_exists('csc_get_orders_for_master')) {
+            $my_orders = csc_get_orders_for_master($mid);
+            $total_count = count($my_orders);
+        } else {
+            $all_orders = function_exists('csc_get_all_orders') ? csc_get_all_orders(true) : get_option('csc_all_orders', []);
+            $total_count = count($all_orders);
 
-        // Расширенный фильтр: включаем все заказы, где мастер участвует
-        $my_orders = array_filter($all_orders, function($o) use ($mid) {
-            $orderMasterId    = $o['master_id'] ?? '';
-            $currentCandidate = $o['current_candidate'] ?? '';
-            $acceptedBy       = $o['accepted_by'] ?? '';
-            
-            // 1. Мастер назначен на заказ (выполненные, в работе, отменённые)
-            if ($orderMasterId === $mid) {
-                return true;
-            }
-            
-            // 2. Мастер принял заказ (accepted_by)
-            if ($acceptedBy === $mid) {
-                return true;
-            }
-            
-            // 3. Мастер является текущим кандидатом (ожидающие предложения)
-            if ($currentCandidate === $mid) {
-                return true;
-            }
-            
-            return false;
-        });
+            // Расширенный фильтр: включаем все заказы, где мастер участвует
+            $my_orders = array_filter($all_orders, function($o) use ($mid) {
+                $orderMasterId    = $o['master_id'] ?? '';
+                $currentCandidate = $o['current_candidate'] ?? '';
+                $acceptedBy       = $o['accepted_by'] ?? '';
+
+                // 1. Мастер назначен на заказ (выполненные, в работе, отменённые)
+                if ($orderMasterId === $mid) {
+                    return true;
+                }
+
+                // 2. Мастер принял заказ (accepted_by)
+                if ($acceptedBy === $mid) {
+                    return true;
+                }
+
+                // 3. Мастер является текущим кандидатом (ожидающие предложения)
+                if ($currentCandidate === $mid) {
+                    return true;
+                }
+
+                return false;
+            });
+        }
 
         // Сортировка: ожидание → в работе → выполнено → отменено, затем по дате
         uasort($my_orders, function($a, $b) {
@@ -801,11 +901,8 @@ if (!function_exists('csc_handle_master_orders')) {
                 CSC_STATUS_PENDING => 0, 
                 CSC_STATUS_AWAITING_PAYMENT => 0,
                 CSC_STATUS_PROCESSING => 1, 
-                CSC_STATUS_COMPLETED => 2, 
                 CSC_STATUS_COMPLETED => 2,
-                'completed' => 2,
                 CSC_STATUS_CANCELLED => 3,
-                'cancelled' => 3,
             ];
             $s_a = $status_order[$a['status'] ?? ''] ?? 99;
             $s_b = $status_order[$b['status'] ?? ''] ?? 99;
@@ -821,9 +918,9 @@ if (!function_exists('csc_handle_master_orders')) {
 
         // Отладочное логирование (включите WP_DEBUG для просмотра)
         if (defined('WP_DEBUG') && WP_DEBUG) {
-            error_log('[CSC_MASTER_ORDERS] Master: ' . $mid . ' | Total orders: ' . count($all_orders) . ' | Filtered: ' . count($my_orders));
+            csc_log('Master: ' . $mid . ' | Total orders: ' . $total_count . ' | Filtered: ' . count($my_orders));
             foreach ($my_orders as $num => $o) {
-                error_log('[CSC_MASTER_ORDERS] #' . $num . ' status=' . ($o['status'] ?? '?') . ' master_id=' . ($o['master_id'] ?? '') . ' candidate=' . ($o['current_candidate'] ?? ''));
+                csc_log('#' . $num . ' status=' . ($o['status'] ?? '?') . ' master_id=' . ($o['master_id'] ?? '') . ' candidate=' . ($o['current_candidate'] ?? ''));
             }
         }
 
@@ -865,16 +962,62 @@ if (!function_exists('csc_handle_master_action')) {
             ? csc_normalize_phone($order['phone'] ?? '')
             : preg_replace('/[^0-9]/', '', $order['phone'] ?? '');
 
+        // Принять/отклонить оффер может ТОЛЬКО текущий кандидат (мастер ещё
+        // не назначен на заказ). Раньше проверка пропускала любого мастера,
+        // у которого в заказе заполнен master_id — т.е. после назначения
+        // «принять» можно было повторно, а отказ был вообще недоступен.
+        if (($action === 'accept' || $action === 'reject') && ($order['current_candidate'] ?? '') !== $mid) {
+            return new WP_Error('forbidden', 'Order is not offered to you', ['status' => 403]);
+        }
+
         // Обработка действий
         if ($action === 'accept') {
+            $tg_msg_id = $order['tg_message_id'] ?? null;
             $order['master_id'] = $mid;
+            $order['accepted_by'] = $mid;
             $order['status'] = CSC_STATUS_PROCESSING;
             $order['started_at'] = current_time('mysql');
             $order['routing_status'] = 'assigned';
             $order['current_candidate'] = null;
             $order['offer_time'] = null;
             $order['tg_message_id'] = null;
+
+            // Обновляем TG-сообщение оффера (иначе кнопка «Принять» в
+            // Telegram останется активной после принятия через ЛК).
+            if ($tg_msg_id && function_exists('csc_tg_send_with_retry')) {
+                $masters_for_tg = csc_get_masters_cached();
+                $tg_chat = $masters_for_tg[$mid]['tg_chat_id'] ?? '';
+                if (!empty($tg_chat)) {
+                    csc_tg_send_with_retry('editMessageText', [
+                        'chat_id'    => $tg_chat,
+                        'message_id' => $tg_msg_id,
+                        'text'       => "✅ <b>Заказ #" . esc_html($order_number) . " принят мастером через ЛК.</b>",
+                        'parse_mode' => 'HTML',
+                    ]);
+                }
+            }
             do_action('csc_order_status_changed', $order_number, $old_status, CSC_STATUS_PROCESSING, 'master', $mid, '');
+
+        } elseif ($action === 'reject') {
+            // ИСПРАВЛЕНО: явный отказ мастера во вкладке «Ожидают».
+            // Переквалификацию кандидата в rejected_by, штраф за отказ и
+            // передачу заявки следующему мастеру берёт на себя
+            // csc_route_order_to_next(..., 'rejected').
+            $order['routing_reject_reason'] = sanitize_text_field($request->get_param('reason') ?? '');
+            if (function_exists('csc_route_order_to_next')) {
+                csc_route_order_to_next($order_number, 'rejected');
+            } else {
+                $order['status'] = CSC_STATUS_SEARCHING;
+                $order['routing_status'] = 'searching';
+            }
+            // Маршрутизатор уже сохранил актуальный снимок заказа — перечитываем
+            // его, чтобы финальное сохранение ниже не перезаписало результат
+            // маршрутизации старыми данными из $all_orders.
+            if (function_exists('csc_get_order')) {
+                $fresh = csc_get_order($order_number);
+                if ($fresh) { $order = $fresh; }
+            }
+            do_action('csc_order_status_changed', $order_number, $old_status, $order['status'] ?? CSC_STATUS_SEARCHING, 'master', $mid, 'Отказ от заявки');
             
         } elseif ($action === 'complete') {
             $order['status'] = CSC_STATUS_COMPLETED;
@@ -901,7 +1044,9 @@ if (!function_exists('csc_handle_master_action')) {
             return new WP_Error('bad_request', 'Unknown action', ['status' => 400]);
         }
         
-        do_action('csc_master_completed_order', $order_number, $mid);
+        if ($action === 'complete') {
+            do_action('csc_master_completed_order', $order_number, $mid);
+        }
 
         // Сохранение заказа
         if (function_exists('csc_update_order')) {
@@ -1083,6 +1228,24 @@ if (!function_exists('csc_handle_upload_completion')) {
         $order_number = sanitize_text_field($request->get_param('order_number'));
         $action = sanitize_text_field($request->get_param('action') ?? 'upload');
 
+        // ИСПРАВЛЕНО (защита ЛК мастера): URL прокси-файлов не должен содержать
+        // секрет доступа (раньше сюда попадал хэш постоянного dashboard_token).
+        // В ссылки file-proxy подставляется «живой» токен сессии из текущего
+        // авторизованного запроса (заголовок X-CSC-Token или параметр token) —
+        // тот же, что использует страница кабинета. Одноразовые креденшелы сюда
+        // не годятся: transient удаляется после первой сверки, и повторные
+        // загрузки/просмотры файлов страницы ломались бы; stored-хэш не является
+        // валидным предъявляемым значением. Если открытый токен запроса недоступен
+        // (stored уже хэш) — файлы отдаются без токена в URL (см. фолбэк ниже),
+        // доступ к ним возможен только через REST с заголовком авторизации.
+        $file_proxy_token = sanitize_text_field($request->get_header('X-CSC-Token'));
+        if ($file_proxy_token === '') {
+            $file_proxy_token = sanitize_text_field($request->get_param('token'));
+        }
+        if ($file_proxy_token === '' || strlen($file_proxy_token) < 16) {
+            $file_proxy_token = '';
+        }
+
         if (empty($order_number)) {
             return new WP_Error('bad_request', 'Missing order_number', ['status' => 400]);
         }
@@ -1233,13 +1396,17 @@ if (!function_exists('csc_handle_upload_completion')) {
                 if (move_uploaded_file($tmp_name, $dest_path)) {
                     @chmod($dest_path, 0644);
 
-                    // URL через прокси с параметрами авторизации
-                    $file_url = add_query_arg([
+                    // URL через прокси; токен включается только если доступен
+                    // «живой» открытый токен сессии (иначе — доступ по заголовку)
+                    $proxy_args = [
                         'order_number' => $order_number,
                         'filename'     => $unique_name,
                         'mid'          => $mid,
-                        'token'        => $auth['masters'][$mid]['dashboard_token'],
-                    ], rest_url('csc/v1/master/file-proxy'));
+                    ];
+                    if ($file_proxy_token !== '') {
+                        $proxy_args['token'] = $file_proxy_token;
+                    }
+                    $file_url = add_query_arg($proxy_args, rest_url('csc/v1/master/file-proxy'));
 
                     $uploaded[] = [
                         'url'       => $file_url,
@@ -1604,6 +1771,7 @@ if (!function_exists('csc_format_time_ago')) {
 // ============================================================
 if (!function_exists('csc_handle_master_balance')) {
     function csc_handle_master_balance($request) {
+        global $wpdb;
         $auth = csc_verify_master_auth($request);
         if (is_wp_error($auth)) return $auth;
         $mid = $auth['mid'];
@@ -1710,14 +1878,47 @@ if (!function_exists('csc_handle_master_balance')) {
             ];
         }
 
-        // --- Выплаты (если хранятся у мастера) ---
-        $payouts = $master['payouts'] ?? [];
+        // --- Выплаты ---
+        // Источник истины — транзакции csc_transactions (создаются админкой при
+        // «расчёте» мастера). Массив $master['payouts'] используется как legacy-фолбэк,
+        // чтобы не задвоить суммы, уже учтённые в транзакциях.
         $total_payout = 0.0;
+        $txn_payout_ids = []; // 'amount|date' — для дедупликации с payouts[]
+        if ($wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $wpdb->prefix . 'csc_transactions'))) {
+            $paid_txns = $wpdb->get_results($wpdb->prepare(
+                "SELECT amount, method, description, created_at, COALESCE(paid_at, updated_at, created_at) AS paid_at
+                 FROM {$wpdb->prefix}csc_transactions
+                 WHERE master_id = %s AND type = 'payout' AND status = 'completed'
+                 ORDER BY paid_at DESC",
+                $mid
+            ), ARRAY_A);
+            foreach (($paid_txns ?: []) as $pt) {
+                $p_amount = floatval($pt['amount']);
+                $total_payout += $p_amount;
+                $txn_payout_ids[round($p_amount, 2) . '|' . substr($pt['paid_at'], 0, 10)] = true;
+                $transactions[] = [
+                    'type'        => 'payout',
+                    'label'       => 'Выплата' . (!empty($pt['method']) ? ' (' . $pt['method'] . ')' : ''),
+                    'amount'      => -$p_amount,
+                    'commission'  => 0,
+                    'total'       => $p_amount,
+                    'date'        => $pt['paid_at'],
+                    'order_number'=> '',
+                    'icon'        => '💸',
+                ];
+            }
+        }
+        $payouts = $master['payouts'] ?? [];
         if (is_array($payouts)) {
             foreach ($payouts as $p) {
                 $p_amount = floatval($p['amount'] ?? 0);
                 $p_status = $p['status'] ?? '';
+                $p_date   = $p['date'] ?? '';
                 if ($p_status === 'completed' || $p_status === 'выплачено') { // 'выплачено' — legacy-статус выплаты (не статус заказа)
+                    // Пропускаем записи, уже учтённые через completed-транзакции
+                    if (isset($txn_payout_ids[round($p_amount, 2) . '|' . substr($p_date, 0, 10)])) {
+                        continue;
+                    }
                     $total_payout += $p_amount;
                     $transactions[] = [
                         'type'        => 'payout',
@@ -1725,12 +1926,22 @@ if (!function_exists('csc_handle_master_balance')) {
                         'amount'      => -$p_amount,
                         'commission'  => 0,
                         'total'       => $p_amount,
-                        'date'        => $p['date'] ?? '',
+                        'date'        => $p_date,
                         'order_number'=> '',
                         'icon'        => '💸',
                     ];
                 }
             }
+        }
+
+        // --- Очередь выплат (pending) — мастер видит, что уже заявлено/в обработке ---
+        $pending_payout_total = 0.0;
+        if (!empty($paid_txns) || $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $wpdb->prefix . 'csc_transactions'))) {
+            $pending_payout_total = floatval($wpdb->get_var($wpdb->prepare(
+                "SELECT COALESCE(SUM(amount), 0) FROM {$wpdb->prefix}csc_transactions
+                 WHERE master_id = %s AND type = 'payout' AND status IN ('pending','processing')",
+                $mid
+            )));
         }
 
         // --- Текущий баланс (к выплате) ---
@@ -1758,6 +1969,7 @@ if (!function_exists('csc_handle_master_balance')) {
                 'pending_amount'  => round($pending_amount, 2),
                 'total_commission'=> round($total_commission, 2),
                 'total_payout'    => round($total_payout, 2),
+                'pending_payout'  => round($pending_payout_total, 2),
                 'penalties_amount'=> round($penalties_amount, 2),
                 'penalties_total' => $penalties_total,
                 'completed_count' => $completed_count,

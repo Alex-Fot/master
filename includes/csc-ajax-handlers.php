@@ -87,7 +87,7 @@ if (!function_exists('csc_check_promo_calc_handler')) {
         
         $services_data = json_decode(base64_decode($services_input), true);
         if (!is_array($services_data)) {
-            wp_send_json_error(['message' => 'Ошибка данных']);
+            wp_send_json_error(['message' => __('Ошибка данных', 'csc')]);
         }
         
         $items = function_exists('csc_get_items') ? csc_get_items() : [];
@@ -310,12 +310,17 @@ if (!function_exists('csc_handle_uploads')) {
 
 if (!function_exists('csc_format_duration')) {
     function csc_format_duration($minutes) {
+        $minutes = (int) $minutes;
         if ($minutes < 60) {
-            return $minutes . ' мин.';
+            /* translators: %d — количество минут */
+            return sprintf(_n('%d мин.', '%d мин.', $minutes, 'csc'), $minutes);
         }
-        $h = floor($minutes / 60);
+        $h = (int) floor($minutes / 60);
         $m = $minutes % 60;
-        return $h . ' ч.' . ($m > 0 ? ' ' . $m . ' мин.' : '');
+        /* translators: 1: часы, 2: минуты */
+        $hours_str   = sprintf(_n('%d ч.', '%d ч.', $h, 'csc'), $h);
+        $minutes_str = $m > 0 ? ' ' . sprintf(_n('%d мин.', '%d мин.', $m, 'csc'), $m) : '';
+        return $hours_str . $minutes_str;
     }
 }
 
@@ -329,7 +334,7 @@ add_action('wp_ajax_nopriv_csc_submit_form', 'csc_submit_form_handler');
 if (!function_exists('csc_submit_form_handler')) {
     function csc_submit_form_handler() {
         if (function_exists('csc_check_rate_limit') && !csc_check_rate_limit()) {
-            wp_send_json_error(['message' => 'Подождите 2 минуты перед повторной отправкой']);
+            wp_send_json_error(['message' => __('Подождите 2 минуты перед повторной отправкой', 'csc')]);
         }
         
         // 1. Сбор и валидация данных
@@ -347,7 +352,7 @@ if (!function_exists('csc_submit_form_handler')) {
         
         // Проверка согласий
         if (empty($_POST['agree_privacy']) || empty($_POST['agree_rules'])) {
-            wp_send_json_error(['message' => 'Необходимо принять условия']);
+            wp_send_json_error(['message' => __('Необходимо принять условия', 'csc')]);
         }
         
         // Получаем услуги
@@ -359,36 +364,36 @@ if (!function_exists('csc_submit_form_handler')) {
         $services_data = json_decode(base64_decode($services_input), true);
         
         if (strlen($name) < 2) {
-            wp_send_json_error(['message' => 'Введите имя']);
+            wp_send_json_error(['message' => __('Введите имя', 'csc')]);
         }
         
         if (empty($phone) || strlen($phone) < 10 || strlen($phone) > 15 || !ctype_digit($phone)) {
-            wp_send_json_error(['message' => 'Неверный телефон']);
+            wp_send_json_error(['message' => __('Неверный телефон', 'csc')]);
         }
         
         if (!$date || !$time) {
-            wp_send_json_error(['message' => 'Выберите время']);
+            wp_send_json_error(['message' => __('Выберите время', 'csc')]);
         }
         
         if (empty($services_data)) {
-            wp_send_json_error(['message' => 'Список услуг пуст']);
+            wp_send_json_error(['message' => __('Список услуг пуст', 'csc')]);
         }
         
         // ============================================================
         // СЕРВЕРНАЯ ВАЛИДАЦИЯ ДАТЫ И СЛОТА (ЗАЩИТА ОТ ДВОЙНОГО БРОНИРОВАНИЯ)
         // ============================================================
         if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
-            wp_send_json_error(['message' => 'Некорректный формат даты']);
+            wp_send_json_error(['message' => __('Некорректный формат даты', 'csc')]);
         }
         
         if (function_exists('csc_is_workday') && !csc_is_workday($date)) {
-            wp_send_json_error(['message' => 'Выбранная дата недоступна для записи']);
+            wp_send_json_error(['message' => __('Выбранная дата недоступна для записи', 'csc')]);
         }
         
         $today_str = wp_date('Y-m-d');
 
         if ($date < $today_str) {
-            wp_send_json_error(['message' => 'Нельзя записаться на прошедшую дату']);
+            wp_send_json_error(['message' => __('Нельзя записаться на прошедшую дату', 'csc')]);
         }
         
         // ============================================================
@@ -411,7 +416,7 @@ if (!function_exists('csc_submit_form_handler')) {
         
             if ($selected_ts < $min_allowed_ts) {
                 wp_send_json_error([
-                    'message' => 'Выбранное время уже прошло. Пожалуйста, выберите более позднее время или другой день.'
+                    'message' => __('Выбранное время уже прошло. Пожалуйста, выберите более позднее время или другой день.', 'csc')
                 ]);
             }
         }
@@ -435,7 +440,7 @@ if (!function_exists('csc_submit_form_handler')) {
             : [];
         
         if (!in_array($time, $available_slots)) {
-            wp_send_json_error(['message' => 'Выбранное время уже занято. Пожалуйста, выберите другой слот.']);
+            wp_send_json_error(['message' => __('Выбранное время уже занято. Пожалуйста, выберите другой слот.', 'csc')]);
         }
         // ============================================================
         // КОНЕЦ СЕРВЕРНОЙ ВАЛИДАЦИИ СЛОТА
@@ -505,7 +510,7 @@ if (!function_exists('csc_submit_form_handler')) {
         
         if ($min_order_amount > 0 && $final_total < $min_order_amount) {
             wp_send_json_error([
-                'message' => 'Минимальная сумма заказа: ' . number_format($min_order_amount, 0, '.', ' ') . ' ₽. Добавьте услуги.'
+                'message' => sprintf(__('Минимальная сумма заказа: %s ₽. Добавьте услуги.', 'csc'), number_format($min_order_amount, 0, '.', ' '))
             ]);
         }
         // ============================================================
@@ -533,7 +538,10 @@ if (!function_exists('csc_submit_form_handler')) {
         $status = ($payment_method === 'sbp') ? CSC_STATUS_AWAITING_PAYMENT : CSC_STATUS_SEARCHING;
         
         // Генерация auth_token для cookie-авторизации в ЛК
+        // ИСПРАВЛЕНО (защита ЛК): в БД/option хранится только SHA-256 хэш токена;
+        // открытый токен однократно возвращается клиенту и больше нигде не сохраняется.
         $auth_token = wp_generate_password(32, false);
+        $auth_token_hash = function_exists('csc_hash_token') ? csc_hash_token($auth_token) : $auth_token;
         
         // === НОВОЕ: Автоопределение города по поддомену ===
         $detected_city = function_exists('csc_detect_current_city') 
@@ -576,7 +584,7 @@ if (!function_exists('csc_submit_form_handler')) {
                 // Адрес не найден — логируем, но не блокируем заказ.
                 // Маршрутизация пойдёт без фильтра по радиусу.
                 $geocode_status = 'failed';
-                error_log('[CSC_GEOCODE] Адрес клиента не геокодирован: ' . $address . ' | для геокодера: ' . $address_for_geocode);
+                csc_log('Адрес клиента не геокодирован: ' . $address . ' | для геокодера: ' . $address_for_geocode);
             }
         } else {
             $geocode_status = empty($address) ? 'empty' : 'no_geocoder';
@@ -614,7 +622,7 @@ if (!function_exists('csc_submit_form_handler')) {
             'completion_files'    => [],
             'master_id'           => $assigned_master_id,
             'status'              => $status,
-            'auth_token'          => $auth_token,
+            'auth_token'          => $auth_token_hash, // Хэш SHA-256 (защита ЛК)
             'created_at'          => current_time('mysql'),
         ];
 
@@ -625,6 +633,10 @@ if (!function_exists('csc_submit_form_handler')) {
             $all_orders = get_option('csc_all_orders', []);
             $all_orders[$order_number] = $order_data;
             update_option('csc_all_orders', $all_orders, false);
+            // Инвалидация кэша заказов при фолбэк-записи мимо csc_save_order
+            if (function_exists('csc_cache_delete_orders')) {
+                csc_cache_delete_orders();
+            }
         }
         
         do_action('csc_order_created', $order_number, $order_data);
@@ -639,8 +651,7 @@ if (!function_exists('csc_submit_form_handler')) {
                 $status,
                 'customer',
                 $phone,
-                'Создание заявки клиентом через калькулятор'
-            );
+                'Создание заявки клиентом через калькулятор');
         }
         // ============================================================
         // КОНЕЦ ЛОГИРОВАНИЯ ИСТОРИИ
@@ -723,7 +734,7 @@ if (!function_exists('csc_submit_form_handler')) {
         // 10. ФОРМИРОВАНИЕ ОТВЕТА В БРАУЗЕР
         $response = [
             'success' => true,
-            'message' => 'Ваша заявка передана диспетчеру!',
+            'message' => __('Ваша заявка передана диспетчеру!', 'csc'),
             'order_number' => $order_number,
             'receipt_data' => $receipt_html,
             'auth_token' => $auth_token
@@ -758,21 +769,30 @@ if (!function_exists('csc_get_user_orders_handler')) {
         $auth_token = sanitize_text_field($_POST['auth_token'] ?? '');
         
         if (!$phone) {
-            wp_send_json_error(['message' => 'Введите телефон']);
+            wp_send_json_error(['message' => __('Введите телефон', 'csc')]);
         }
-        
-        // Получаем все заказы
-        $all = function_exists('csc_get_all_orders') ? csc_get_all_orders() : get_option('csc_all_orders', []);
+
+        // ИСПРАВЛЕНО: подключён лимит попыток входа против подбора телефона/заявки/token.
+        // 5 попыток на номер за 15 минут (функция была определена, но не вызывалась).
+        if (function_exists('csc_check_login_rate_limit') && !csc_check_login_rate_limit($phone)) {
+            wp_send_json_error(['message' => 'Слишком много попыток входа. Повторите через 15 минут.']);
+        }
+
+        // ОПТИМИЗАЦИЯ (Кэш заказов): не тянем весь список — поиск по номеру
+        // заявки идёт по первичному индексу order_number (csc_get_order),
+        // список заявок телефона — по idx_phone_created (csc_get_orders_by_phone).
         $response_token = '';
         $user_orders = [];
         
         // === НОВАЯ ЛОГИКА: Поиск по номеру заявки ИЛИ по телефону за 6 месяцев ===
         if ($order_number) {
             // Поиск конкретной заявки
-            $target = $all[$order_number] ?? null;
+            $target = function_exists('csc_get_order')
+                ? csc_get_order($order_number)
+                : ((function_exists('csc_get_all_orders') ? csc_get_all_orders() : get_option('csc_all_orders', []))[$order_number] ?? null);
             
             if (!$target) {
-                wp_send_json_error(['message' => 'УПС! Заявка не найдена']);
+                wp_send_json_error(['message' => __('УПС! Заявка не найдена', 'csc')]);
             }
             
             $target_phone = function_exists('csc_normalize_phone') 
@@ -780,54 +800,93 @@ if (!function_exists('csc_get_user_orders_handler')) {
                 : ($target['phone'] ?? '');
             
             if ($target_phone !== $phone) {
-                wp_send_json_error(['message' => 'УПС! Заявка не найдена']);
+                wp_send_json_error(['message' => __('УПС! Заявка не найдена', 'csc')]);
             }
             
-            $response_token = $target['auth_token'] ?? '';
+            // ИСПРАВЛЕНО (защита ЛК): вход по паре «телефон + номер заявки».
+            // Токен из формы сверяется с stored-хэшем (SHA-256, с ленивой
+            // миграцией legacy). При отсутствии/несовпадении токена доступ всё
+            // равно разрешён (это и есть заявленный вход по телефону+номеру),
+            // но клиент получает НОВЫЙ токен сессии вместо секрета из URL.
+            $stored = $target['auth_token'] ?? '';
+            $token_ok = ($auth_token !== '' && $stored !== '' && function_exists('csc_verify_token'))
+                ? csc_verify_token($auth_token, $stored, function ($new_hash) use ($order_number) {
+                    if (function_exists('csc_update_order_auth_token')) {
+                        csc_update_order_auth_token($order_number, $new_hash);
+                    }
+                })
+                : false;
+
+            if ($token_ok) {
+                $response_token = $auth_token; // переиспользуем предъявленный валидный токен
+            } elseif (function_exists('csc_issue_customer_session_token')) {
+                $response_token = csc_issue_customer_session_token($order_number, $phone);
+            } else {
+                $response_token = ($auth_token !== '') ? $auth_token : '';
+            }
             $user_orders = [$order_number => $target];
             
         } else {
-            // Поиск всех заявок за последние 6 месяцев по телефону
-            $six_months_ago = strtotime('-6 months');
-            
-            foreach ($all as $num => $order) {
-                $order_phone = function_exists('csc_normalize_phone') 
-                    ? csc_normalize_phone($order['phone'] ?? '')
-                    : ($order['phone'] ?? '');
-                
-                if ($order_phone !== $phone) continue;
-                
-                // Проверяем дату создания
-                $created_at = strtotime($order['created_at'] ?? '');
-                if ($created_at && $created_at < $six_months_ago) continue;
-                
-                $user_orders[$num] = $order;
+            // Поиск всех заявок за последние 6 месяцев по телефону — через SQL
+            // с индексом idx_phone_created (вместо полного скана кэша в PHP).
+            if (function_exists('csc_get_orders_by_phone')) {
+                $user_orders = csc_get_orders_by_phone($phone, 6);
+            } else {
+                $all = function_exists('csc_get_all_orders') ? csc_get_all_orders() : get_option('csc_all_orders', []);
+                $six_months_ago = strtotime('-6 months');
+
+                foreach ($all as $num => $order) {
+                    $order_phone = function_exists('csc_normalize_phone')
+                        ? csc_normalize_phone($order['phone'] ?? '')
+                        : ($order['phone'] ?? '');
+
+                    if ($order_phone !== $phone) continue;
+
+                    $created_at = strtotime($order['created_at'] ?? '');
+                    if ($created_at && $created_at < $six_months_ago) continue;
+
+                    $user_orders[$num] = $order;
+                }
             }
-            
-            // ИСПРАВЛЕНО: Если есть auth_token, проверяем его (всегда, а не только когда пусто)
+
+            // ИСПРАВЛЕНО: Если есть auth_token, проверяем его (всегда, а не только когда пусто).
+            // Сверка выполняется только по заказам клиента (уже выбраны по индексу),
+            // а не по всей таблице.
             if ($auth_token) {
-                $token_orders = array_filter($all, function($o) use ($phone, $auth_token) {
-                    $o_phone = function_exists('csc_normalize_phone') 
-                        ? csc_normalize_phone($o['phone'] ?? '')
-                        : ($o['phone'] ?? '');
-                    
-                    if ($o_phone !== $phone) return false;
-                    
+                foreach ($user_orders as $num => $o) {
                     $order_token = $o['auth_token'] ?? '';
-                    if (empty($order_token)) return false;
-                    
-                    return hash_equals($order_token, $auth_token);
-                });
-                
-                // Объединяем результаты (уникальные заказы)
-                $user_orders = array_unique(array_merge($user_orders, $token_orders), SORT_REGULAR);
+                    if (empty($order_token)) continue;
+
+                    // ИСПРАВЛЕНО: в хранилище лежит SHA-256 хэш; сверка через csc_verify_token
+                    // (поддерживает и старые открытые значения — ленивая миграция не меняет исходный массив)
+                    $ok = function_exists('csc_verify_token')
+                        ? csc_verify_token($auth_token, $order_token)
+                        : hash_equals($order_token, $auth_token);
+                    if (!$ok) {
+                        unset($user_orders[$num]);
+                    }
+                }
             }
             
             if (empty($user_orders)) {
-                wp_send_json_error(['message' => 'Заявки не найдены за последние 6 месяцев']);
+                wp_send_json_error(['message' => __('Заявки не найдены за последние 6 месяцев', 'csc')]);
             }
             
-            $response_token = $auth_token ?: (reset($user_orders)['auth_token'] ?? '');
+            if ($auth_token !== '') {
+                $response_token = $auth_token;
+            } elseif (function_exists('csc_issue_customer_session_token')) {
+                // Выдаём токен сессии по первому (самому свежему) заказу телефона —
+                // для последующих AJAX-операций ЛК (отмена, отзывы, уведомления)
+                $first_key = (string) array_key_first($user_orders);
+                $response_token = csc_issue_customer_session_token($first_key, $phone);
+            } else {
+                $response_token = '';
+            }
+        }
+
+        // Успешный вход — сбрасываем счётчик попыток
+        if (function_exists('csc_reset_login_rate_limit')) {
+            csc_reset_login_rate_limit($phone);
         }
         
         // Сортировка по дате создания (новые первые)
@@ -839,10 +898,14 @@ if (!function_exists('csc_get_user_orders_handler')) {
         
         foreach ($user_orders as $num => $order) {
             $status = mb_strtolower($order['status'] ?? '');
-            $is_active = !empty($order['cancelled_at']) || 
-                         $status === CSC_STATUS_CANCELLED || 
-                         $status === CSC_STATUS_COMPLETED || 
-                         $status === CSC_STATUS_COMPLETED ? false : true;
+            // Закрытые заявки (отменённые/завершённые) не активны.
+            // Исправлено: дубль CSC_STATUS_COMPLETED и приоритет тернарного оператора,
+            // из-за которых отменённые заявки ошибочно считались активными.
+            $is_active = !(
+                !empty($order['cancelled_at']) ||
+                $status === CSC_STATUS_CANCELLED ||
+                $status === CSC_STATUS_COMPLETED
+            );
             
             $order['is_active'] = $is_active;
             $formatted_orders[] = $order;
@@ -884,7 +947,7 @@ add_action('wp_ajax_nopriv_csc_cancel_order', 'csc_cancel_order_handler');
 if (!function_exists('csc_cancel_order_handler')) {
     function csc_cancel_order_handler() {
         if (!check_ajax_referer('csc_cabinet_nonce', '_wpnonce', false)) {
-            wp_send_json_error(['message' => 'Ошибка безопасности. Обновите страницу.']);
+            wp_send_json_error(['message' => __('Ошибка безопасности. Обновите страницу.', 'csc')]);
         }
         
         $num = sanitize_text_field($_POST['order_number'] ?? '');
@@ -902,7 +965,7 @@ if (!function_exists('csc_cancel_order_handler')) {
         }
         
         if (!$order) {
-            wp_send_json_error(['message' => 'Заявка не найдена']);
+            wp_send_json_error(['message' => __('Заявка не найдена', 'csc')]);
             return;
         }
         
@@ -911,12 +974,12 @@ if (!function_exists('csc_cancel_order_handler')) {
             : ($order['phone'] ?? '');
         
         if (empty($phone) || $order_phone !== $phone) {
-            wp_send_json_error(['message' => 'Нет доступа к этой заявке']);
+            wp_send_json_error(['message' => __('Нет доступа к этой заявке', 'csc')]);
             return;
         }
         
         if (($order['status'] ?? '') === CSC_STATUS_CANCELLED) {
-            wp_send_json_error(['message' => 'Заказ уже отменен']);
+            wp_send_json_error(['message' => __('Заказ уже отменен', 'csc')]);
             return;
         }
 
@@ -935,6 +998,10 @@ if (!function_exists('csc_cancel_order_handler')) {
             $all = get_option('csc_all_orders', []);
             $all[$num] = $order;
             update_option('csc_all_orders', $all, false);
+            // Инвалидация кэша заказов при фолбэк-записи мимо csc_update_order
+            if (function_exists('csc_cache_delete_orders')) {
+                csc_cache_delete_orders();
+            }
         }
 
         // ============================================================
@@ -993,9 +1060,17 @@ if (!function_exists('csc_cancel_order_handler')) {
             }
             
             if ($master_chat) {
-                $dash_token = $m_list[$master_id]['dashboard_token'] ?? '';
-                $dash_url = home_url("/?csc_master_dashboard=1&mid={$master_id}&token={$dash_token}");
-                $cancel_msg .= "\n📲 <a href='{$dash_url}'>Перейти в кабинет</a>";
+                // ИСПРАВЛЕНО (SHA-256): в хранилище лежит только хэш dashboard_token —
+                // в Telegram-ссылку подставляется одноразовый входной креденшел.
+                $dash_token = function_exists('csc_issue_master_login_token')
+                    ? csc_issue_master_login_token($master_id, $m_list)
+                    : '';
+                if ($dash_token !== '') {
+                    $dash_url = home_url("/?csc_master_dashboard=1&mid={$master_id}&token=" . urlencode($dash_token));
+                    $cancel_msg .= "\n📲 <a href='{$dash_url}'>Перейти в кабинет</a>";
+                } else {
+                    $cancel_msg .= "\n📲 Кабинет: " . home_url('/?csc_master_dashboard=1');
+                }
                 
                 wp_remote_post("https://api.telegram.org/bot{$tg_token}/sendMessage", [
                     'body' => ['chat_id' => $master_chat, 'text' => $cancel_msg, 'parse_mode' => 'HTML']
@@ -1018,7 +1093,7 @@ if (!function_exists('csc_cancel_order_handler')) {
             }
         }
         
-        wp_send_json_success(['message' => 'Отменено']);
+        wp_send_json_success(['message' => __('Отменено', 'csc')]);
     }
 }
 
@@ -1092,11 +1167,11 @@ if (!function_exists('csc_get_analytics_data_handler')) {
         // 1. ПРОВЕРКИ ДОСТУПА И БЕЗОПАСНОСТИ
         // ============================================================
         if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => 'Доступ запрещен']);
+            wp_send_json_error(['message' => __('Доступ запрещен', 'csc')]);
         }
         
         if (!check_ajax_referer('csc_analytics_nonce', '_ajax_nonce', false)) {
-            wp_send_json_error(['message' => 'Ошибка безопасности (nonce)']);
+            wp_send_json_error(['message' => __('Ошибка безопасности (nonce)', 'csc')]);
         }
 
         // ============================================================
@@ -1110,23 +1185,23 @@ if (!function_exists('csc_get_analytics_data_handler')) {
         // Строгая проверка формата YYYY-MM-DD
         if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $start_date) ||
             !preg_match('/^\d{4}-\d{2}-\d{2}$/', $end_date)) {
-            wp_send_json_error(['message' => 'Некорректный формат даты (ожидается YYYY-MM-DD)']);
+            wp_send_json_error(['message' => __('Некорректный формат даты (ожидается YYYY-MM-DD)', 'csc')]);
         }
 
         // Проверка логики диапазона
         if (strtotime($start_date) > strtotime($end_date)) {
-            wp_send_json_error(['message' => 'Дата начала должна быть меньше или равна дате окончания']);
+            wp_send_json_error(['message' => __('Дата начала должна быть меньше или равна дате окончания', 'csc')]);
         }
 
         // Ограничение периода 5 годами (защита от OOM)
         if ((strtotime($end_date) - strtotime($start_date)) > (5 * 365 * 24 * 60 * 60)) {
-            wp_send_json_error(['message' => 'Максимальный период — 5 лет']);
+            wp_send_json_error(['message' => __('Максимальный период — 5 лет', 'csc')]);
         }
 
         // Допустимые значения фильтров (whitelist)
         $allowed_statuses = ['all', CSC_STATUS_COMPLETED, CSC_STATUS_PROCESSING, CSC_STATUS_PENDING, CSC_STATUS_CANCELLED];
         if (!in_array($status_filter, $allowed_statuses, true)) {
-            wp_send_json_error(['message' => 'Некорректный статус фильтра']);
+            wp_send_json_error(['message' => __('Некорректный статус фильтра', 'csc')]);
         }
 
         // ============================================================
@@ -1384,23 +1459,23 @@ add_action('wp_ajax_csc_bulk_update_status', 'csc_bulk_update_status_handler');
 if (!function_exists('csc_bulk_update_status_handler')) {
     function csc_bulk_update_status_handler() {
         if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => 'Доступ запрещен']);
+            wp_send_json_error(['message' => __('Доступ запрещен', 'csc')]);
         }
         
         if (!check_ajax_referer('csc_bulk_nonce', '_ajax_nonce', false)) {
-            wp_send_json_error(['message' => 'Ошибка безопасности (nonce)']);
+            wp_send_json_error(['message' => __('Ошибка безопасности (nonce)', 'csc')]);
         }
         
         $order_numbers = array_map('sanitize_text_field', $_POST['order_numbers'] ?? []);
         $new_status = sanitize_text_field($_POST['new_status'] ?? '');
         
         if (empty($order_numbers) || empty($new_status)) {
-            wp_send_json_error(['message' => 'Не выбраны заказы или статус']);
+            wp_send_json_error(['message' => __('Не выбраны заказы или статус', 'csc')]);
         }
         
-        $valid_statuses = [CSC_STATUS_PENDING, CSC_STATUS_PROCESSING, CSC_STATUS_COMPLETED, CSC_STATUS_CANCELLED];
+        $valid_statuses = [CSC_STATUS_PENDING, CSC_STATUS_SEARCHING, CSC_STATUS_AWAITING_PAYMENT, CSC_STATUS_PROCESSING, CSC_STATUS_COMPLETED, CSC_STATUS_CANCELLED];
         if (!in_array($new_status, $valid_statuses)) {
-            wp_send_json_error(['message' => 'Недопустимый статус']);
+            wp_send_json_error(['message' => __('Недопустимый статус', 'csc')]);
         }
         
         // ИСПРАВЛЕНО: Использование унифицированной функции чтения
@@ -1419,6 +1494,12 @@ if (!function_exists('csc_bulk_update_status_handler')) {
                 if ($new_status === CSC_STATUS_CANCELLED) {
                     $all_orders[$num]['routing_status'] = 'cancelled';
                     $all_orders[$num]['cancelled_at'] = current_time('mysql');
+                    // Зависшие заказы «Ожидает оплаты»: при ручной отмене помечаем платёж как
+                    // неоплаченный, чтобы крон-проверка зависших платежей больше не трогала заказ.
+                    if ($old_status === CSC_STATUS_AWAITING_PAYMENT && in_array($all_orders[$num]['payment_status'] ?? '', ['pending', ''], true)) {
+                        $all_orders[$num]['payment_status'] = 'unpaid';
+                        $all_orders[$num]['cancel_reason'] = __('Отменено администратором (зависший заказ в ожидании оплаты)', 'csc');
+                    }
                 }
 
                 // ИСПРАВЛЕНО: Сохраняем измененный заказ через унифицированную функцию
@@ -1492,7 +1573,7 @@ if (!function_exists('csc_bulk_update_status_handler')) {
             }
             wp_send_json_success(['message' => "Обновлено заказов: $updated"]);
         } else {
-            wp_send_json_error(['message' => 'Ни один заказ не обновлен']);
+            wp_send_json_error(['message' => __('Ни один заказ не обновлен', 'csc')]);
         }
     }
 }
@@ -1509,7 +1590,7 @@ if (!function_exists('csc_ajax_push_subscribe')) {
         // Кабинет мастера использует token-авторизацию и может не передавать nonce.
         if (!empty($_POST['_wpnonce'])) {
             if (!check_ajax_referer('csc_cabinet_nonce', '_wpnonce', false)) {
-                wp_send_json_error(['message' => 'Ошибка безопасности. Обновите страницу.']);
+                wp_send_json_error(['message' => __('Ошибка безопасности. Обновите страницу.', 'csc')]);
             }
         }
         
@@ -1548,6 +1629,23 @@ if (!function_exists('csc_ajax_push_subscribe')) {
     }
 }
 
+// AJAX: проверка наличия активной push-подписки (для синхронизации состояния
+// кнопки подписки в калькуляторе после перерисовки формы).
+add_action('wp_ajax_nopriv_csc_push_status', 'csc_ajax_push_status');
+add_action('wp_ajax_csc_push_status', 'csc_ajax_push_status');
+
+if (!function_exists('csc_ajax_push_status')) {
+    function csc_ajax_push_status() {
+        $user_type = sanitize_key($_POST['user_type'] ?? 'customer');
+        $user_id   = sanitize_text_field($_POST['user_id'] ?? '');
+        if (!$user_id) {
+            wp_send_json_error(['message' => 'Missing params']);
+        }
+        $subs = get_option("csc_push_subs_{$user_type}_{$user_id}", []);
+        wp_send_json_success(['subscribed' => !empty($subs)]);
+    }
+}
+
 add_action('wp_ajax_nopriv_csc_mark_read', 'csc_ajax_mark_read');
 add_action('wp_ajax_csc_mark_read', 'csc_ajax_mark_read');
 
@@ -1557,7 +1655,7 @@ if (!function_exists('csc_ajax_mark_read')) {
         // Кабинет мастера вызывает этот эндпоинт без nonce.
         if (!empty($_POST['_wpnonce'])) {
             if (!check_ajax_referer('csc_cabinet_nonce', '_wpnonce', false)) {
-                wp_send_json_error(['message' => 'Ошибка безопасности. Обновите страницу.']);
+                wp_send_json_error(['message' => __('Ошибка безопасности. Обновите страницу.', 'csc')]);
             }
         }
         
@@ -1584,11 +1682,11 @@ add_action('wp_ajax_csc_get_order_notifications', 'csc_ajax_get_notifications');
 if (!function_exists('csc_ajax_get_notifications')) {
     function csc_ajax_get_notifications() {
         if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => 'Доступ запрещен']);
+            wp_send_json_error(['message' => __('Доступ запрещен', 'csc')]);
         }
         
         if (!check_ajax_referer('csc_order_logs_nonce', '_wpnonce', false)) {
-            wp_send_json_error(['message' => 'Ошибка безопасности']);
+            wp_send_json_error(['message' => __('Ошибка безопасности', 'csc')]);
         }
         
         $order = sanitize_text_field($_POST['order_number'] ?? '');
@@ -1639,7 +1737,7 @@ add_action('wp_ajax_csc_get_customer_notifications', 'csc_get_customer_notificat
 if (!function_exists('csc_get_customer_notifications_ajax')) {
     function csc_get_customer_notifications_ajax() {
         if (!check_ajax_referer('csc_cabinet_nonce', '_wpnonce', false)) {
-            wp_send_json_error(['message' => 'Ошибка безопасности']);
+            wp_send_json_error(['message' => __('Ошибка безопасности', 'csc')]);
         }
         
         $phone = sanitize_text_field($_POST['phone'] ?? '');
@@ -1648,7 +1746,7 @@ if (!function_exists('csc_get_customer_notifications_ajax')) {
             : preg_replace('/\D/', '', $phone);
         
         if (empty($phone_norm)) {
-            wp_send_json_error(['message' => 'Телефон не указан']);
+            wp_send_json_error(['message' => __('Телефон не указан', 'csc')]);
         }
         
         $option_key = 'csc_in_cabinet_customer_' . $phone_norm;
@@ -1688,7 +1786,7 @@ add_action('wp_ajax_csc_mark_customer_notifications_read', 'csc_mark_customer_no
 if (!function_exists('csc_mark_customer_notifications_read_ajax')) {
     function csc_mark_customer_notifications_read_ajax() {
         if (!check_ajax_referer('csc_cabinet_nonce', '_wpnonce', false)) {
-            wp_send_json_error(['message' => 'Ошибка безопасности']);
+            wp_send_json_error(['message' => __('Ошибка безопасности', 'csc')]);
         }
         
         $phone = sanitize_text_field($_POST['phone'] ?? '');

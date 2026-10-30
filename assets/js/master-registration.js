@@ -6,6 +6,17 @@ Version: 9.3 (финальная: all-in-one, все правки собраны
 'use strict';
 
 const CONFIG = window.CSC_REGISTRATION_CONFIG || {};
+
+// i18n: доступ к серверному словарю переводов (window.CSC_I18N, формируется
+// в PHP csc_js_strings_registration()). Фолбэк — оригинальная русская строка.
+window.cscI18n = window.cscI18n || {
+    t: function (key, fallback) {
+        var d = (typeof CSC_I18N !== 'undefined' && CSC_I18N) ? CSC_I18N : {};
+        return (d[key] !== undefined && d[key] !== null) ? d[key] : (fallback !== undefined ? fallback : key);
+    }
+};
+const __c = window.cscI18n.t;
+
 let currentStep = 1;
 let registrationMap = null;
 let registrationMarker = null;
@@ -85,11 +96,11 @@ function validateStep(step) {
         const agreement = document.getElementById('csc-accept-agreement');
         const city = document.getElementById('csc-reg-city');
         if (!agreement || !agreement.checked) {
-            showValidationError('Необходимо принять условия соглашения');
+            showValidationError(__c('agree_required', 'Необходимо принять условия соглашения'));
             return false;
         }
         if (!city || !city.value) {
-            showValidationError('Выберите город');
+            showValidationError(__c('select_city', 'Выберите город'));
             return false;
         }
         return true;
@@ -103,12 +114,12 @@ function validateStep(step) {
         const specializations = document.getElementById('csc-reg-specializations');
 
         if (!name || !name.value.trim()) {
-            showValidationError('Укажите ФИО');
+            showValidationError(__c('name_required', 'Укажите ФИО'));
             if (name) name.focus();
             return false;
         }
         if (!phone || !phone.value.trim()) {
-            showValidationError('Укажите телефон');
+            showValidationError(__c('phone_required', 'Укажите телефон'));
             if (phone) phone.focus();
             return false;
         }
@@ -116,13 +127,13 @@ function validateStep(step) {
         const isEmailValid = email && email.value.trim() && 
                          (typeof email.checkValidity !== 'function' || email.checkValidity());
         if (!email || !isEmailValid) {
-            showValidationError('Укажите корректный email');
+            showValidationError(__c('email_invalid', 'Укажите корректный email'));
             if (email) email.focus();
             return false;
         }
         
         if (!specializations || specializations.selectedOptions.length === 0) {
-            showValidationError('Выберите хотя бы одну специализацию');
+            showValidationError(__c('spec_required', 'Выберите хотя бы одну специализацию'));
             return false;
         }
 
@@ -134,12 +145,12 @@ function validateStep(step) {
         const lng = parseFloat(lngInput ? lngInput.value : '');
 
         if (!addressInput || !addressInput.value.trim()) {
-            showValidationError('Укажите адрес проживания / точку выезда');
+            showValidationError(__c('address_required', 'Укажите адрес проживания / точку выезда'));
             if (addressInput) addressInput.focus();
             return false;
         }
         if (isNaN(lat) || isNaN(lng) || (lat === 0 && lng === 0)) {
-            showValidationError('Укажите точку выезда на карте. Нажмите «Найти на карте» или поставьте маркер вручную.');
+            showValidationError(__c('map_point_required', 'Укажите точку выезда на карте. Нажмите «Найти на карте» или поставьте маркер вручную.'));
             return false;
         }
 
@@ -150,7 +161,7 @@ function validateStep(step) {
     if (step === 3) {
         const docInput = document.getElementById('csc-reg-document');
         if (!docInput || !docInput.files || !docInput.files.length) {
-            showValidationError('Загрузите документ');
+            showValidationError(__c('doc_required', 'Загрузите документ'));
             return false;
         }
         return true;
@@ -161,18 +172,18 @@ function validateStep(step) {
         const selectedDays = document.querySelectorAll('.csc-schedule-day-toggle:checked');
         
         if (selectedDays.length === 0) {
-            showValidationError('Выберите хотя бы один рабочий день');
+            showValidationError(__c('day_required', 'Выберите хотя бы один рабочий день'));
             return false;
         }
         
         const dayNames = {
-            monday: 'Понедельник',
-            tuesday: 'Вторник',
-            wednesday: 'Среда',
-            thursday: 'Четверг',
-            friday: 'Пятница',
-            saturday: 'Суббота',
-            sunday: 'Воскресенье'
+            monday: __c('monday', 'Понедельник'),
+            tuesday: __c('tuesday', 'Вторник'),
+            wednesday: __c('wednesday', 'Среда'),
+            thursday: __c('thursday', 'Четверг'),
+            friday: __c('friday', 'Пятница'),
+            saturday: __c('saturday', 'Суббота'),
+            sunday: __c('sunday', 'Воскресенье')
         };
         
         for (let i = 0; i < selectedDays.length; i++) {
@@ -184,7 +195,7 @@ function validateStep(step) {
             const dayKey = nameMatch ? nameMatch[1] : null;
             
             if (!dayKey) {
-                showValidationError('Не удалось определить день недели в расписании');
+                showValidationError(__c('day_unknown', 'Не удалось определить день недели в расписании'));
                 return false;
             }
             
@@ -193,7 +204,7 @@ function validateStep(step) {
             const toInput = dayRow ? dayRow.querySelector('input[name="schedule[' + dayKey + '][to]"]') : null;
             
             if (!fromInput || !toInput || !fromInput.value || !toInput.value) {
-                showValidationError('Укажите время работы в день: ' + (dayNames[dayKey] || dayKey));
+                showValidationError(__c('day_time_required', 'Укажите время работы в день:') + ' ' + (dayNames[dayKey] || dayKey));
                 return false;
             }
             
@@ -204,14 +215,14 @@ function validateStep(step) {
             const duration = toMinutes - fromMinutes;
             
             if (duration <= 0) {
-                showValidationError((dayNames[dayKey] || dayKey) + ': время окончания должно быть позже времени начала');
+                showValidationError((dayNames[dayKey] || dayKey) + ': ' + __c('day_time_order', 'время окончания должно быть позже времени начала'));
                 return false;
             }
             
             if (duration < 240) {
                 const hours = Math.floor(duration / 60);
                 const minutes = duration % 60;
-                showValidationError((dayNames[dayKey] || dayKey) + ': минимальная продолжительность рабочего дня — 4 часа. Сейчас: ' + hours + ' ч ' + minutes + ' мин');
+                showValidationError((dayNames[dayKey] || dayKey) + ': ' + __c('day_min_hours', 'минимальная продолжительность рабочего дня — 4 часа. Сейчас:') + ' ' + hours + ' ' + __c('hours_short', 'ч') + ' ' + minutes + ' ' + __c('minutes_short', 'мин'));
                 return false;
             }
         }
@@ -237,7 +248,7 @@ function initFileUploads() {
             if (this.files.length) {
                 const reader = new FileReader();
                 reader.onload = (e) => {
-                    preview.innerHTML = '<img src="' + e.target.result + '" alt="Фото" style="max-width:200px;max-height:200px;border-radius:8px;">';
+                    preview.innerHTML = '<img src="' + e.target.result + '" alt="' + __c('alt_photo', 'Фото') + '" style="max-width:200px;max-height:200px;border-radius:8px;">';
                 };
                 reader.readAsDataURL(this.files[0]);
             }
@@ -252,7 +263,7 @@ function initFileUploads() {
             if (this.files.length) {
                 const reader = new FileReader();
                 reader.onload = (e) => {
-                    preview.innerHTML = '<img src="' + e.target.result + '" alt="Документ" style="max-width:200px;max-height:200px;border-radius:8px;">';
+                    preview.innerHTML = '<img src="' + e.target.result + '" alt="' + __c('alt_doc', 'Документ') + '" style="max-width:200px;max-height:200px;border-radius:8px;">';
                 };
                 reader.readAsDataURL(this.files[0]);
             }
@@ -296,7 +307,7 @@ function initFormSubmit() {
         
         if (submitBtn) {
             submitBtn.disabled = true;
-            submitBtn.innerHTML = '<span class="csc-spinner"></span> Отправка...';
+            submitBtn.innerHTML = '<span class="csc-spinner"></span> ' + __c('sending', 'Отправка...');
         }
 
         const formData = new FormData(form);
@@ -309,7 +320,7 @@ function initFormSubmit() {
             });
 
             if (!response.ok) {
-                throw new Error('Ошибка сервера: ' + response.status);
+                throw new Error(__c('server_error', 'Ошибка сервера:') + ' ' + response.status);
             }
 
             const data = await response.json();
@@ -331,18 +342,18 @@ function initFormSubmit() {
                     }, 100);
                 }
             } else {
-                showValidationError(data.message || 'Ошибка при отправке');
+                showValidationError(data.message || __c('submit_error', 'Ошибка при отправке'));
                 if (submitBtn) {
                     submitBtn.disabled = false;
-                    submitBtn.innerHTML = 'Отправить заявку ✓';
+                    submitBtn.innerHTML = __c('submit', 'Отправить заявку') + ' ✓';
                 }
             }
         } catch (error) {
             console.error('[CSC_REG] Submit error:', error);
-            showValidationError('Ошибка сети. Проверьте подключение.');
+            showValidationError(__c('network_error2', 'Ошибка сети. Проверьте подключение.'));
             if (submitBtn) {
                 submitBtn.disabled = false;
-                submitBtn.innerHTML = 'Отправить заявку ✓';
+                submitBtn.innerHTML = __c('submit', 'Отправить заявку') + ' ✓';
             }
         }
     });
@@ -380,16 +391,21 @@ function loadLeafletDynamically(callback) {
         return;
     }
     
+    // Локальные копии Leaflet из assets плагина (fallback на unpkg, если конфиг не передан)
+    const cscCfg = (typeof CSC_REGISTRATION_CONFIG !== 'undefined') ? CSC_REGISTRATION_CONFIG : {};
+    const leafletCssUrl = cscCfg.leafletCss || 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+    const leafletJsUrl  = cscCfg.leafletJs  || 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+
     if (!document.getElementById('leaflet-css-dynamic')) {
         const css = document.createElement('link');
         css.id = 'leaflet-css-dynamic';
         css.rel = 'stylesheet';
-        css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+        css.href = leafletCssUrl;
         document.head.appendChild(css);
     }
     
     const script = document.createElement('script');
-    script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+    script.src = leafletJsUrl;
     script.onload = function() { callback(); };
     document.head.appendChild(script);
 }
@@ -422,7 +438,9 @@ function createMap() {
     if (!mapEl || mapInitialized) return;
     if (typeof L === 'undefined') return;
 
-    L.Icon.Default.prototype.options.imagePath = 'https://unpkg.com/leaflet@1.9.4/dist/images/';
+    const cscLeafletImg = ((typeof CSC_REGISTRATION_CONFIG !== 'undefined' && CSC_REGISTRATION_CONFIG.leafletImages) ? CSC_REGISTRATION_CONFIG.leafletImages : 'https://unpkg.com/leaflet@1.9.4/dist/images/');
+    window.CSC_LEAFLET_IMG = cscLeafletImg;
+    L.Icon.Default.prototype.options.imagePath = cscLeafletImg;
 
     const center = Array.isArray(CONFIG.mapCenter) && CONFIG.mapCenter.length === 2
         ? CONFIG.mapCenter
@@ -455,9 +473,9 @@ function createMap() {
         tileLayer.addTo(registrationMap);
 
         const customIcon = L.icon({
-            iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-            iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-            shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+            iconUrl: (window.CSC_LEAFLET_IMG || 'https://unpkg.com/leaflet@1.9.4/dist/images/') + 'marker-icon.png',
+            iconRetinaUrl: (window.CSC_LEAFLET_IMG || 'https://unpkg.com/leaflet@1.9.4/dist/images/') + 'marker-icon-2x.png',
+            shadowUrl: (window.CSC_LEAFLET_IMG || 'https://unpkg.com/leaflet@1.9.4/dist/images/') + 'marker-shadow.png',
             iconSize: [25, 41],
             iconAnchor: [12, 41],
             popupAnchor: [1, -34],
@@ -469,7 +487,7 @@ function createMap() {
 
         registrationMarker = L.marker(center, {
             draggable: true,
-            title: 'Точка выезда',
+            title: __c('departure_point', 'Точка выезда'),
             icon: customIcon
         }).addTo(registrationMap);
 
@@ -594,12 +612,12 @@ function checkZoneCapacity() {
                 warnEl.style.background = '#f0fdf4';
                 warnEl.style.borderColor = '#bbf7d0';
                 warnEl.style.color = '#166534';
-                warnEl.textContent = 'Зона свободна: занято ' + d.max_current + ' из ' + d.limit + ' мест.';
+                warnEl.textContent = __c('zone_free', 'Зона свободна: занято %1$s из %2$s мест.').replace('%1$s', d.max_current).replace('%2$s', d.limit);
             } else {
                 warnEl.style.background = '#fffbeb';
                 warnEl.style.borderColor = '#fde68a';
                 warnEl.style.color = '#92400e';
-                warnEl.textContent = '⚠ В этой зоне уже ' + d.max_current + ' мастеров при лимите ' + d.limit + '. Заявка будет отклонена — выберите другую точку выезда или уменьшите радиус.';
+                warnEl.textContent = __c('zone_full', '\u26a0 В этой зоне уже %1$s мастеров при лимите %2$s. Заявка будет отклонена \u2014 выберите другую точку выезда или уменьшите радиус.').replace('%1$s', d.max_current).replace('%2$s', d.limit);
             }
         })
         .catch(() => { warnEl.style.display = 'none'; });
@@ -615,14 +633,14 @@ function initGeocodeButton() {
     btn.addEventListener('click', async function() {
         const address = addressInput.value.trim();
         if (!address) {
-            showValidationError('Введите адрес для поиска на карте');
+            showValidationError(__c('address_for_search', 'Введите адрес для поиска на карте'));
             addressInput.focus();
             return;
         }
 
         const originalHtml = btn.innerHTML;
         btn.disabled = true;
-        btn.innerHTML = '<span class="csc-spinner"></span> Поиск...';
+        btn.innerHTML = '<span class="csc-spinner"></span> ' + __c('searching', 'Поиск...');
 
         const restUrl = CONFIG.restUrl || (window.location.origin + '/wp-json/csc/v1/');
 
@@ -635,7 +653,7 @@ function initGeocodeButton() {
                 body: formData,
             });
 
-            if (!response.ok) throw new Error('Ошибка сервера: ' + response.status);
+            if (!response.ok) throw new Error(__c('server_error', 'Ошибка сервера:') + ' ' + response.status);
 
             const data = await response.json();
 
@@ -651,7 +669,7 @@ function initGeocodeButton() {
                         return;
                     }
                     if (attempts > 30) {
-                        showValidationError('Карта не готова. Поставьте точку вручную.');
+                        showValidationError(__c('map_not_ready', 'Карта не готова. Поставьте точку вручную.'));
                         return;
                     }
                     setTimeout(() => waitForMap(callback, attempts + 1), 100);
@@ -675,11 +693,11 @@ function initGeocodeButton() {
                     }
                 });
             } else {
-                showValidationError((data.message || 'Адрес не найден') + '. Поставьте точку на карте вручную.');
+                showValidationError((data.message || __c('address_not_found', 'Адрес не найден')) + __c('manual_point_hint', '. Поставьте точку на карте вручную.'));
             }
         } catch (e) {
             console.error('[CSC_REG] Geocode error:', e);
-            showValidationError('Ошибка геокодирования.');
+            showValidationError(__c('geocode_error', 'Ошибка геокодирования.'));
         } finally {
             btn.disabled = false;
             btn.innerHTML = originalHtml;

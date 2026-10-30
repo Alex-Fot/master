@@ -1,49 +1,7 @@
-# === Системный мусор ОС ===
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-Thumbs.db
-ehthumbs.db
-Desktop.ini
-
-# === Редакторы / IDE ===
-.idea/
-.vscode/
-*.swp
-*.swo
-*.sublime-project
-*.sublime-workspace
-
-# === Логи и временные файлы ===
+*.mo
 *.log
-logs/
-tmp/
-temp/
-*.tmp
-*.temp
-nohup.out
 
-# === Резервные копии и артефакты слияния/патчей ===
-*.bak
-*.backup
-*.orig
-*.rej
-*.diff
-*~
-
-# === Архивы сборки дистрибутива (не хранить в репозитории) ===
-*.zip
-*.tar.gz
+# build artifacts (не должны попадать в репозиторий)
+*.patch
 *.bundle
-
-# === Node (если появится инструмент сборки переводов/ассетов) ===
-node_modules/
-package-lock.json
-
-# === WordPress-специфика: локальные артефакты, не относящиеся к плагину ===
-wp-cli.local.yml
-.phpunit.result.cache
-
-
+csc-plugin-main.tar.gz

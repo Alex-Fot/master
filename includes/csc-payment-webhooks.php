@@ -680,7 +680,7 @@ if (!function_exists('csc_webhook_log')) {
 
         // Логирование в error_log для продакшена
         if (defined('WP_DEBUG') && WP_DEBUG) {
-            error_log('[CSC_WEBHOOK] ' . json_encode($log_entry, JSON_UNESCAPED_UNICODE));
+            csc_log(json_encode($log_entry, JSON_UNESCAPED_UNICODE), 'debug', 'WEBHOOK');
         }
 
         // Сохранение в опцию для отладки в админке (последние 200 записей)
