@@ -901,7 +901,6 @@ if (!function_exists('csc_handle_master_orders')) {
                 CSC_STATUS_PENDING => 0, 
                 CSC_STATUS_AWAITING_PAYMENT => 0,
                 CSC_STATUS_PROCESSING => 1, 
-                CSC_STATUS_COMPLETED => 2, 
                 CSC_STATUS_COMPLETED => 2,
                 CSC_STATUS_CANCELLED => 3,
             ];

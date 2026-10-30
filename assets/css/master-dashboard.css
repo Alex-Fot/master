@@ -3378,3 +3378,56 @@
    Версия: 4.1
    Всего разделов: 19 + доступность
 ============================================================ */
+/* ============================================================
+   20. ОБРАТНЫЙ ОТСЧЁТ ПРЕДЛОЧЕНИЯ (ожидающие заявки)
+============================================================ */
+.csc-order-countdown {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    padding: 4px 10px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #b45309;
+    background: #fef3c7;
+    border: 1px solid #fde68a;
+}
+.csc-order-countdown.csc-countdown-urgent {
+    color: #b91c1c;
+    background: #fee2e2;
+    border-color: #fecaca;
+    animation: csc-countdown-pulse 1s ease-in-out infinite;
+}
+.csc-order-countdown.csc-countdown-expired,
+.csc-modal-countdown.csc-countdown-expired {
+    color: #6b7280;
+    background: #f3f4f6;
+    border-color: #e5e7eb;
+    animation: none;
+}
+.csc-modal-countdown {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin: 10px 0;
+    padding: 8px 14px;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 700;
+    color: #b45309;
+    background: #fef3c7;
+    border: 1px solid #fde68a;
+}
+.csc-modal-countdown.csc-countdown-urgent {
+    color: #b91c1c;
+    background: #fee2e2;
+    border-color: #fecaca;
+    animation: csc-countdown-pulse 1s ease-in-out infinite;
+}
+@keyframes csc-countdown-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: .55; }
+}

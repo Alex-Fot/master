@@ -4,7 +4,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Custom Service Calculator 9.0\n"
 "Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/custom-service-calculator\n"
-"POT-Creation-Date: 2026-10-29T17:29:48+00:00\n"
+"POT-Creation-Date: 2026-10-30T21:57:29+00:00\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
@@ -72,6 +72,9 @@ msgid "В работе:"
 msgstr ""
 
 msgid "Время вышло или заказ забрал другой мастер."
+msgstr ""
+
+msgid "Время вышло — заявка передана дальше"
 msgstr ""
 
 msgid "Все уведомления удалены"
@@ -195,6 +198,9 @@ msgid "Заказ уже отменен"
 msgstr ""
 
 msgid "Заявка не найдена"
+msgstr ""
+
+msgid "Заявка не найдена — проверьте вкладку «Ожидают»"
 msgstr ""
 
 msgid "Заявки не найдены за последние 6 месяцев"
@@ -336,6 +342,9 @@ msgid "Отзывы клиентов появятся здесь после вы
 msgstr ""
 
 msgid "Отклонить"
+msgstr ""
+
+msgid "Отклониться"
 msgstr ""
 
 msgid "Открыть кабинет"
@@ -555,6 +564,9 @@ msgstr[1] ""
 msgstr[2] ""
 
 msgid "деактивировать"
+msgstr ""
+
+msgid "до передачи следующей"
 msgstr ""
 
 msgid "мастер"

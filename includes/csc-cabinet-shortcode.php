@@ -1172,6 +1172,39 @@ document.getElementById('csc-submit-review-btn').addEventListener('click', funct
     xhr.send(fd);
 });
 
+// ============================================================
+// ГЛУБОКАЯ ССЫЛКА: ?csc_open_order=NNN (из push-уведомления клиента)
+// Подставляем номер заявки в форму входа и автоматически ищем её.
+// Телефон взять неоткуда (push не хранит телефон) — просим ввести,
+// автоподача сработает только если пользователь уже вводил телефон
+// на этой странице ранее (значение поля сохранено в памяти формы).
+// ============================================================
+(function() {
+    const params = new URLSearchParams(window.location.search);
+    const openOrder = params.get('csc_open_order');
+    if (!openOrder) return;
+    const orderInput = document.getElementById('csc-cab-order');
+    const loginForm  = document.getElementById('csc-login-form');
+    if (!orderInput || !loginForm) return;
+    orderInput.value = openOrder;
+    // Прокручиваем к форме и подсвечиваем поле
+    orderInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    orderInput.focus();
+    const phoneInput = document.getElementById('csc-cab-phone');
+    if (phoneInput && phoneInput.value.trim()) {
+        // Телефон уже известен — сразу выполняем поиск заявки
+        setTimeout(function() {
+            if (typeof loginForm.requestSubmit === 'function') {
+                loginForm.requestSubmit();
+            } else {
+                loginForm.dispatchEvent(new Event('submit', { cancelable: true }));
+            }
+        }, 300);
+    } else if (typeof showToast === 'function') {
+        showToast('Введите телефон, чтобы открыть заявку ' + openOrder, 'info');
+    }
+})();
+
 }); // конец DOMContentLoaded
 </script>
 <?php
