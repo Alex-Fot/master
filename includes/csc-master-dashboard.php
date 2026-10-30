@@ -184,6 +184,10 @@ if (!function_exists('csc_render_master_dashboard')) {
             // переключится во вкладку «Ожидают» и откроет модалку этой заявки.
             'openOrder'      => !isset($_GET['open_order']) ? '' : sanitize_text_field(wp_unslash($_GET['open_order'])),
             // i18n: локализованные подписи статусов для инлайнового JS (getStatusLabel)
+            // Маршрутизация: длительность оффера (сек) — для обратного отсчёта
+            // «Принять/Отклониться» во вкладке «Ожидают».
+            'routingTimeout' => defined('CSC_ROUTING_TIMEOUT') ? intval(CSC_ROUTING_TIMEOUT) : 180,
+            'serverTime'     => time(),
             'statusLabels'   => function_exists('csc_status_labels_js') ? csc_status_labels_js() : [],
             // i18n: общий словарь строк интерфейса JS (cscI18n.t('key'))
             'i18n'           => function_exists('csc_js_strings_dashboard') ? csc_js_strings_dashboard() : [],
@@ -959,16 +963,62 @@ if (!function_exists('csc_handle_master_action')) {
             ? csc_normalize_phone($order['phone'] ?? '')
             : preg_replace('/[^0-9]/', '', $order['phone'] ?? '');
 
+        // Принять/отклонить оффер может ТОЛЬКО текущий кандидат (мастер ещё
+        // не назначен на заказ). Раньше проверка пропускала любого мастера,
+        // у которого в заказе заполнен master_id — т.е. после назначения
+        // «принять» можно было повторно, а отказ был вообще недоступен.
+        if (($action === 'accept' || $action === 'reject') && ($order['current_candidate'] ?? '') !== $mid) {
+            return new WP_Error('forbidden', 'Order is not offered to you', ['status' => 403]);
+        }
+
         // Обработка действий
         if ($action === 'accept') {
+            $tg_msg_id = $order['tg_message_id'] ?? null;
             $order['master_id'] = $mid;
+            $order['accepted_by'] = $mid;
             $order['status'] = CSC_STATUS_PROCESSING;
             $order['started_at'] = current_time('mysql');
             $order['routing_status'] = 'assigned';
             $order['current_candidate'] = null;
             $order['offer_time'] = null;
             $order['tg_message_id'] = null;
+
+            // Обновляем TG-сообщение оффера (иначе кнопка «Принять» в
+            // Telegram останется активной после принятия через ЛК).
+            if ($tg_msg_id && function_exists('csc_tg_send_with_retry')) {
+                $masters_for_tg = csc_get_masters_cached();
+                $tg_chat = $masters_for_tg[$mid]['tg_chat_id'] ?? '';
+                if (!empty($tg_chat)) {
+                    csc_tg_send_with_retry('editMessageText', [
+                        'chat_id'    => $tg_chat,
+                        'message_id' => $tg_msg_id,
+                        'text'       => "✅ <b>Заказ #" . esc_html($order_number) . " принят мастером через ЛК.</b>",
+                        'parse_mode' => 'HTML',
+                    ]);
+                }
+            }
             do_action('csc_order_status_changed', $order_number, $old_status, CSC_STATUS_PROCESSING, 'master', $mid, '');
+
+        } elseif ($action === 'reject') {
+            // ИСПРАВЛЕНО: явный отказ мастера во вкладке «Ожидают».
+            // Переквалификацию кандидата в rejected_by, штраф за отказ и
+            // передачу заявки следующему мастеру берёт на себя
+            // csc_route_order_to_next(..., 'rejected').
+            $order['routing_reject_reason'] = sanitize_text_field($request->get_param('reason') ?? '');
+            if (function_exists('csc_route_order_to_next')) {
+                csc_route_order_to_next($order_number, 'rejected');
+            } else {
+                $order['status'] = CSC_STATUS_SEARCHING;
+                $order['routing_status'] = 'searching';
+            }
+            // Маршрутизатор уже сохранил актуальный снимок заказа — перечитываем
+            // его, чтобы финальное сохранение ниже не перезаписало результат
+            // маршрутизации старыми данными из $all_orders.
+            if (function_exists('csc_get_order')) {
+                $fresh = csc_get_order($order_number);
+                if ($fresh) { $order = $fresh; }
+            }
+            do_action('csc_order_status_changed', $order_number, $old_status, $order['status'] ?? CSC_STATUS_SEARCHING, 'master', $mid, 'Отказ от заявки');
             
         } elseif ($action === 'complete') {
             $order['status'] = CSC_STATUS_COMPLETED;
@@ -995,7 +1045,9 @@ if (!function_exists('csc_handle_master_action')) {
             return new WP_Error('bad_request', 'Unknown action', ['status' => 400]);
         }
         
-        do_action('csc_master_completed_order', $order_number, $mid);
+        if ($action === 'complete') {
+            do_action('csc_master_completed_order', $order_number, $mid);
+        }
 
         // Сохранение заказа
         if (function_exists('csc_update_order')) {

@@ -736,7 +736,54 @@
                     if (order) openOrderModal(order);
                 });
             });
+            startOfferCountdowns();
         }
+    }
+
+    // Обратный отсчёт оффера: сколько секунд осталось текущему кандидату
+    // на «Принять/Отклонить» (маршрутизатор передаст заявку следующему мастеру
+    // по истечении CSC_MASTER_CONFIG.routingTimeout).
+    function getOfferRemainingSec(order) {
+        if (!order || !order.offer_time) return null;
+        const timeout = (window.CSC_MASTER_CONFIG && CSC_MASTER_CONFIG.routingTimeout) || 180;
+        const serverTime = (window.CSC_MASTER_CONFIG && CSC_MASTER_CONFIG.serverTime) || Math.floor(Date.now() / 1000);
+        const now = Math.floor(Date.now() / 1000);
+        const elapsed = (serverTime + (now - (window.__cscPageLoadedAt || now))) - parseInt(order.offer_time, 10);
+        const left = timeout - Math.floor(elapsed);
+        return left > 0 ? left : 0;
+    }
+
+    function formatCountdown(sec) {
+        const m = Math.floor(sec / 60);
+        const s = sec % 60;
+        return (m > 0 ? m + ':' + String(s).padStart(2, '0') : s + ' с');
+    }
+
+    function startOfferCountdowns() {
+        const list = $('#csc-orders-list');
+        if (!list) return;
+        list.querySelectorAll('[data-offer-deadline]').forEach(el => {
+            const deadline = parseInt(el.dataset.offerDeadline, 10);
+            const tick = function () {
+                const left = deadline - Math.floor(Date.now() / 1000);
+                if (left <= 0) {
+                    el.textContent = __c('offer_ended', 'Время вышло — заявка передана дальше');
+                    el.classList.add('csc-countdown-expired');
+                    if (typeof loadOrders === 'function') debouncedReloadOrders();
+                    return;
+                }
+                el.textContent = '⏳ ' + formatCountdown(left) + ' ' + __c('to_accept', 'до передачи следующей');
+                el.classList.toggle('csc-countdown-urgent', left <= 30);
+                setTimeout(tick, 1000);
+            };
+            tick();
+        });
+    }
+
+    let _reloadTimer = null;
+    function debouncedReloadOrders() {
+        clearTimeout(_reloadTimer);
+        _reloadTimer = setTimeout(() => { loadOrders().catch(() => {}); }, 4000);
     }
 
     function renderOrderCard(order) {
@@ -783,6 +830,11 @@
                     ${videos > 0 ? '<span>🎥 ' + videos + '</span>' : ''}
                 </div>
                 ` : ''}
+                ${(status === 'waiting' && order.offer_time) ? (() => {
+                    const left = getOfferRemainingSec(order);
+                    const deadline = left === null ? '' : Math.floor(Date.now() / 1000) + left;
+                    return `<div class="csc-order-countdown"${deadline ? ' data-offer-deadline="' + deadline + '"' : ''}>${left !== null && left > 0 ? '⏳ ' + formatCountdown(left) + ' ' + __c('to_accept', 'до передачи следующей') : __c('offer_ended', 'Время вышло — заявка передана дальше')}</div>`;
+                })() : ''}
             </article>
         `;
     }
@@ -1125,9 +1177,18 @@
         `;
 
         if (status === 'waiting') {
+            const left = getOfferRemainingSec(order);
+            if (left !== null) {
+                footerHtml += `
+                <div class="csc-modal-countdown" id="csc-modal-countdown" data-offer-deadline="${Math.floor(Date.now() / 1000) + left}">⏳ ${formatCountdown(left)} ${__c('to_accept', 'до передачи следующей')}</div>
+                `;
+            }
             footerHtml += `
+                <button type="button" class="csc-btn csc-btn-danger" data-action="reject" data-order="${escapeHtml(order.order_number)}">
+                    ✕ ${__c('act_reject', 'Отклониться')}
+                </button>
                 <button type="button" class="csc-btn csc-btn-success" data-action="accept" data-order="${escapeHtml(order.order_number)}">
-                    ✓ Принять заказ
+                    ✓ ${__c('act_accept_btn', 'Принять заказ')}
                 </button>
             `;
         } else if (status === 'active') {
@@ -1152,12 +1213,34 @@
             });
         });
 
+        // Тиканье обратного отсчёта в модалке (останавливается при закрытии)
+        if (window._cscModalCdTimer) { clearInterval(window._cscModalCdTimer); window._cscModalCdTimer = null; }
+        const cdEl = $('#csc-modal-countdown');
+        if (cdEl && cdEl.dataset.offerDeadline) {
+            const deadline = parseInt(cdEl.dataset.offerDeadline, 10);
+            window._cscModalCdTimer = setInterval(() => {
+                const lft = deadline - Math.floor(Date.now() / 1000);
+                if (lft <= 0) {
+                    cdEl.textContent = __c('offer_ended', 'Время вышло — заявка передана дальше');
+                    cdEl.classList.add('csc-countdown-expired');
+                    clearInterval(window._cscModalCdTimer);
+                    window._cscModalCdTimer = null;
+                    closeModal();
+                    loadOrders().catch(() => {});
+                    return;
+                }
+                cdEl.textContent = '⏳ ' + formatCountdown(lft) + ' ' + __c('to_accept', 'до передачи следующей');
+                cdEl.classList.toggle('csc-countdown-urgent', lft <= 30);
+            }, 1000);
+        }
+
         modal.removeAttribute('hidden');
         document.body.style.overflow = 'hidden';
     }
 
     function closeModal() {
         const modal = $('#csc-order-modal');
+        if (window._cscModalCdTimer) { clearInterval(window._cscModalCdTimer); window._cscModalCdTimer = null; }
         if (modal) {
             modal.setAttribute('hidden', '');
             document.body.style.overflow = '';
@@ -1169,6 +1252,7 @@
 
         const labels = {
             accept: __c('act_accept', 'Принять заказ'),
+            reject: __c('act_reject', 'Отклониться'),
             complete: __c('act_complete', 'Отметить выполненным'),
         };
 
