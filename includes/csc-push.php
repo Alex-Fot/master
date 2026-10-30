@@ -11,10 +11,67 @@ if (!defined('ABSPATH')) exit;
 // ============================================================
 // 1. ГЕНЕРАЦИЯ VAPID-КЛЮЧЕЙ
 // ============================================================
-// ИСПРАВЛЕНО: дубли функций csc_generate_vapid_keys(), csc_base64url_encode(),
-// csc_base64url_decode() и csc_der_to_raw_signature() удалены. Единые
-// канонические реализации находятся в includes/csc-notifications.php
-// (загружается из ядра раньше этого файла). Модуль push использует их как API.
+
+/**
+ * Генерация пары VAPID-ключей (ECDSA P-256).
+ * Используется openssl для создания пары ключей.
+ */
+if (!function_exists('csc_generate_vapid_keys')) {
+    function csc_generate_vapid_keys() {
+        // Генерируем ECDSA ключ на кривой P-256 (prime256v1)
+        $key = openssl_pkey_new([
+            'curve_name'       => 'prime256v1',
+            'private_key_type' => OPENSSL_KEYTYPE_EC,
+        ]);
+        
+        if (!$key) {
+            return false;
+        }
+        
+        $details = openssl_pkey_get_details($key);
+        if (!$details || !isset($details['ec'])) {
+            return false;
+        }
+        
+        // Извлекаем координаты X и Y публичного ключа (по 32 байта каждая)
+        $x = str_pad($details['ec']['x'], 32, "\0", STR_PAD_LEFT);
+        $y = str_pad($details['ec']['y'], 32, "\0", STR_PAD_LEFT);
+        
+        // Публичный ключ = 0x04 + X + Y (65 байт)
+        $publicKeyRaw = "\x04" . $x . $y;
+        
+        // Приватный ключ = d (32 байта)
+        $privateKeyRaw = str_pad($details['ec']['d'], 32, "\0", STR_PAD_LEFT);
+        
+        // Кодируем в base64url
+        return [
+            'public'  => csc_base64url_encode($publicKeyRaw),
+            'private' => csc_base64url_encode($privateKeyRaw),
+        ];
+    }
+}
+
+/**
+ * Base64url encode (без = и +/)
+ */
+if (!function_exists('csc_base64url_encode')) {
+    function csc_base64url_encode($data) {
+        return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
+    }
+}
+
+/**
+ * Base64url decode
+ */
+if (!function_exists('csc_base64url_decode')) {
+    function csc_base64url_decode($data) {
+        $remainder = strlen($data) % 4;
+        if ($remainder) {
+            $data .= str_repeat('=', 4 - $remainder);
+        }
+        return base64_decode(strtr($data, '-_', '+/'));
+    }
+}
 
 // ============================================================
 // 2. ИНИЦИАЛИЗАЦИЯ VAPID ПРИ АКТИВАЦИИ
@@ -26,22 +83,28 @@ if (!defined('ABSPATH')) exit;
  */
 if (!function_exists('csc_ensure_vapid_keys')) {
     function csc_ensure_vapid_keys() {
-        $public = get_option('csc_vapid_public_key', '');
+        $public  = get_option('csc_vapid_public_key', '');
         $private = get_option('csc_vapid_private_key', '');
-        
+
         if (!empty($public) && !empty($private)) {
+            // Одноразовая миграция: приватный ключ лежал в БД открытым текстом.
+            if (function_exists('csc_is_encrypted') && !csc_is_encrypted($private)
+                && function_exists('csc_encrypt_token') && strpos($private, '.') === false) {
+                update_option('csc_vapid_private_key', csc_encrypt_token($private), false);
+            }
             return ['public' => $public, 'private' => $private];
         }
-        
+
         $keys = csc_generate_vapid_keys();
         if (!$keys) {
             return false;
         }
-        
+
         update_option('csc_vapid_public_key', $keys['public'], false);
-        update_option('csc_vapid_private_key', $keys['private'], false);
+        // Приватный ключ храним только в зашифрованном виде (AES-256-GCM, csc-crypto.php).
+        update_option('csc_vapid_private_key', function_exists('csc_encrypt_token') ? csc_encrypt_token($keys['private']) : $keys['private'], false);
         update_option('csc_vapid_subject', 'mailto:' . get_option('admin_email'), false);
-        
+
         return $keys;
     }
 }
@@ -73,183 +136,22 @@ if (!function_exists('csc_install_sw_to_root')) {
 }
 
 // ============================================================
-// 4. JWT-ПОДПИСЬ ДЛЯ VAPID
+// 4. ОТПРАВКА PUSH-УВЕДОМЛЕНИЯ
 // ============================================================
 
-/**
- * Создание JWT-токена для VAPID.
- */
-if (!function_exists('csc_create_vapid_jwt')) {
-    function csc_create_vapid_jwt($audience, $subject, $private_key_b64url) {
-        $private_key_raw = csc_base64url_decode($private_key_b64url);
-        
-        // Header
-        $header = [
-            'typ' => 'JWT',
-            'alg' => 'ES256',
-        ];
-        
-        // Payload: aud (audience) + exp (expires, макс 24 часа) + sub (subject)
-        $payload = [
-            'aud' => $audience,
-            'exp' => time() + 12 * 3600, // 12 часов
-            'sub' => $subject,
-        ];
-        
-        $header_b64  = csc_base64url_encode(json_encode($header));
-        $payload_b64 = csc_base64url_encode(json_encode($payload));
-        
-        $unsigned = $header_b64 . '.' . $payload_b64;
-        
-        // Конвертируем raw private key в PEM формат для openssl
-        $pem = csc_raw_ec_private_to_pem($private_key_raw);
-        
-        $pkey = openssl_pkey_get_private($pem);
-        if (!$pkey) {
-            return false;
-        }
-        
-        $signature = '';
-        $signed = openssl_sign($unsigned, $signature, $pkey, OPENSSL_ALGO_SHA256);
-        if (!$signed) {
-            return false;
-        }
-        
-        // Конвертируем DER-подпись в R||S формат (raw, 64 байта)
-        $raw_signature = csc_der_to_raw_signature($signature);
-        if (!$raw_signature) {
-            return false;
-        }
-        
-        return $unsigned . '.' . csc_base64url_encode($raw_signature);
-    }
-}
-
-/**
- * Конвертирует raw EC private key (32 байта) в PEM.
- */
-if (!function_exists('csc_raw_ec_private_to_pem')) {
-    function csc_raw_ec_private_to_pem($private_key_raw) {
-        // OID для P-256: 1.2.840.10045.3.1.7
-        // ASN.1 структура ECPrivateKey
-        $oid = "\x06\x08\x2a\x86\x48\xce\x3d\x03\x01\x07";
-        $priv_octet = "\x04\x20" . $private_key_raw; // 0x04 + length 32 + key
-        
-        $ec_priv = "\x30" . chr(strlen($priv_octet) + strlen($oid) + 11)
-                 . "\x02\x01\x01" // version
-                 . $priv_octet
-                 . "\xa0" . chr(strlen($oid)) . $oid;
-        
-        $der = "\x30" . chr(strlen($ec_priv) + 2) . $ec_priv;
-        
-        // Оборачиваем в BIT STRING (SEQUENCE для PKCS8)
-        $pkcs8_header = "\x30\x13\x06\x07\x2a\x86\x48\xce\x3d\x02\x01\x06\x08\x2a\x86\x48\xce\x3d\x03\x01\x07";
-        $full = $pkcs8_header . "\x04" . chr(strlen($ec_priv)) . $ec_priv;
-        
-        // Простой способ: используем openssl для создания правильного PEM
-        // Создаём EC key из приватного raw key через openssl_pkey_new
-        $pkey = openssl_pkey_new([
-            'curve_name'       => 'prime256v1',
-            'private_key_type' => OPENSSL_KEYTYPE_EC,
-        ]);
-        
-        // Заменяем приватную часть на нашу
-        $details = openssl_pkey_get_details($pkey);
-        
-        // Используем более надёжный метод: создаём PEM вручную
-        $asn1 = csc_build_ec_private_key_asn1($private_key_raw);
-        
-        $pem = "-----BEGIN EC PRIVATE KEY-----\n"
-             . chunk_split(base64_encode($asn1), 64, "\n")
-             . "-----END EC PRIVATE KEY-----\n";
-        
-        return $pem;
-    }
-}
-
-/**
- * Построение ASN.1 ECPrivateKey.
- */
-if (!function_exists('csc_build_ec_private_key_asn1')) {
-    function csc_build_ec_private_key_asn1($private_key_raw) {
-        // OID secp256r1: 1.2.840.10045.3.1.7
-        $oid = "\x06\x08\x2a\x86\x48\xce\x3d\x03\x01\x07";
-        
-        // PrivateKey OCTET STRING (0x04 + 32 bytes)
-        $priv_octet = "\x04\x20" . $private_key_raw;
-        
-        // ECPrivateKey SEQUENCE:
-        //   version INTEGER 1
-        //   privateKey OCTET STRING
-        //   parameters OID (optional)
-        $version = "\x02\x01\x01";
-        $params  = "\xa0" . chr(strlen($oid)) . $oid;
-        
-        $inner = $version . $priv_octet . $params;
-        return "\x30" . csc_asn1_length(strlen($inner)) . $inner;
-    }
-}
-
-if (!function_exists('csc_asn1_length')) {
-    function csc_asn1_length($len) {
-        if ($len < 128) {
-            return chr($len);
-        }
-        $bytes = '';
-        $temp = $len;
-        while ($temp > 0) {
-            $bytes = chr($temp & 0xFF) . $bytes;
-            $temp >>= 8;
-        }
-        return chr(0x80 | strlen($bytes)) . $bytes;
-    }
-}
-
-// ИСПРАВЛЕНО: дубль csc_der_to_raw_signature() удалён — каноническая
-// реализация находится в includes/csc-notifications.php.
+// Рабочая реализация csc_send_web_push_notification() находится в
+// includes/csc-notifications.php (загружается раньше этого файла):
+// полноценное шифрование payload по RFC 8291 (aes128gcm), корректные
+// заголовки Crypto-Key/Authorization (VAPID RFC 8292), лог доставки
+// и очистка невалидных подписок (HTTP 404/410).
+// Старый дубль без шифрования (открытый payload с невалидными
+// заголовками aes128gcm/Crypto-Key) и связанный с ним мёртвый
+// JWT-код (csc_create_vapid_jwt, csc_raw_ec_private_to_pem,
+// csc_build_ec_private_key_asn1, csc_asn1_length,
+// csc_der_to_raw_signature, csc_remove_push_subscription) удалены.
 
 // ============================================================
-// 5. ОТПРАВКА PUSH-УВЕДОМЛЕНИЯ
-// ============================================================
-
-/**
- * Отправка Web Push уведомления.
- *
- * @param string $subscription_json JSON подписки (из PushManager.subscribe)
- * @param string $title            Заголовок
- * @param string $body             Тело сообщения
- * @param string $order_number     Номер заказа (для deep-link)
- * @param string $recipient_type   master|customer
- * @param string $recipient_id     ID получателя
- */
-// ИСПРАВЛЕНО: дубль csc_send_web_push_notification() удалён. Каноническая
-// реализация (шифрование RFC 8188 + трекинг статуса в БД уведомлений)
-// находится в includes/csc-notifications.php и загружается из ядра раньше.
-// Старая незащищённая версия (отправка открытого JSON без шифрования) более
-// не используется — все вызовы этого модуля идут через единый движок.
-
-/**
- * Удаление невалидной подписки.
- */
-if (!function_exists('csc_remove_push_subscription')) {
-    function csc_remove_push_subscription($recipient_type, $recipient_id, $endpoint) {
-        if (empty($recipient_type) || empty($recipient_id)) return;
-        
-        $option_key = 'csc_push_subs_' . $recipient_type . '_' . $recipient_id;
-        $subs = get_option($option_key, []);
-        if (!is_array($subs)) return;
-        
-        $subs = array_values(array_filter($subs, function($s) use ($endpoint) {
-            $decoded = is_array($s) ? $s : json_decode($s, true);
-            return ($decoded['endpoint'] ?? '') !== $endpoint;
-        }));
-        
-        update_option($option_key, $subs, false);
-    }
-}
-
-// ============================================================
-// 6. АВТОМАТИЧЕСКАЯ УСТАНОВКА ПРИ ЗАГРУЗКЕ АДМИНКИ
+// 5. АВТОМАТИЧЕСКАЯ УСТАНОВКА ПРИ ЗАГРУЗКЕ АДМИНКИ
 // ============================================================
 
 add_action('admin_init', 'csc_push_auto_setup', 20);
@@ -283,7 +185,7 @@ if (!function_exists('csc_push_on_deactivate')) {
 }
 
 // ============================================================
-// 7. АДМИН-СТРАНИЦА НАСТРОЕК PUSH
+// 6. АДМИН-СТРАНИЦА НАСТРОЕК PUSH
 // ============================================================
 
 add_action('admin_menu', 'csc_push_add_admin_menu', 40);
@@ -436,7 +338,7 @@ if (!function_exists('csc_render_push_settings')) {
 }
 
 // ============================================================
-// 8. AJAX: ТЕСТОВАЯ ОТПРАВКА PUSH
+// 7. AJAX: ТЕСТОВАЯ ОТПРАВКА PUSH
 // ============================================================
 
 add_action('wp_ajax_csc_push_test_send', 'csc_push_test_send_ajax');
