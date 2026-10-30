@@ -63,8 +63,17 @@ if (!function_exists('csc_init_notification_db')) {
             $keys = csc_generate_vapid_keys();
             if (!empty($keys['publicKey']) && !empty($keys['privateKey'])) {
                 update_option('csc_vapid_public_key', $keys['publicKey'], false);
-                update_option('csc_vapid_private_key', $keys['privateKey'], false);
+                // Приватный ключ храним только в зашифрованном виде (AES-256-GCM).
+                update_option('csc_vapid_private_key', function_exists('csc_encrypt_token') ? csc_encrypt_token($keys['privateKey']) : $keys['privateKey'], false);
                 update_option('csc_vapid_subject', 'mailto:' . get_option('admin_email'), false);
+            }
+        } else {
+            // Одноразовая миграция: приватный ключ мог лежать в БД открытым текстом.
+            $priv_raw = get_option('csc_vapid_private_key', '');
+            if (!empty($priv_raw) && strpos($priv_raw, '.') === false
+                && function_exists('csc_is_encrypted') && !csc_is_encrypted($priv_raw)
+                && function_exists('csc_encrypt_token')) {
+                update_option('csc_vapid_private_key', csc_encrypt_token($priv_raw), false);
             }
         }
     }
@@ -383,6 +392,13 @@ if (!function_exists('csc_vapid_pem_private')) {
     function csc_vapid_pem_private() {
         $priv_b64 = get_option('csc_vapid_private_key');
         if (!$priv_b64) return '';
+
+        // Ключ хранится зашифрованным (AES-256-GCM, см. csc_ensure_vapid_keys).
+        // Обратная совместимость: старые записи в открытом виде проходят как есть.
+        if (function_exists('csc_is_encrypted') && csc_is_encrypted($priv_b64)) {
+            $priv_b64 = csc_decrypt_token($priv_b64);
+            if (empty($priv_b64)) return '';
+        }
 
         $raw = base64_decode($priv_b64);
         if (!$raw || strlen($raw) !== 32) return '';
