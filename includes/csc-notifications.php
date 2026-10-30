@@ -552,16 +552,40 @@ if (!function_exists('csc_send_web_push_notification')) {
             return false;
         }
 
+        // ИСПРАВЛЕНО (кликабельные push): URL перехода. Если вызывающий код
+        // передал ссылку через фильтр — используем её; иначе строим стандартную:
+        // мастеру — вход в кабинет с одноразовым креденшелом + open_order,
+        // клиенту — страница заявки в ЛК по номеру.
+        $click_url = '';
+        if (!empty($order_number)) {
+            if ($recipient_type === 'master' && function_exists('csc_issue_master_login_token')) {
+                $login_token = csc_issue_master_login_token($recipient_id);
+                if ($login_token !== '') {
+                    $click_url = add_query_arg([
+                        'csc_master_dashboard' => '1',
+                        'mid'                  => $recipient_id,
+                        'token'                => $login_token,
+                        'open_order'           => $order_number,
+                    ], home_url('/'));
+                }
+            } elseif ($recipient_type === 'customer') {
+                $click_url = add_query_arg(['csc_open_order' => $order_number], home_url('/'));
+            }
+        }
+        $click_url = apply_filters('csc_push_notification_url', $click_url, $order_number, $recipient_type, $recipient_id);
+
         // 4. Формирование payload
         $payload_data = [
             'title'        => $title,
             'body'         => $message,
+            'message'      => $message,
             'order_number' => $order_number,
             'user_type'    => $recipient_type,
             'icon'         => get_site_icon_url(192, '/icon-192.png'),
             'badge'        => get_site_icon_url(72, '/badge-72.png'),
             'tag'          => $order_number,
-            'data'         => ['order' => $order_number]
+            'url'          => $click_url,
+            'data'         => ['order' => $order_number, 'url' => $click_url]
         ];
         $payload_json = wp_json_encode($payload_data);
 

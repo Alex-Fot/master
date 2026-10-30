@@ -180,6 +180,9 @@ if (!function_exists('csc_render_master_dashboard')) {
             'serviceLng'     => $service_lng,
             'serviceRadius'  => $service_radius,
             'soundUrl'       => $sound_url, // <--- ДОБАВЛЕНО: URL звукового файла или пустая строка
+            // Клик по push-уведомлению/ссылке ведёт на ?open_order=N — ЛК сам
+            // переключится во вкладку «Ожидают» и откроет модалку этой заявки.
+            'openOrder'      => !isset($_GET['open_order']) ? '' : sanitize_text_field(wp_unslash($_GET['open_order'])),
             // i18n: локализованные подписи статусов для инлайнового JS (getStatusLabel)
             'statusLabels'   => function_exists('csc_status_labels_js') ? csc_status_labels_js() : [],
             // i18n: общий словарь строк интерфейса JS (cscI18n.t('key'))

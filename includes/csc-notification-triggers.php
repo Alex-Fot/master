@@ -24,6 +24,30 @@ if (!function_exists('csc_push_to_in_cabinet')) {
         $notifications = get_option($option_key, []);
         if (!is_array($notifications)) $notifications = [];
         
+        // ИСПРАВЛЕНО (кликабельные уведомления): для уведомлений о новых заявках
+        // формируем кликабельную ссылку. Мастеру — на страницу входа в кабинет с
+        // одноразовым креденшелом + ?open_order=N (ЛК сам откроет вкладку
+        // «Ожидают» и модалку заявки); клиенту — на страницу ЛК с фильтром по
+        // номеру. Ссылка живёт сутки (ttl одноразового токена).
+        $click_url = '';
+        if (!empty($payload['order_number'])) {
+            if ($recipient_type === 'master' && function_exists('csc_issue_master_login_token')) {
+                $login_token = csc_issue_master_login_token($recipient_id);
+                if ($login_token !== '') {
+                    $click_url = add_query_arg([
+                        'csc_master_dashboard' => '1',
+                        'mid'                  => $recipient_id,
+                        'token'                => $login_token,
+                        'open_order'           => $payload['order_number'],
+                    ], home_url('/'));
+                }
+            } elseif ($recipient_type === 'customer') {
+                $click_url = add_query_arg([
+                    'csc_open_order' => $payload['order_number'],
+                ], home_url('/'));
+            }
+        }
+
         // Добавляем в начало
         array_unshift($notifications, [
             'id'         => 'n_' . wp_generate_password(10, false),
@@ -31,6 +55,7 @@ if (!function_exists('csc_push_to_in_cabinet')) {
             'title'      => $payload['title'] ?? '',
             'message'    => $payload['message'] ?? '',
             'order'      => $payload['order_number'] ?? '',
+            'url'        => $click_url,
             'icon'       => $payload['icon'] ?? '📩',
             'data'       => $payload['data'] ?? [],
             'read'       => false,
@@ -147,19 +172,56 @@ if (!function_exists('csc_trigger_order_created')) {
             csc_send_tg_notification($s['telegram_chat_id'], "🆕 Новая заявка #{$order_number}", $text, $order_number, 'admin', 'admin');
         }
         
-        // 2. Уведомляем всех активных мастеров о новой заявке
-        $masters = function_exists('csc_get_masters') ? csc_get_masters() : [];
-        foreach ($masters as $mid => $m) {
-            if (($m['status'] ?? '') !== 'active') continue;
-            csc_notify_master(
-                $mid,
-                'Новая заявка',
-                "Поступил заказ #{$order_number} от {$name} на сумму " . number_format($total, 0, '.', ' ') . " ₽. Дата: {$date}",
-                $order_number,
-                'new_order',
-                '🆕'
-            );
+        // 2. ИСПРАВЛЕНО (логика маршрутизации): рассылка «всем активным мастерам»
+        // убрана. Заявка уходит НЕ всем сразу, а по очереди — только текущему
+        // кандидату маршрутизатора (csc_route_order_to_next), с обратным отсчётом
+        // на принятие. Мастеру приходит уведомление в момент оффера (см.
+        // includes/csc-order-routing.php). Здесь остаётся только внутрикабинетное
+        // уведомление администратору (web push админа не поддерживается — у админа
+        // нет подписки csc_push_subs_admin_*).
+        if (function_exists('csc_push_to_in_cabinet')) {
+            csc_push_to_in_cabinet('admin', 'admin', [
+                'type'         => 'new_order',
+                'title'        => 'Новая заявка #' . $order_number,
+                'message'      => sprintf('Клиент %s (+%s), сумма %s ₽, дата %s. Запущен последовательный поиск мастера.', $name, $phone, number_format($total, 0, '.', ' '), $date),
+                'order_number' => $order_number,
+                'icon'         => '🆕',
+            ]);
         }
+    }
+}
+
+// ============================================================
+// ВСПОМОГАТЕЛЬНАЯ: Уведомления администратору (in-cabinet + Telegram)
+// ============================================================
+if (!function_exists('csc_notify_admin')) {
+    function csc_notify_admin($title, $message, $order_number = '', $type = 'info', $icon = '🔔') {
+        if (function_exists('csc_push_to_in_cabinet')) {
+            csc_push_to_in_cabinet('admin', 'admin', [
+                'type'         => $type,
+                'title'        => $title,
+                'message'      => $message,
+                'order_number' => $order_number,
+                'icon'         => $icon,
+            ]);
+        }
+        $s = get_option('csc_main_settings', []);
+        if (!empty($s['telegram_chat_id']) && function_exists('csc_send_tg_notification')) {
+            csc_send_tg_notification($s['telegram_chat_id'], $title, $message, $order_number, 'admin', 'admin');
+        }
+    }
+}
+
+if (!function_exists('csc_notify_admin_search_restarted')) {
+    // Требование: если вблизи (круг 1) мастеров нет — администратор получает
+    // уведомление о повторном поиске, и запускается расширенный поиск по
+    // ближайшим районам города (круг 2). Вызывается из csc-order-routing.php.
+    function csc_notify_admin_search_restarted($order_number, $order) {
+        $name  = esc_html($order['name'] ?? 'Клиент');
+        $total = floatval($order['total'] ?? 0);
+        $addr  = esc_html($order['address'] ?? '');
+        $msg   = sprintf('Мастеров в радиусе локации заявки не найдено. Запущен повторный поиск по ближайшим районам города. Клиент: %s, сумма: %s ₽%s.', $name, number_format($total, 0, '.', ' '), $addr ? ', адрес: ' . $addr : '');
+        csc_notify_admin('🔄 Повторный поиск мастера #' . $order_number, $msg, $order_number, 'routing_retry', '🔄');
     }
 }
 
