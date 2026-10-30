@@ -580,6 +580,7 @@ if (!function_exists('csc_send_web_push_notification')) {
         $click_url = apply_filters('csc_push_notification_url', $click_url, $order_number, $recipient_type, $recipient_id);
 
         // 4. Формирование payload
+        $csc_plugin_url = defined('CSC_PLUGIN_URL') ? CSC_PLUGIN_URL : WP_PLUGIN_URL . '/custom-service-calculator/';
         $payload_data = [
             'title'        => $title,
             'body'         => $message,
@@ -587,8 +588,10 @@ if (!function_exists('csc_send_web_push_notification')) {
             'order_number' => $order_number,
             'user_type'    => $recipient_type,
             'open_order'   => $order_number,
-            'icon'         => get_site_icon_url(192, '/icon-192.png'),
-            'badge'        => get_site_icon_url(72, '/badge-72.png'),
+            // ИСПРАВЛЕНО (Push-иконки): фолбэки — полные URL к файлам плагина
+            // (раньше '/icon-192.png' указывал в корень сайта, где файлов нет → 404).
+            'icon'         => get_site_icon_url(192, $csc_plugin_url . 'assets/icon-192.png'),
+            'badge'        => get_site_icon_url(72, $csc_plugin_url . 'assets/badge-72.png'),
             'tag'          => $order_number,
             'url'          => $click_url,
             'data'         => ['order' => $order_number, 'url' => $click_url]
