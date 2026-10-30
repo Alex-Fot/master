@@ -615,6 +615,28 @@ if (!function_exists('csc_route_order_to_next')) {
             csc_update_order($order_number, $all_orders[$order_number]);
             csc_cache_delete_orders();
 
+            // ИСПРАВЛЕНО (логика «Ожидают» в ЛК мастера): заказ показывается во
+            // вкладке «Ожидают» ТОЛЬКО текущему кандидату, которому сделан оффер,
+            // а не всем активным мастерам. Раньше статус pending + уведомление
+            // «всем» создавали иллюзию, что заявку видят все сразу.
+            if (!empty($all_orders[$order_number]['status']) && $all_orders[$order_number]['status'] !== CSC_STATUS_PENDING) {
+                $all_orders[$order_number]['status'] = CSC_STATUS_PENDING;
+                csc_update_order($order_number, $all_orders[$order_number]);
+                csc_cache_delete_orders();
+            }
+
+            // Внутрикабинетное уведомление + Web Push — только текущему кандидату.
+            if (function_exists('csc_notify_master')) {
+                csc_notify_master(
+                    $next_master_id,
+                    'Новая заявка #' . $order_number,
+                    sprintf('Вам предложена заявка #%s. Примите или отклоните до истечения таймера (%d сек).', $order_number, intval(CSC_ROUTING_TIMEOUT)),
+                    $order_number,
+                    'new_order',
+                    '🆕'
+                );
+            }
+
             csc_routing_log($order_number, 'offer_sent', ['master_id' => $next_master_id, 'message_id' => $msg_id]);
             do_action('csc_routing_offer_sent', $order_number, $next_master_id, $msg_id);
         } else {
@@ -632,6 +654,12 @@ if (!function_exists('csc_route_order_to_next')) {
                     'reason' => 'no_candidates_in_radius',
                     'rejected_in_circle_1' => $rejected,
                 ]);
+                // ИСПРАВЛЕНО (требование): при отсутствии мастеров вблизи —
+                // уведомление администратору «повторный поиск» и расширенный
+                // поиск по ближайшим районам (круг 2).
+                if (function_exists('csc_notify_admin_search_restarted')) {
+                    csc_notify_admin_search_restarted($order_number, $order);
+                }
                 // Рекурсивный запуск второго круга
                 csc_route_order_to_next($order_number, 'circle_2_expand');
                 return;
