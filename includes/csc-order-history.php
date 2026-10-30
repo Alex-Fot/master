@@ -92,7 +92,7 @@ if (!function_exists('csc_log_status_change')) {
         );
         
         if ($result === false) {
-            error_log('[CSC_HISTORY] Ошибка записи истории: ' . $wpdb->last_error);
+            csc_log('Ошибка записи истории: ' . $wpdb->last_error);
             return false;
         }
         
@@ -134,7 +134,7 @@ if (!function_exists('csc_log_financial_event')) {
         ];
 
         if (!in_array($event_type, $valid_events, true)) {
-            error_log("[CSC_HISTORY] Некорректный тип финансового события: {$event_type}");
+            csc_log("Некорректный тип финансового события: {$event_type}", 'debug', 'HISTORY');
             return false;
         }
 
@@ -187,7 +187,7 @@ if (!function_exists('csc_log_financial_event')) {
         );
 
         if ($result === false) {
-            error_log('[CSC_HISTORY] Ошибка записи фин. события: ' . $wpdb->last_error);
+            csc_log('Ошибка записи фин. события: ' . $wpdb->last_error);
             return false;
         }
 
@@ -242,7 +242,7 @@ if (!function_exists('csc_get_order_history')) {
         
         if ($results === null) {
             $results = [];
-            error_log('[CSC_HISTORY] Ошибка выборки истории: ' . $wpdb->last_error);
+            csc_log('Ошибка выборки истории: ' . $wpdb->last_error, 'error', 'HISTORY');
         }
 
         wp_cache_set($cache_key, $results, '', CSC_HISTORY_CACHE_TTL);
@@ -291,15 +291,15 @@ if (!function_exists('csc_format_order_history')) {
         ];
 
         $status_labels = [
-            ''                  => '(создание)',
-            CSC_STATUS_PENDING           => 'Ожидает',
-            CSC_STATUS_SEARCHING => 'Поиск мастера',
-            CSC_STATUS_AWAITING_PAYMENT => 'Ожидает оплаты',
-            CSC_STATUS_PROCESSING => 'В работе',
-            CSC_STATUS_COMPLETED         => 'Выполнено',
-            CSC_STATUS_CANCELLED          => 'Отменено',
-            CSC_STATUS_NO_MASTERS => 'Нет мастеров',
-            CSC_STATUS_ROUTING_TIMEOUT => 'Ошибка: время поиска истекло',
+            ''                  => __('(создание)', 'csc'),
+            CSC_STATUS_PENDING           => __('Ожидает', 'csc'),
+            CSC_STATUS_SEARCHING => __('Поиск мастера', 'csc'),
+            CSC_STATUS_AWAITING_PAYMENT => __('Ожидает оплаты', 'csc'),
+            CSC_STATUS_PROCESSING => __('В работе', 'csc'),
+            CSC_STATUS_COMPLETED         => __('Выполнено', 'csc'),
+            CSC_STATUS_CANCELLED          => __('Отменено', 'csc'),
+            CSC_STATUS_NO_MASTERS => __('Нет мастеров', 'csc'),
+            CSC_STATUS_ROUTING_TIMEOUT => __('Ошибка: время поиска истекло', 'csc'),
         ];
         
         $financial_statuses = [
@@ -461,7 +461,7 @@ if (!function_exists('csc_cleanup_order_history')) {
         ));
 
         if ($deleted > 0) {
-            error_log("[CSC_HISTORY] Очищено записей истории: {$deleted}");
+            csc_log("Очищено записей истории: {$deleted}", 'debug', 'HISTORY');
         }
     }
 }

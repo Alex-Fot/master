@@ -30,27 +30,150 @@ if (!function_exists('csc_get_settings_cached')) {
 */
 if (!function_exists('csc_get_all_orders')) {
     function csc_get_all_orders($force_refresh = false) {
-        static $cached_orders = null;
-        if (!$force_refresh && $cached_orders !== null) {
-            return $cached_orders;
+        // Кэш живёт в объектном кэше WordPress (wp_cache): пер-запросовый
+        // hit без сериализации при persistent-кэше и корректная инвалидация
+        // ВЕЗДЕ (39+ точек вызова csc_cache_delete_orders), чего не мог дать
+        // static-$cached_orders. Точка инвалидации — csc_cache_delete_orders().
+        $cache_key = 'csc_all_orders_v2';
+        if (!$force_refresh) {
+            $cached = wp_cache_get($cache_key);
+            if (false !== $cached) {
+                return $cached;
+            }
         }
         global $wpdb;
         $table = $wpdb->prefix . 'csc_orders';
         $table_exists = get_option('csc_orders_migrated', false);
         if ($table_exists) {
-            $results = $wpdb->get_results("SELECT * FROM {$table}", ARRAY_A);
+            // ОПТИМИЗАЦИЯ (Кэш заказов): сортировка created_at DESC выполняется
+            // индексом idx_phone_created (phone, created_at) — список приходит
+            // уже упорядоченным «новые первыми», PHP-uasort в потребителях
+            // становится ненужным. LIMIT не задаём: полный список используется
+            // в админке/кронах; пер-мастера и пер-клиента выборки — SQL-хелперы
+            // csc_get_orders_for_master()/csc_get_orders_by_phone().
+            $results = $wpdb->get_results("SELECT * FROM {$table} ORDER BY created_at DESC", ARRAY_A);
             $orders = [];
             foreach ($results as $row) {
                 $order_number = $row['order_number'];
                 $orders[$order_number] = csc_db_row_to_order_array($row);
             }
-            $cached_orders = $orders;
+            wp_cache_set($cache_key, $orders, '', 5 * MINUTE_IN_SECONDS);
             return $orders;
         }
         // Фолбэк: читаем из wp_options (для сайтов до миграции)
         $orders = get_option('csc_all_orders', []);
-        $cached_orders = $orders;
+        wp_cache_set($cache_key, $orders, '', 5 * MINUTE_IN_SECONDS);
         return $orders;
+    }
+}
+
+/**
+* ОПТИМИЗАЦИЯ (Кэш заказов): выборка заказов мастера через SQL с индексами
+* вместо загрузки ВСЕГО списка в память и фильтрации PHP.
+* Использует idx_master_id / idx_current_candidate (см. csc_db_schema_indexes()).
+*
+* @param string $master_id ID мастера
+* @return array Ассоциативный массив [order_number => data]
+*/
+if (!function_exists('csc_get_orders_for_master')) {
+    function csc_get_orders_for_master($master_id) {
+        global $wpdb;
+        $master_id = (string) $master_id;
+        if ($master_id === '') return [];
+        $table = $wpdb->prefix . 'csc_orders';
+        if (get_option('csc_orders_migrated', false)) {
+            $results = $wpdb->get_results($wpdb->prepare(
+                "SELECT * FROM {$table}
+                 WHERE master_id = %s OR accepted_by = %s OR current_candidate = %s",
+                $master_id, $master_id, $master_id
+            ), ARRAY_A);
+            $orders = [];
+            foreach ((array) $results as $row) {
+                $orders[$row['order_number']] = csc_db_row_to_order_array($row);
+            }
+            return $orders;
+        }
+        // Фолбэк для немигрированных данных (wp_options)
+        $all = get_option('csc_all_orders', []);
+        $orders = [];
+        foreach ($all as $num => $o) {
+            if (($o['master_id'] ?? '') === $master_id
+                || ($o['accepted_by'] ?? '') === $master_id
+                || ($o['current_candidate'] ?? '') === $master_id) {
+                $orders[$num] = $o;
+            }
+        }
+        return $orders;
+    }
+}
+
+/**
+* ОПТИМИЗАЦИЯ (Кэш заказов): выборка заказов клиента по нормализованному
+* телефону через индекс idx_phone_created + ограничение «последние 6 месяцев»
+* прямо в SQL (ORDER BY created_at DESC использует составной индекс).
+*
+* @param string $phone      Нормализованный телефон
+* @param int    $months_back Сколько месяцев назад искать (по умолчанию 6)
+* @return array [order_number => data], новые первыми
+*/
+if (!function_exists('csc_get_orders_by_phone')) {
+    function csc_get_orders_by_phone($phone, $months_back = 6) {
+        global $wpdb;
+        $phone = (string) $phone;
+        if ($phone === '') return [];
+        $table = $wpdb->prefix . 'csc_orders';
+        $months_back = max(1, intval($months_back));
+        if (get_option('csc_orders_migrated', false)) {
+            $since = gmdate('Y-m-d H:i:s', strtotime("-{$months_back} months"));
+            $results = $wpdb->get_results($wpdb->prepare(
+                "SELECT * FROM {$table} WHERE phone = %s AND created_at >= %s ORDER BY created_at DESC",
+                $phone, $since
+            ), ARRAY_A);
+            $orders = [];
+            foreach ((array) $results as $row) {
+                $orders[$row['order_number']] = csc_db_row_to_order_array($row);
+            }
+            return $orders;
+        }
+        // Фолбэк wp_options
+        $all = get_option('csc_all_orders', []);
+        $orders = [];
+        foreach ($all as $num => $o) {
+            $norm = function_exists('csc_normalize_phone') ? csc_normalize_phone($o['phone'] ?? '') : ($o['phone'] ?? '');
+            if ($norm !== $phone) continue;
+            $created = strtotime($o['created_at'] ?? '');
+            if ($created && $created < strtotime("-{$months_back} months")) continue;
+            $orders[$num] = $o;
+        }
+        uasort($orders, fn($a, $b) => strtotime($b['created_at'] ?? '') - strtotime($a['created_at'] ?? ''));
+        return $orders;
+    }
+}
+
+/**
+* ОПТИМИЗАЦИЯ (Кэш заказов): счётчики статусов через GROUP BY вместо
+* загрузки всех заказов в память (страница «Заказы» админки).
+*
+* @return array [status => count]
+*/
+if (!function_exists('csc_get_order_status_counts')) {
+    function csc_get_order_status_counts() {
+        global $wpdb;
+        $table = $wpdb->prefix . 'csc_orders';
+        if (get_option('csc_orders_migrated', false)) {
+            $rows = $wpdb->get_results("SELECT status, COUNT(*) AS cnt FROM {$table} GROUP BY status", ARRAY_A);
+            $counts = [];
+            foreach ((array) $rows as $r) {
+                $counts[$r['status']] = intval($r['cnt']);
+            }
+            return $counts;
+        }
+        $counts = [];
+        foreach (get_option('csc_all_orders', []) as $o) {
+            $st = $o['status'] ?? '';
+            $counts[$st] = ($counts[$st] ?? 0) + 1;
+        }
+        return $counts;
     }
 }
 
@@ -301,14 +424,18 @@ if (!function_exists('csc_get_items')) {
     }
 }
 
+if (!function_exists('csc_save_sections')) {
 function csc_save_sections($sections) {
     // ИСПРАВЛЕНО: Убран array_filter, который удалял валидные falsy-значения (0, false, '')
     update_option('csc_service_sections', is_array($sections) ? $sections : [], false);
 }
+}
 
+if (!function_exists('csc_save_items')) {
 function csc_save_items($items) {
     // ИСПРАВЛЕНО: Убран array_filter
     update_option('csc_service_items', is_array($items) ? $items : [], false);
+}
 }
 
 // ============================================================
@@ -330,16 +457,24 @@ if (!function_exists('csc_save_order')) {
         if ($table_exists) {
             $row = csc_order_array_to_db_row($order_number, $order_data);
             $result = $wpdb->insert($table, $row);
-            // Сброс статического кэша
-            csc_get_all_orders(true);
+            // Инвалидация кэша заказов (см. csc_cache_delete_orders)
+            if (function_exists('csc_cache_delete_orders')) {
+                csc_cache_delete_orders();
+            } else {
+                wp_cache_delete('csc_all_orders_v2');
+            }
             return $result !== false;
         }
         // Фолбэк: сохраняем в wp_options
         $all_orders = get_option('csc_all_orders', []);
         $all_orders[$order_number] = $order_data;
         update_option('csc_all_orders', $all_orders, false);
-        // Сброс статического кэша
-        csc_get_all_orders(true);
+        // Инвалидация кэша заказов
+        if (function_exists('csc_cache_delete_orders')) {
+            csc_cache_delete_orders();
+        } else {
+            wp_cache_delete('csc_all_orders_v2');
+        }
         return true;
     }
 }
@@ -359,14 +494,26 @@ if (!function_exists('csc_update_order')) {
         if ($table_exists) {
             $row = csc_order_array_to_db_row($order_number, $order_data);
             $result = $wpdb->update($table, $row, ['order_number' => $order_number]);
-            csc_get_all_orders(true);
+            // ИСПРАВЛЕНО (инвалидация кэша): был «прогрев» кэша перечитыванием
+            // csc_get_all_orders(true) сразу после UPDATE — в тот же запрос он
+            // возвращал только что записанные данные, т.е. фактически не сбрасывал
+            // устаревший кэш. Теперь — явное удаление ключа.
+            if (function_exists('csc_cache_delete_orders')) {
+                csc_cache_delete_orders();
+            } else {
+                wp_cache_delete('csc_all_orders_v2');
+            }
             return $result !== false;
         }
         // Фолбэк
         $all_orders = get_option('csc_all_orders', []);
         $all_orders[$order_number] = $order_data;
         update_option('csc_all_orders', $all_orders, false);
-        csc_get_all_orders(true);
+        if (function_exists('csc_cache_delete_orders')) {
+            csc_cache_delete_orders();
+        } else {
+            wp_cache_delete('csc_all_orders_v2');
+        }
         return true;
     }
 }
@@ -415,12 +562,20 @@ if (!function_exists('csc_save_all_orders')) {
                     $wpdb->insert($table, $row);
                 }
             }
-            csc_get_all_orders(true);
+            if (function_exists('csc_cache_delete_orders')) {
+                csc_cache_delete_orders();
+            } else {
+                wp_cache_delete('csc_all_orders_v2');
+            }
             return true;
         }
         // Фолбэк
         update_option('csc_all_orders', $all_orders, false);
-        csc_get_all_orders(true);
+        if (function_exists('csc_cache_delete_orders')) {
+            csc_cache_delete_orders();
+        } else {
+            wp_cache_delete('csc_all_orders_v2');
+        }
         return true;
     }
 }
@@ -651,6 +806,504 @@ if (!function_exists('csc_reset_login_rate_limit')) {
 }
 
 /**
+* НОВОЕ (защита ЛК мастера): Лимит попыток входа по токену для кабинетов мастеров.
+* 10 неудачных попыток на одного мастера за 15 минут, затем блокировка до конца окна.
+* Ключ — md5 от ID мастера (в транзиенте не светится идентификатор).
+*
+* @param string $master_id ID мастера
+* @return array ['allowed' => bool, 'retry_after' => int секунды до разблокировки]
+*/
+if (!function_exists('csc_check_master_login_rate_limit')) {
+    function csc_check_master_login_rate_limit($master_id) {
+        if (empty($master_id)) {
+            return ['allowed' => false, 'retry_after' => 0];
+        }
+        $key = 'csc_master_login_attempts_' . md5($master_id);
+        $data = get_transient($key);
+
+        $max_attempts = 10;
+        $window = 15 * MINUTE_IN_SECONDS;
+
+        if (!$data || !is_array($data)) {
+            set_transient($key, ['attempts' => 1, 'start_time' => time()], $window);
+            return ['allowed' => true, 'retry_after' => 0];
+        }
+
+        $attempts = intval($data['attempts'] ?? 0);
+        if ($attempts >= $max_attempts) {
+            $elapsed = time() - intval($data['start_time'] ?? time());
+            return ['allowed' => false, 'retry_after' => max(1, $window - $elapsed)];
+        }
+
+        // Строгое окно: не продлеваем TTL, только увеличиваем счётчик
+        $data['attempts'] = $attempts + 1;
+        $remaining_ttl = $window - (time() - intval($data['start_time'] ?? time()));
+        if ($remaining_ttl > 0) {
+            set_transient($key, $data, $remaining_ttl);
+        }
+        return ['allowed' => true, 'retry_after' => 0];
+    }
+}
+
+/**
+* Сброс счётчика попыток входа мастера (после успешной авторизации).
+*
+* @param string $master_id ID мастера
+*/
+if (!function_exists('csc_reset_master_login_rate_limit')) {
+    function csc_reset_master_login_rate_limit($master_id) {
+        if (empty($master_id)) return;
+        delete_transient('csc_master_login_attempts_' . md5($master_id));
+    }
+}
+
+// ============================================================
+// ХЭШИРОВАНИЕ ТОКЕНОВ ДОСТУПА (SHA-256)
+// Токены ЛК (клиентов auth_token и мастеров dashboard_token) хранятся
+// только в виде необратимого хэша. Формат: 'sha256$' . hex(64).
+// Старые открытые значения распознаются по отсутствию префикса и
+// конвертируются «на лету» при первой проверке (ленивая миграция).
+// ============================================================
+
+/** Префикс хэшированного токена */
+if (!defined('CSC_TOKEN_HASH_PREFIX')) {
+    define('CSC_TOKEN_HASH_PREFIX', 'sha256$');
+}
+
+/**
+* Вычислить хэш токена (SHA-256 с солью wp_salt('auth')).
+*
+* @param string $token Исходный (открытый) токен
+* @return string Хэш вида sha256$<hex64> или '' для пустого токена
+*/
+if (!function_exists('csc_hash_token')) {
+    function csc_hash_token($token) {
+        $token = (string)$token;
+        if ($token === '') return '';
+        // Идемпотентность: уже хэш — возвращаем как есть
+        if (csc_is_hashed_token($token)) return $token;
+        $salt = function_exists('wp_salt') ? wp_salt('auth') : 'csc_fallback_salt';
+        return CSC_TOKEN_HASH_PREFIX . hash('sha256', $salt . '|' . $token);
+    }
+}
+
+/**
+* Распознать значение в формате хэша.
+*
+* @param string $value Stored-значение
+* @return bool
+*/
+if (!function_exists('csc_is_hashed_token')) {
+    function csc_is_hashed_token($value) {
+        $value = (string)$value;
+        if (strpos($value, CSC_TOKEN_HASH_PREFIX) !== 0) return false;
+        $hex = substr($value, strlen(CSC_TOKEN_HASH_PREFIX));
+        return strlen($hex) === 64 && ctype_xdigit($hex);
+    }
+}
+
+/**
+* Проверить открытый токен против stored-значения (хэш или старый открытый токен).
+* При обнаружении открытого stored-значения оно немедленно заменяется хэшем
+* через переданный колбэк (ленивая миграция). Сравнение — через hash_equals.
+*
+* @param string   $token       Предъявленный открытый токен
+* @param string   $stored      Stored-значение (хэш sha256$... или открытый токен legacy)
+* @param callable|null $on_migrate Колбэк for($new_hash), если нужно записать хэш вместо legacy
+* @return bool
+*/
+if (!function_exists('csc_verify_token')) {
+    function csc_verify_token($token, $stored, $on_migrate = null) {
+        $token  = (string)$token;
+        $stored = (string)$stored;
+        if ($token === '' || $stored === '') return false;
+
+        if (csc_is_hashed_token($stored)) {
+            return hash_equals($stored, csc_hash_token($token));
+        }
+
+        // LEGACY: открытый токен в хранилище — сверяем и мигрируем в хэш
+        $ok = hash_equals($stored, $token);
+        if ($ok && is_callable($on_migrate)) {
+            $on_migrate(csc_hash_token($token));
+        }
+        return $ok;
+    }
+}
+
+if (!function_exists('csc_update_order_auth_token')) {
+    /**
+     * Заменить stored-значение auth_token заказа (ленивая миграция legacy → SHA-256).
+     * Обновляет и таблицу {prefix}csc_orders, и фолбэк-хранилище wp_options.
+     *
+     * @param string $order_number Номер заказа
+     * @param string $new_hash     Новое stored-значение (хэш)
+     * @return bool
+     */
+    function csc_update_order_auth_token($order_number, $new_hash) {
+        global $wpdb;
+        $ok = false;
+        // Защита от вызова вне контекста WordPress (например, в тестах): таблица — опционально
+        if (isset($wpdb) && is_object($wpdb)) {
+            $table = $wpdb->prefix . 'csc_orders';
+            if ($wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table)) === $table) {
+                $affected = (int) $wpdb->update(
+                    $table,
+                    ['auth_token' => $new_hash],
+                    ['order_number' => $order_number]
+                );
+                $ok = ($affected >= 0);
+            }
+        }
+        $all_orders = get_option('csc_all_orders', []);
+        if (is_array($all_orders) && isset($all_orders[$order_number]) && is_array($all_orders[$order_number])) {
+            $all_orders[$order_number]['auth_token'] = $new_hash;
+            update_option('csc_all_orders', $all_orders, false);
+            if (function_exists('csc_cache_delete_orders')) {
+                csc_cache_delete_orders();
+            }
+            $ok = true;
+        }
+        return $ok;
+    }
+}
+
+/**
+* Миграция хэширования токенов: разово конвертирует все открытые
+* auth_token заказов и dashboard_token мастеров в хэши SHA-256.
+* Идемпотентна, запускается из админки и из hook активации плагина.
+*
+* @return array Статистика: ['orders' => int, 'masters' => int]
+*/
+if (!function_exists('csc_run_token_hash_migration')) {
+    function csc_run_token_hash_migration() {
+        global $wpdb;
+        $stats = ['orders' => 0, 'masters' => 0];
+
+        // Идемпотентность: не повторяем полную конвертацию при каждом запуске
+        // (данные уже в хэшах). Повторный прогон возможен по force через
+        // delete_option('csc_token_hash_migrated').
+        if (get_option('csc_token_hash_migrated', false)) {
+            return $stats;
+        }
+
+        // 1. Заказы: фолбэк-хранилище wp_options
+        $all_orders = get_option('csc_all_orders', []);
+        if (is_array($all_orders) && !empty($all_orders)) {
+            $changed = false;
+            foreach ($all_orders as $num => &$order) {
+                if (!is_array($order)) continue;
+                $t = $order['auth_token'] ?? '';
+                if ($t !== '' && !csc_is_hashed_token($t)) {
+                    $order['auth_token'] = csc_hash_token($t);
+                    $changed = true;
+                    $stats['orders']++;
+                }
+            }
+            unset($order);
+            if ($changed) {
+                update_option('csc_all_orders', $all_orders, false);
+                // Инвалидация кэша заказов после миграции токенов
+                if (function_exists('csc_cache_delete_orders')) {
+                    csc_cache_delete_orders();
+                }
+            }
+        }
+
+        // 2. Заказы: основная таблица {prefix}csc_orders (если создана)
+        $table = $wpdb->prefix . 'csc_orders';
+        $table_exists = ($wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table)) === $table);
+        if ($table_exists) {
+            $rows = $wpdb->get_results("SELECT id, auth_token FROM {$table} WHERE auth_token <> '' AND auth_token NOT LIKE 'sha256\\$%'", ARRAY_A);
+            if (is_array($rows)) {
+                foreach ($rows as $row) {
+                    $hash = csc_hash_token($row['auth_token']);
+                    if ($hash !== '') {
+                        $wpdb->update($table, ['auth_token' => $hash], ['id' => intval($row['id'])]);
+                        $stats['orders']++;
+                    }
+                }
+            }
+        }
+
+        // 3. Мастера: option csc_masters_list
+        $masters = get_option('csc_masters_list', []);
+        if (is_array($masters) && !empty($masters)) {
+            $changed = false;
+            foreach ($masters as $mid => &$mdata) {
+                if (!is_array($mdata)) continue;
+                $t = $mdata['dashboard_token'] ?? '';
+                if ($t !== '' && !csc_is_hashed_token($t)) {
+                    $mdata['dashboard_token'] = csc_hash_token($t);
+                    $changed = true;
+                    $stats['masters']++;
+                }
+            }
+            unset($mdata);
+            if ($changed) {
+                update_option('csc_masters_list', $masters, false);
+                if (function_exists('csc_cache_delete_masters')) {
+                    csc_cache_delete_masters();
+                } else {
+                    wp_cache_delete('csc_masters_list_v2');
+                }
+            }
+        }
+
+        // Логируем без раскрытия секретов — только количество сконвертированных значений
+        csc_log('Миграция хэширования токенов: заказов=' . $stats['orders'] . ', мастеров=' . $stats['masters']);
+        update_option('csc_token_hash_migrated', 1, false);
+        return $stats;
+    }
+}
+
+/**
+* ИСПРАВЛЕНО (защита ЛК мастера): выдача «живого» (открытого) dashboard-токена мастера.
+*
+* После внедрения SHA-256 в хранилище лежит только хэш, из которого открытый
+* токен не восстанавливается. Для формирования ссылок входа (админка, e-mail
+* модерации, Telegram) используется одноразовый токен-креденшел: генерируется
+* новый случайный токен, его хэш кладётся в transient на $ttl секунд, а ссылка
+* отдаётся с ОТКРЫТЫМ значением. Кабинет принимает такой токен как второй
+* легитимный путь входа (наряду с постоянным).
+*
+* Если у мастера ещё нет постоянного токена — создаёт и сохраняет новый
+* (в хэшированном виде) и возвращает открытую часть.
+*
+* @param string $master_id ID мастера
+* @param array|null $masters Список мастеров (опционально, для экономии запроса)
+* @param int $ttl Время жизни одноразового токена, сек (по умолчанию 24 часа)
+* @return string Открытый токен для подстановки в URL ('' если мастер не найден)
+*/
+if (!function_exists('csc_issue_master_login_token')) {
+    function csc_issue_master_login_token($master_id, $masters = null, $ttl = DAY_IN_SECONDS) {
+        if ($masters === null) {
+            $masters = function_exists('csc_get_masters') ? csc_get_masters() : [];
+        }
+        if (empty($masters[$master_id])) return '';
+
+        $stored = $masters[$master_id]['dashboard_token'] ?? '';
+
+        // Мастер без постоянного токена (или мусор короче 16 символов) —
+        // создаём новый постоянный токен и сохраняем его ХЭШ.
+        if (!is_string($stored) || $stored === '' || strlen($stored) < 16) {
+            $fresh = wp_generate_password(32, false);
+            $masters[$master_id]['dashboard_token'] = function_exists('csc_hash_token')
+                ? csc_hash_token($fresh)
+                : $fresh; // фолбэк, если ядро не загружено
+            update_option('csc_masters_list', $masters, false);
+            if (function_exists('csc_cache_delete_masters')) {
+                csc_cache_delete_masters();
+            } else {
+                wp_cache_delete('csc_masters_list_v2');
+            }
+            return $fresh;
+        }
+
+        // Постоянный токен уже есть (хэш или legacy) — формируем одноразовый
+        // входной креденшел, чтобы открытый токен не попадал в URL/почту/логи.
+        $one_time = wp_generate_password(32, false);
+        $key = 'csc_dash_login_' . md5($one_time);
+        set_transient($key, ['mid' => $master_id, 'ts' => time()], $ttl);
+        return $one_time;
+    }
+}
+
+/**
+ * ИСПРАВЛЕНО (баг «Недостаточно данных» / «Ссылка: Отсутствует» в админке):
+ * AJAX-хендлер csc_save_master_token перенесён из includes/csc-masters.php
+ * в ядро. Модуль csc-masters.php подключается только при рендере страницы
+ * настроек через includes/csc-admin-pages.php, поэтому при вызове из других
+ * контекстов add_action() не регистрировался и admin-ajax возвращал 400 с
+ * пустым телом («Недостаточно данных» на JS-стороне при парсинге ответа).
+ */
+if (!function_exists('csc_save_master_token_ajax')) {
+    function csc_save_master_token_ajax() {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => __('Доступ запрещен', 'csc')));
+        }
+        if (!check_ajax_referer('csc_masters_action', '_wpnonce', false)) {
+            wp_send_json_error(array('message' => __('Ошибка безопасности', 'csc')));
+        }
+
+        $mid   = sanitize_text_field($_POST['mid'] ?? '');
+        $regen = !empty($_POST['regen']);
+
+        if ($mid === '') {
+            wp_send_json_error(array('message' => __('Не указан ID мастера', 'csc')));
+        }
+
+        if (!function_exists('csc_get_masters')) {
+            $m_file = dirname(__FILE__) . '/csc-masters.php';
+            if (file_exists($m_file)) {
+                require_once $m_file;
+            }
+        }
+        if (!function_exists('csc_get_masters')) {
+            wp_send_json_error(array('message' => __('Модуль мастеров недоступен', 'csc')));
+        }
+
+        $masters = csc_get_masters(true);
+        if (!isset($masters[$mid])) {
+            wp_send_json_error(array('message' => __('Мастер не найден', 'csc')));
+        }
+
+        // SHA-256: админ не вводит «живой» токен.
+        // 1) regen=1 — сервер создаёт новый постоянный токен, в хранилище кладётся только его хэш;
+        // 2) без regen — поле формы передаётся только как stored (хэш sha256$... или legacy открытый).
+        $token = sanitize_text_field($_POST['token'] ?? '');
+
+        if ($regen) {
+            $plain = bin2hex(random_bytes(24)); // 48 символов
+            $masters[$mid]['dashboard_token'] = csc_hash_token($plain);
+            csc_save_masters($masters);
+        } elseif (!empty($token)) {
+            if (csc_is_hashed_token($token)) {
+                $stored = $token;
+            } elseif (strlen($token) >= 16) {
+                $stored = csc_hash_token($token);
+            } else {
+                wp_send_json_error(array('message' => __('Слишком короткий токен (минимум 16 символов)', 'csc')));
+            }
+            $masters[$mid]['dashboard_token'] = $stored;
+            csc_save_masters($masters);
+        }
+
+        // Если stored-токена всё ещё нет (новый мастер) — генерируем,
+        // чтобы ссылка кабинета была рабочей.
+        if (empty($masters[$mid]['dashboard_token'])) {
+            $plain = bin2hex(random_bytes(24));
+            $masters[$mid]['dashboard_token'] = csc_hash_token($plain);
+            csc_save_masters($masters);
+        }
+
+        // Ссылка входа формируется с одноразовым входным креденшелом,
+        // а не со stored-значением (хэш в URL недопустим).
+        $login_token = csc_issue_master_login_token($mid, $masters);
+
+        wp_send_json_success(array(
+            'message' => __('Токен сохранен', 'csc'),
+            'link'    => $login_token !== ''
+                ? home_url('/?csc_master_dashboard=1&mid=' . urlencode($mid) . '&token=' . urlencode($login_token))
+                : home_url('/?csc_master_dashboard=1'),
+        ));
+    }
+    add_action('wp_ajax_csc_save_master_token', 'csc_save_master_token_ajax');
+}
+
+/**
+* ИСПРАВЛЕНО (защита ЛК мастера): проверка одноразового входного токена.
+* Возвращает master_id при совпадении и УДАЛЯЕТ transient (однократное использование).
+*
+* @param string $token Предъявленный токен из URL
+* @return string|false ID мастера или false
+*/
+if (!function_exists('csc_verify_master_login_token')) {
+    function csc_verify_master_login_token($token) {
+        $token = (string)$token;
+        if ($token === '' || strlen($token) < 16) return false;
+        $key = 'csc_dash_login_' . md5($token);
+        $data = get_transient($key);
+        if (!$data || !is_array($data) || empty($data['mid'])) return false;
+        delete_transient($key); // однократность
+        return (string)$data['mid'];
+    }
+}
+
+/**
+* ИСПРАВЛЕНО (защита ЛК клиента): выдача «живого» токена сессии клиента при входе
+* по телефону (+ номеру заявки).
+*
+* В хранилище заказа лежит только SHA-256 хэш auth_token, из которого открытый
+* токен не восстанавливается, а исходный токен был показан клиенту один раз при
+* создании заявки. Поэтому при входе без предъявления валидного токена генерируется
+* НОВЫЙ токен сессии: его хэш заменяет stored-значение заказа, открытая часть
+* возвращается клиенту и живёт до перезагрузки страницы. Повторные AJAX-операции
+* ЛК (отмена, отзывы, платежи) сверяются через csc_verify_token как обычно.
+*
+* @param string $order_number Номер заказа
+* @param string $phone        Нормализованный телефон владельца (доп. проверка)
+* @return string Открытый токен сессии ('' если заказ не найден или чужой телефон)
+*/
+if (!function_exists('csc_issue_customer_session_token')) {
+    function csc_issue_customer_session_token($order_number, $phone = '') {
+        if (empty($order_number)) return '';
+        $all = function_exists('csc_get_all_orders') ? csc_get_all_orders() : get_option('csc_all_orders', []);
+        $order = $all[$order_number] ?? null;
+        if (!is_array($order)) return '';
+
+        // Токен выдаём только владельцу телефона (или при поиске без указания телефона)
+        if ($phone !== '') {
+            $order_phone = function_exists('csc_normalize_phone')
+                ? csc_normalize_phone($order['phone'] ?? '')
+                : ($order['phone'] ?? '');
+            if ($order_phone !== $phone) return '';
+        }
+
+        $fresh = wp_generate_password(32, false);
+        $hash  = csc_hash_token($fresh);
+        if (function_exists('csc_update_order_auth_token')) {
+            csc_update_order_auth_token($order_number, $hash);
+        } else {
+            $order['auth_token'] = $hash;
+            $all[$order_number]  = $order;
+            update_option('csc_all_orders', $all, false);
+            // Инвалидация кэша при фолбэк-записи токена мимо csc_update_order_auth_token
+            if (function_exists('csc_cache_delete_orders')) {
+                csc_cache_delete_orders();
+            }
+        }
+        return $fresh;
+    }
+}
+
+/**
+* ИСПРАВЛЕНО (защита ЛК мастера): нормализация «живого» токена сессии после входа в кабинет.
+*
+* В хранилище после миграции лежит только SHA-256 хэш, из которого открытый токен
+* не восстанавливается, а входной креденшел из URL — одноразовый (повторно сверить
+* его нельзя). Поэтому для REST/AJAX-вызовов страницы выдаётся НОВЫЙ постоянный
+* открытый токен: его хэш сохраняется в хранилище, открытая часть хранится только
+* в памяти страницы (wp_localize_script) и живёт до перезагрузки кабинета.
+* Legacy-мастера с открытым stored-токеном сохраняют своё значение (ленивая
+* миграция в хэш произойдёт при первой же сверке csc_verify_token).
+*
+* @param string       $master_id    ID мастера
+* @param array        $masters      Список мастеров (по ссылке — обновляется in-place)
+* @param callable|null $on_save     Колбэк сохранения списка (по умолчанию update_option + сброс кэша)
+* @return string Открытый токен для текущей сессии ('' если данных нет)
+*/
+if (!function_exists('csc_normalize_master_session_token')) {
+    function csc_normalize_master_session_token($master_id, &$masters, $on_save = null) {
+        if (empty($master_id) || empty($masters[$master_id])) return '';
+
+        $stored = isset($masters[$master_id]['dashboard_token']) ? (string)$masters[$master_id]['dashboard_token'] : '';
+
+        // Хэш в хранилище → новый постоянный открытый токен этой сессии
+        if (function_exists('csc_is_hashed_token') && csc_is_hashed_token($stored)) {
+            $fresh = wp_generate_password(32, false);
+            $masters[$master_id]['dashboard_token'] = csc_hash_token($fresh);
+            if (is_callable($on_save)) {
+                call_user_func($on_save, $masters);
+            } else {
+                update_option('csc_masters_list', $masters, false);
+                if (function_exists('csc_cache_delete_masters')) {
+                    csc_cache_delete_masters();
+                }
+            }
+            return $fresh;
+        }
+
+        // Legacy открытый токен — оставляем working значением сессии
+        if ($stored !== '' && strlen($stored) >= 16) {
+            return $stored;
+        }
+
+        return '';
+    }
+}
+
+/**
 * Получить IP клиента с учётом прокси / балансировщика.
 * ИСПРАВЛЕНО: поддержка X-Forwarded-For, X-Real-IP.
 */
@@ -706,7 +1359,7 @@ try {
 $current = new DateTime($date . ' ' . str_pad($start_hour, 2, '0', STR_PAD_LEFT) . ':00:00', $tz);
 $end = new DateTime($date . ' ' . str_pad($end_hour, 2, '0', STR_PAD_LEFT) . ':00:00', $tz);
 } catch (Exception $e) {
-error_log('[CSC_SLOTS] Ошибка парсинга даты: ' . $e->getMessage());
+csc_log('Ошибка парсинга даты: ' . $e->getMessage());
 return [];
 }
 // ============================================================
@@ -982,11 +1635,8 @@ function csc_geocode_address($address, $country = 'ru') {
     $address_variants = csc_prepare_address_variants($original_address);
     
     foreach ($address_variants as $index => $variant) {
-        // Задержка между запросами к Nominatim (лимит 1 запрос/сек)
-        if ($index > 0) {
-            usleep(1100000); // 1.1 секунды
-        }
-        
+        // Задержка между запросами к Nominatim (лимит 1 запрос/сек) выдерживается
+        // централизованно в csc_nominatim_search() -> csc_nominatim_throttle()
         $result = csc_nominatim_search($variant, $country);
         
         if ($result['status'] === 'ok' && csc_validate_coordinates($result['lat'], $result['lng'])) {
@@ -1013,7 +1663,7 @@ function csc_geocode_address($address, $country = 'ru') {
     ];
     csc_save_geocode_cache($original_address, $negative, 3600); // 1 час вместо 24
     
-    error_log('[CSC_GEOCODE] FAILED: ' . $original_address);
+    csc_log('Geocode FAILED: ' . $original_address);
     return $negative;
 }
 }
@@ -1063,10 +1713,52 @@ function csc_prepare_address_variants($address) {
 }
 
 /**
+ * Единый User-Agent для всех запросов к Nominatim (требование OSM Usage Policy).
+ * Версия берётся из константы плагина, добавлен контактный e-mail администратора.
+ */
+if (!function_exists('csc_nominatim_user_agent')) {
+function csc_nominatim_user_agent() {
+    static $ua = null;
+    if ($ua !== null) {
+        return $ua;
+    }
+    $version = defined('CSC_PLUGIN_VERSION') ? CSC_PLUGIN_VERSION : '9.0';
+    $contact = sanitize_email(get_option('admin_email', 'admin@example.com'));
+    if (empty($contact)) {
+        $contact = 'admin@example.com';
+    }
+    $ua = 'CustomServiceCalculator/' . $version . ' (WordPress plugin; contact: ' . $contact . ')';
+    return $ua;
+}
+}
+
+/**
+ * Троттлинг запросов к Nominatim: не чаще 1 запроса в секунду (лимит OSM).
+ * Учитывает ВСЕ точки вызова (search + reverse) внутри одного PHP-процесса:
+ * досыпает остаток до минимального интервала перед каждым запросом.
+ */
+if (!function_exists('csc_nominatim_throttle')) {
+function csc_nominatim_throttle($min_interval = 1) {
+    global $csc_last_nominatim_request;
+    $now = microtime(true);
+    if (isset($csc_last_nominatim_request) && $csc_last_nominatim_request > 0) {
+        $elapsed = $now - $csc_last_nominatim_request;
+        if ($elapsed < $min_interval) {
+            usleep((int) ceil(($min_interval - $elapsed) * 1000000));
+        }
+    }
+    $csc_last_nominatim_request = microtime(true);
+}
+}
+
+/**
  * Запрос к Nominatim API с правильными заголовками
  */
 if (!function_exists('csc_nominatim_search')) {
 function csc_nominatim_search($query, $country = 'ru') {
+    // Лимит OSM: не чаще 1 запроса/сек (между всеми запросами, включая reverse)
+    csc_nominatim_throttle(1);
+
     $url = add_query_arg([
         'format'     => 'json',
         'q'          => $query,
@@ -1078,22 +1770,22 @@ function csc_nominatim_search($query, $country = 'ru') {
     $response = wp_remote_get($url, [
         'timeout' => 15,
         'headers' => [
-            // Nominatim требует осмысленный User-Agent
-            'User-Agent' => 'CSC-Booking/9.0 (WordPress plugin; contact: ' . get_option('admin_email', 'admin@example.com') . ')',
+            // Nominatim требует осмысленный User-Agent — единый для всего плагина
+            'User-Agent' => function_exists('csc_nominatim_user_agent') ? csc_nominatim_user_agent() : ('CustomServiceCalculator/9.0 (WordPress plugin; contact: ' . get_option('admin_email', 'admin@example.com') . ')'),
             'Accept'     => 'application/json',
             'Accept-Language' => 'ru,en',
         ],
     ]);
     
     if (is_wp_error($response)) {
-        error_log('[CSC_GEOCODE] Network error: ' . $response->get_error_message() . ' | Query: ' . $query);
+        csc_log('Network error: ' . $response->get_error_message() . ' | Query: ' . $query);
         return ['lat' => null, 'lng' => null, 'display_name' => '', 'status' => 'failed', 'message' => 'Ошибка сети'];
     }
     
     $code = wp_remote_retrieve_response_code($response);
     if ($code === 429) {
         // Rate limit — Nominatim просит замедлиться
-        error_log('[CSC_GEOCODE] Rate limited (429)');
+        csc_log('Rate limited by Nominatim (HTTP 429)');
         sleep(2);
         return ['lat' => null, 'lng' => null, 'display_name' => '', 'status' => 'failed', 'message' => 'Rate limited'];
     }
@@ -1133,7 +1825,7 @@ function csc_validate_coordinates($lat, $lng) {
     $in_russia_lng = ($lng >= 19.0 && $lng <= 180.0) || ($lng >= -180.0 && $lng <= -168.0);
     
     if (!$in_russia_lat || !$in_russia_lng) {
-        error_log("[CSC_GEOCODE] Координаты вне России: {$lat}, {$lng}");
+        csc_log("Координаты вне России: {$lat}, {$lng}", 'debug', 'GEOCODE');
         return false;
     }
     
@@ -1145,6 +1837,7 @@ function csc_validate_coordinates($lat, $lng) {
 // 9. PWA / WEB APP (ИСПРАВЛЕНО: esc_url для всех URL)
 // ============================================================
 add_action('wp_head', 'csc_pwa_head');
+if (!function_exists('csc_pwa_head')) {
 function csc_pwa_head() {
     if (defined('CSC_PLUGIN_URL')) {
         // ИСПРАВЛЕНО: все URL обёрнуты в esc_url()
@@ -1154,8 +1847,10 @@ function csc_pwa_head() {
         echo '<meta name="apple-mobile-web-app-capable" content="yes">';
     }
 }
+}
 
 add_action('init', 'csc_register_sw');
+if (!function_exists('csc_register_sw')) {
 function csc_register_sw() {
     if (isset($_GET['csc-sw'])) {
         // ИСПРАВЛЕНО: Отключаем кэширование, чтобы браузер всегда получал актуальный Service Worker
@@ -1165,8 +1860,10 @@ function csc_register_sw() {
         exit;
     }
 }
+}
 
 add_action('wp_head', 'csc_sw_loader');
+if (!function_exists('csc_sw_loader')) {
 function csc_sw_loader() {
     if (is_ssl()) {
         // ИСПРАВЛЕНО: home_url обёрнут в esc_url()
@@ -1180,4 +1877,5 @@ function csc_sw_loader() {
         }
         </script>";
     }
+}
 }

@@ -113,7 +113,7 @@ if (!function_exists('csc_backup_get_directory')) {
         // Создаём директорию если не существует
         if (!file_exists($backup_dir)) {
             if (!wp_mkdir_p($backup_dir)) {
-                error_log('[CSC_BACKUP] Не удалось создать директорию бэкапов: ' . $backup_dir);
+                csc_log('Не удалось создать директорию бэкапов: ' . $backup_dir);
                 return false;
             }
         }
@@ -151,7 +151,7 @@ if (!function_exists('csc_backup_get_financial_directory')) {
 
         if (!file_exists($financial_dir)) {
             if (!wp_mkdir_p($financial_dir)) {
-                error_log('[CSC_BACKUP] Не удалось создать директорию финансовых бэкапов: ' . $financial_dir);
+                csc_log('Не удалось создать директорию финансовых бэкапов: ' . $financial_dir);
                 return false;
             }
         }
@@ -191,7 +191,7 @@ if (!function_exists('csc_process_backup')) {
         // Защита от параллельного выполнения
         $lock_key = 'csc_backup_lock';
         if (get_transient($lock_key)) {
-            error_log('[CSC_BACKUP] Бэкап уже выполняется, пропускаем.');
+            csc_log('Бэкап уже выполняется, пропускаем.');
             return;
         }
         set_transient($lock_key, 1, CSC_BACKUP_MAX_EXECUTION_TIME);
@@ -209,7 +209,7 @@ if (!function_exists('csc_process_backup')) {
         // Проверяем свободное место на диске
         $free_space = disk_free_space($backup_dir);
         if ($free_space !== false && $free_space < CSC_BACKUP_MIN_FREE_SPACE) {
-            error_log('[CSC_BACKUP] Недостаточно свободного места на диске: ' . round($free_space / 1024 / 1024, 2) . ' МБ');
+            csc_log('Недостаточно свободного места на диске: ' . round($free_space / 1024 / 1024, 2) . ' МБ');
             csc_backup_notify_admin_error('Недостаточно свободного места на диске для создания бэкапа.');
             delete_transient($lock_key);
             return;
@@ -250,7 +250,7 @@ if (!function_exists('csc_process_backup')) {
         // Логируем результат
         $success_count = count(array_filter($results));
         $total_count = count($results);
-        error_log("[CSC_BACKUP] Бэкап завершён: {$success_count}/{$total_count} таблиц успешно.");
+        csc_log("Бэкап завершён: {$success_count}/{$total_count} таблиц успешно.", 'info', 'BACKUP');
 
         // Уведомляем админа при ошибке
         if ($success_count < $total_count) {
@@ -285,7 +285,7 @@ if (!function_exists('csc_backup_table_orders')) {
 
         // Если файл за сегодня уже существует — пропускаем (защита от дублей)
         if (file_exists($filepath)) {
-            error_log('[CSC_BACKUP] Бэкап заказов за ' . $date_str . ' уже существует.');
+            csc_log('Бэкап заказов за ' . $date_str . ' уже существует.');
             return $filepath;
         }
 
@@ -293,7 +293,7 @@ if (!function_exists('csc_backup_table_orders')) {
         $all_orders = csc_get_all_orders();
 
         if (empty($all_orders)) {
-            error_log('[CSC_BACKUP] Нет заказов для бэкапа.');
+            csc_log('Нет заказов для бэкапа.');
             // Создаём пустой файл с заголовками для фиксации даты
             $handle = fopen($filepath, 'w');
             if ($handle === false) return false;
@@ -321,7 +321,7 @@ if (!function_exists('csc_backup_table_orders')) {
 
         $handle = fopen($filepath, 'w');
         if ($handle === false) {
-            error_log('[CSC_BACKUP] Не удалось создать файл: ' . $filepath);
+            csc_log('Не удалось создать файл: ' . $filepath);
             return false;
         }
 
@@ -400,7 +400,7 @@ if (!function_exists('csc_backup_table_orders')) {
         }
 
         fclose($handle);
-        error_log('[CSC_BACKUP] Бэкап заказов создан: ' . $filename . ' (' . count($all_orders) . ' записей)');
+        csc_log('Бэкап заказов создан: ' . $filename . ' (' . count($all_orders) . ' записей)');
         return $filepath;
     }
 }
@@ -430,7 +430,7 @@ if (!function_exists('csc_backup_table_history')) {
 
         // Проверяем существование таблицы
         if ($wpdb->get_var("SHOW TABLES LIKE '{$table}'") !== $table) {
-            error_log('[CSC_BACKUP] Таблица истории не найдена: ' . $table);
+            csc_log('Таблица истории не найдена: ' . $table);
             return false;
         }
 
@@ -462,7 +462,7 @@ if (!function_exists('csc_backup_table_history')) {
         }
 
         fclose($handle);
-        error_log('[CSC_BACKUP] Бэкап истории создан: ' . $filename . ' (' . count($results) . ' записей)');
+        csc_log('Бэкап истории создан: ' . $filename . ' (' . count($results) . ' записей)');
         return $filepath;
     }
 }
@@ -492,7 +492,7 @@ if (!function_exists('csc_backup_table_notifications')) {
 
         // Проверяем существование таблицы
         if ($wpdb->get_var("SHOW TABLES LIKE '{$table}'") !== $table) {
-            error_log('[CSC_BACKUP] Таблица уведомлений не найдена: ' . $table);
+            csc_log('Таблица уведомлений не найдена: ' . $table);
             return false;
         }
 
@@ -531,7 +531,7 @@ if (!function_exists('csc_backup_table_notifications')) {
         }
 
         fclose($handle);
-        error_log('[CSC_BACKUP] Бэкап уведомлений создан: ' . $filename . ' (' . count($results) . ' записей)');
+        csc_log('Бэкап уведомлений создан: ' . $filename . ' (' . count($results) . ' записей)');
         return $filepath;
     }
 }
@@ -562,7 +562,7 @@ if (!function_exists('csc_backup_table_transactions')) {
 
         // Проверяем существование таблицы
         if ($wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table)) !== $table) {
-            error_log('[CSC_BACKUP] Таблица транзакций не найдена: ' . $table);
+            csc_log('Таблица транзакций не найдена: ' . $table);
             return false;
         }
 
@@ -576,7 +576,7 @@ if (!function_exists('csc_backup_table_transactions')) {
 
         $handle = fopen($filepath, 'w');
         if ($handle === false) {
-            error_log('[CSC_BACKUP] Не удалось создать файл транзакций: ' . $filepath);
+            csc_log('Не удалось создать файл транзакций: ' . $filepath);
             return false;
         }
 
@@ -642,7 +642,7 @@ if (!function_exists('csc_backup_table_transactions')) {
         }
 
         fclose($handle);
-        error_log('[CSC_BACKUP] Бэкап транзакций создан: ' . $filename . ' (' . $total_count . ' записей)');
+        csc_log('Бэкап транзакций создан: ' . $filename . ' (' . $total_count . ' записей)');
         return $filepath;
     }
 }
@@ -673,7 +673,7 @@ if (!function_exists('csc_backup_table_ledger')) {
 
         // Проверяем существование таблицы
         if ($wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table)) !== $table) {
-            error_log('[CSC_BACKUP] Таблица финансового журнала не найдена: ' . $table);
+            csc_log('Таблица финансового журнала не найдена: ' . $table);
             return false;
         }
 
@@ -681,7 +681,7 @@ if (!function_exists('csc_backup_table_ledger')) {
 
         $handle = fopen($filepath, 'w');
         if ($handle === false) {
-            error_log('[CSC_BACKUP] Не удалось создать файл журнала: ' . $filepath);
+            csc_log('Не удалось создать файл журнала: ' . $filepath);
             return false;
         }
 
@@ -735,7 +735,7 @@ if (!function_exists('csc_backup_table_ledger')) {
         }
 
         fclose($handle);
-        error_log('[CSC_BACKUP] Бэкап финансового журнала создан: ' . $filename . ' (' . $total_count . ' записей)');
+        csc_log('Бэкап финансового журнала создан: ' . $filename . ' (' . $total_count . ' записей)');
         return $filepath;
     }
 }
@@ -766,7 +766,7 @@ if (!function_exists('csc_backup_table_invoices')) {
 
         // Проверяем существование таблицы
         if ($wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table)) !== $table) {
-            error_log('[CSC_BACKUP] Таблица квитанций не найдена: ' . $table);
+            csc_log('Таблица квитанций не найдена: ' . $table);
             return false;
         }
 
@@ -774,7 +774,7 @@ if (!function_exists('csc_backup_table_invoices')) {
 
         $handle = fopen($filepath, 'w');
         if ($handle === false) {
-            error_log('[CSC_BACKUP] Не удалось создать файл квитанций: ' . $filepath);
+            csc_log('Не удалось создать файл квитанций: ' . $filepath);
             return false;
         }
 
@@ -806,7 +806,7 @@ if (!function_exists('csc_backup_table_invoices')) {
         }
 
         fclose($handle);
-        error_log('[CSC_BACKUP] Бэкап квитанций создан: ' . $filename . ' (' . count($results) . ' записей)');
+        csc_log('Бэкап квитанций создан: ' . $filename . ' (' . count($results) . ' записей)');
         return $filepath;
     }
 }
@@ -837,7 +837,7 @@ if (!function_exists('csc_backup_table_fiscal')) {
 
         // Проверяем существование таблицы
         if ($wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table)) !== $table) {
-            error_log('[CSC_BACKUP] Таблица фискальных чеков не найдена: ' . $table);
+            csc_log('Таблица фискальных чеков не найдена: ' . $table);
             return false;
         }
 
@@ -845,7 +845,7 @@ if (!function_exists('csc_backup_table_fiscal')) {
 
         $handle = fopen($filepath, 'w');
         if ($handle === false) {
-            error_log('[CSC_BACKUP] Не удалось создать файл фискальных чеков: ' . $filepath);
+            csc_log('Не удалось создать файл фискальных чеков: ' . $filepath);
             return false;
         }
 
@@ -886,7 +886,7 @@ if (!function_exists('csc_backup_table_fiscal')) {
         }
 
         fclose($handle);
-        error_log('[CSC_BACKUP] Бэкап фискальных чеков создан: ' . $filename . ' (' . count($results) . ' записей)');
+        csc_log('Бэкап фискальных чеков создан: ' . $filename . ' (' . count($results) . ' записей)');
         return $filepath;
     }
 }
@@ -957,7 +957,7 @@ if (!function_exists('csc_backup_rotate_files')) {
         }
 
         if ($deleted_count > 0) {
-            error_log("[CSC_BACKUP] Ротация: удалено {$deleted_count} файлов старше {$retention_days} дней.");
+            csc_log("Ротация: удалено {$deleted_count} файлов старше {$retention_days} дней.", 'info', 'BACKUP');
         }
 
         // Хук после ротации (для расширений)

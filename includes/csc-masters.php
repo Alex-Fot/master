@@ -77,7 +77,8 @@ if (!function_exists('csc_get_masters')) {
                 'comm_type'       => 'percent',
                 'comm_val'        => 30,
                 'active'          => true,
-                'dashboard_token' => wp_generate_password(32, false)
+                // В хранилище — только хэш постоянного токена (SHA-256)
+                'dashboard_token' => csc_hash_token(wp_generate_password(32, false))
             ];
             update_option('csc_masters_list', $masters, false);
         }
@@ -85,9 +86,9 @@ if (!function_exists('csc_get_masters')) {
         // Гарантируем наличие dashboard_token + миграция модерационного статуса
         $need_save = false;
         foreach ($masters as $mid => &$mdata) {
-            // Токен дашборда
+            // Токен дашборда: при отсутствии генерируем на сервере, храним только хэш.
             if (empty($mdata['dashboard_token']) || strlen($mdata['dashboard_token']) < 16) {
-                $mdata['dashboard_token'] = wp_generate_password(32, false);
+                $mdata['dashboard_token'] = csc_hash_token(wp_generate_password(32, false));
                 $need_save = true;
             }
 
@@ -133,9 +134,9 @@ if (!function_exists('csc_save_masters')) {
                 $master['work_hours_end'] = $end;
             }
 
-            // Гарантируем наличие dashboard_token
+            // Гарантируем наличие dashboard_token (в хранилище — только хэш)
             if (empty($master['dashboard_token']) || strlen($master['dashboard_token']) < 16) {
-                $master['dashboard_token'] = wp_generate_password(32, false);
+                $master['dashboard_token'] = csc_hash_token(wp_generate_password(32, false));
             }
         }
         unset($master);
@@ -358,10 +359,17 @@ if (!function_exists('csc_masters_admin_page')) {
                         $comm_val = max(0, $comm_val);
                     }
 
-                    // Сохранение dashboard_token
+                    // Сохранение dashboard_token: из формы принимаем только stored-значение (хэш);
+                    // при отсутствии/некорректном значении генерируем новый токен на сервере,
+                    // в хранилище сохраняется только его хэш.
                     $dashboard_token = sanitize_text_field($m['dashboard_token'] ?? '');
-                    if (empty($dashboard_token) || strlen($dashboard_token) < 16) {
-                        $dashboard_token = wp_generate_password(32, false);
+                    if (csc_is_hashed_token($dashboard_token)) {
+                        // уже хэш — ок
+                    } elseif (!empty($dashboard_token) && strlen($dashboard_token) >= 16) {
+                        // legacy открытое значение из старой формы — мигрируем в хэш
+                        $dashboard_token = csc_hash_token($dashboard_token);
+                    } else {
+                        $dashboard_token = csc_hash_token(wp_generate_password(32, false));
                     }
 
                     $new_masters[$id] = [
@@ -386,8 +394,8 @@ if (!function_exists('csc_masters_admin_page')) {
         $masters_count = count($masters);
 
         // === ПОДКЛЮЧЕНИЕ LEAFLET ДЛЯ КАРТЫ ЗОНЫ ОБСЛУЖИВАНИЯ ===
-        echo '<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />';
-        echo '<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>';
+        echo '<link rel="stylesheet" href="' . esc_url(CSC_PLUGIN_URL . 'assets/vendor/leaflet/leaflet.css') . '" />';
+        echo '<script src="' . esc_url(CSC_PLUGIN_URL . 'assets/vendor/leaflet/leaflet.js') . '"></script>';
         ?>
         <div class="wrap">
             <h1>Управление Сотрудниками (Мастерами)</h1>
@@ -418,7 +426,7 @@ if (!function_exists('csc_masters_admin_page')) {
             <?php if ($pending_count > 0): ?>
             <div style="background:#fef3c7; border:1px solid #fbbf24; padding:12px 20px; border-radius:6px; margin-bottom:15px; display:flex; justify-content:space-between; align-items:center; gap:15px;">
                 <div>
-                    <strong>⏳ На модерации: <?php echo $pending_count; ?> <?php echo _n('мастер', 'мастера', $pending_count); ?></strong>
+                    <strong>⏳ На модерации: <?php echo (int) $pending_count; ?> <?php echo esc_html(_n('мастер', 'мастеров', $pending_count, 'csc')); ?></strong>
                     <span style="color:#64748b; margin-left:10px;">Требуется ваше решение</span>
                 </div>
                 <button type="button" class="button button-primary" onclick="cscBulkApproveMasters()" style="background:#10b981; border-color:#10b981;">
@@ -545,8 +553,7 @@ if (!function_exists('csc_masters_admin_page')) {
             const tbody = document.getElementById('masters-rows');
             const row = document.createElement('tr');
 
-            const newToken = Array.from(crypto.getRandomValues(new Uint8Array(24)))
-                .map(b => b.toString(16).padStart(2, '0')).join('');
+            const newToken = ''; // токен генерируется на сервере (csc_save_master_token)
 
             row.innerHTML = `
                 <td>
@@ -601,12 +608,6 @@ if (!function_exists('csc_masters_admin_page')) {
                     <button type="button" class="button button-primary" id="csc-dash-copy-btn">📋 Копировать</button>
                 </div>
 
-                <label style="display:block; font-size:13px; font-weight:600; margin-bottom:6px; color:#64748b;">Токен доступа (для отладки):</label>
-                <div style="display:flex; gap:8px; margin-bottom:16px;">
-                    <input type="text" id="csc-dash-token-input" readonly style="flex:1; padding:10px; border:1px solid #e2e8f0; border-radius:6px; font-size:12px; background:#f8fafc; font-family:monospace;" onclick="this.select();">
-                    <button type="button" class="button" id="csc-dash-token-copy-btn">📋</button>
-                </div>
-
                 <div style="display:flex; gap:8px; justify-content:space-between; align-items:center;">
                     <button type="button" class="button button-link-delete" id="csc-dash-regen-btn" title="Сгенерировать новый токен. Старая ссылка перестанет работать.">🔄 Сбросить токен</button>
                     <button type="button" class="button" onclick="document.getElementById('csc-dash-link-modal').style.display='none'">Закрыть</button>
@@ -641,7 +642,6 @@ if (!function_exists('csc_masters_admin_page')) {
         function cscShowDashboardLink(masterId, masterName, btnEl) {
             const modal = document.getElementById('csc-dash-link-modal');
             const linkInput = document.getElementById('csc-dash-link-input');
-            const tokenInput = document.getElementById('csc-dash-token-input');
             const statusEl = document.getElementById('csc-dash-status');
             const hiddenInput = btnEl.closest('td').querySelector('input[name*="dashboard_token"]');
 
@@ -649,62 +649,42 @@ if (!function_exists('csc_masters_admin_page')) {
             cscCurrentHiddenInput = hiddenInput;
 
             document.getElementById('csc-dash-master-name').textContent = masterName;
-            statusEl.textContent = '';
+            statusEl.textContent = '⏳ Получение ссылки...';
             statusEl.style.color = '#64748b';
 
-            let token = hiddenInput ? hiddenInput.value : '';
-            let needsSave = false;
+            // КЛИЕНТСКАЯ ГЕНЕРАЦИЯ ТОКЕНОВ УБРАНА (SHA-256): ссылка выдаётся
+            // сервером (AJAX csc_save_master_token) — в хранилище только хэш,
+            // в URL — одноразовый входной креденшел. «Живой» токен не показывается.
+            const fd = new FormData();
+            fd.append('action', 'csc_save_master_token');
+            fd.append('mid', masterId);
+            fd.append('_wpnonce', '<?php echo wp_create_nonce("csc_masters_action"); ?>');
 
-            if (!token || token.length < 16) {
-                token = Array.from(crypto.getRandomValues(new Uint8Array(24)))
-                    .map(b => b.toString(16).padStart(2, '0')).join('');
-                if (hiddenInput) hiddenInput.value = token;
-                needsSave = true;
-            }
-
-            const baseUrl = '<?php echo esc_js(home_url('/')); ?>';
-            const dashLink = baseUrl + '?csc_master_dashboard=1&mid=' + encodeURIComponent(masterId) + '&token=' + encodeURIComponent(token);
-
-            linkInput.value = dashLink;
-            tokenInput.value = token;
-            modal.style.display = 'flex';
-
-            if (needsSave) {
-                statusEl.textContent = '💾 Сохранение токена...';
-                statusEl.style.color = '#d97706';
-
-                const fd = new FormData();
-                fd.append('action', 'csc_save_master_token');
-                fd.append('mid', masterId);
-                fd.append('token', token);
-                fd.append('_wpnonce', '<?php echo wp_create_nonce("csc_masters_action"); ?>');
-
-                fetch('<?php echo esc_url(admin_url("admin-ajax.php")); ?>', {
-                    method: 'POST',
-                    body: fd
-                })
-                .then(r => {
-                    if (!r.ok) throw new Error('HTTP error: ' + r.status);
-                    return r.json();
-                })
-                .then(res => {
-                    if (res.success) {
-                        statusEl.textContent = '✅ Токен сохранен. Ссылка активна!';
-                        statusEl.style.color = '#10b981';
-                        if (hiddenInput) hiddenInput.value = token;
-                    } else {
-                        statusEl.textContent = '⚠️ ' + (res.data?.message || 'Ошибка сохранения. Нажмите «Сохранить изменения».');
-                        statusEl.style.color = '#d97706';
-                    }
-                })
-                .catch(err => {
-                    statusEl.textContent = '⚠️ Ошибка сети. Нажмите «Сохранить изменения» для сохранения токена.';
+            fetch('<?php echo esc_url(admin_url("admin-ajax.php")); ?>', {
+                method: 'POST',
+                body: fd
+            })
+            .then(r => {
+                if (!r.ok) throw new Error('HTTP error: ' + r.status);
+                return r.json();
+            })
+            .then(res => {
+                if (res.success) {
+                    linkInput.value = res.data.link || '';
+                    modal.style.display = 'flex';
+                    statusEl.textContent = '✅ Ссылка готова (одноразовый вход). Постоянный токен хранится в виде хэша.';
+                    statusEl.style.color = '#10b981';
+                } else {
+                    modal.style.display = 'flex';
+                    statusEl.textContent = '⚠️ ' + (res.data?.message || 'Ошибка генерации ссылки.');
                     statusEl.style.color = '#d97706';
-                });
-            } else {
-                statusEl.textContent = '✅ Токен уже сохранен. Ссылка активна!';
-                statusEl.style.color = '#10b981';
-            }
+                }
+            })
+            .catch(err => {
+                modal.style.display = 'flex';
+                statusEl.textContent = '⚠️ Ошибка сети: ' + err.message;
+                statusEl.style.color = '#d97706';
+            });
         }
 
         document.getElementById('csc-dash-copy-btn').addEventListener('click', function() {
@@ -721,42 +701,21 @@ if (!function_exists('csc_masters_admin_page')) {
             });
         });
 
-        document.getElementById('csc-dash-token-copy-btn').addEventListener('click', function() {
-            const input = document.getElementById('csc-dash-token-input');
-            input.select();
-            navigator.clipboard.writeText(input.value).catch(() => document.execCommand('copy'));
-            const statusEl = document.getElementById('csc-dash-status');
-            statusEl.textContent = '✅ Токен скопирован';
-            statusEl.style.color = '#10b981';
-        });
-
         document.getElementById('csc-dash-regen-btn').addEventListener('click', function() {
-            if (!confirm('Сгенерировать новый токен? Старая ссылка на кабинет перестанет работать.')) return;
+            if (!confirm('Сбросить токен? Старая ссылка на кабинет перестанет работать.')) return;
 
-            const tokenInput = document.getElementById('csc-dash-token-input');
             const linkInput = document.getElementById('csc-dash-link-input');
             const statusEl = document.getElementById('csc-dash-status');
 
-            const newToken = Array.from(crypto.getRandomValues(new Uint8Array(24)))
-                .map(b => b.toString(16).padStart(2, '0')).join('');
-
-            tokenInput.value = newToken;
-
-            const baseUrl = '<?php echo esc_js(home_url('/')); ?>';
-            const dashLink = baseUrl + '?csc_master_dashboard=1&mid=' + encodeURIComponent(cscCurrentMasterId) + '&token=' + encodeURIComponent(newToken);
-            linkInput.value = dashLink;
-
-            if (cscCurrentHiddenInput) {
-                cscCurrentHiddenInput.value = newToken;
-            }
-
-            statusEl.textContent = '💾 Сохранение нового токена...';
+            // Генерация — на сервере (regen=1): новый постоянный токен создаётся
+            // и хэшируется в хранилище; в ответ приходит только одноразовая ссылка входа.
+            statusEl.textContent = '💾 Сброс токена...';
             statusEl.style.color = '#d97706';
 
             const fd = new FormData();
             fd.append('action', 'csc_save_master_token');
             fd.append('mid', cscCurrentMasterId);
-            fd.append('token', newToken);
+            fd.append('regen', '1');
             fd.append('_wpnonce', '<?php echo wp_create_nonce("csc_masters_action"); ?>');
 
             fetch('<?php echo esc_url(admin_url("admin-ajax.php")); ?>', {
@@ -769,15 +728,16 @@ if (!function_exists('csc_masters_admin_page')) {
             })
             .then(res => {
                 if (res.success) {
-                    statusEl.textContent = '✅ Новый токен сохранен!';
+                    linkInput.value = res.data.link || '';
+                    statusEl.textContent = '✅ Новый токен сохранен на сервере!';
                     statusEl.style.color = '#10b981';
                 } else {
-                    statusEl.textContent = '⚠️ Нажмите «Сохранить изменения» для закрепления нового токена.';
+                    statusEl.textContent = '⚠️ ' + (res.data?.message || 'Ошибка сброса токена.');
                     statusEl.style.color = '#d97706';
                 }
             })
             .catch(() => {
-                statusEl.textContent = '⚠️ Ошибка сети. Нажмите «Сохранить изменения» для закрепления.';
+                statusEl.textContent = '⚠️ Ошибка сети.';
                 statusEl.style.color = '#d97706';
             });
         });
@@ -1080,7 +1040,10 @@ if (!function_exists('csc_masters_admin_page')) {
                 cscModerateMasterFromModal(currentMasterId, 'block', reason);
             });
 
-            function cscOpenMasterView(masterId) {
+            // Фикс: функции объявлены внутри IIFE и не видны из глобальной области.
+            // Экспортируем их в window, иначе делегированный обработчик клика по кнопке
+            // "Просмотр" получал ReferenceError: cscOpenMasterView is not defined.
+            window.cscOpenMasterView = function cscOpenMasterView(masterId) {
                 currentMasterId = masterId;
                 currentMasterData = null;
                 zoneMapInstance = null;
@@ -1122,13 +1085,13 @@ if (!function_exists('csc_masters_admin_page')) {
                     });
             }
 
-            function cscShowViewError(message) {
+            window.cscShowViewError = function cscShowViewError(message) {
                 document.getElementById('csc-mv-loading').style.display = 'none';
                 document.getElementById('csc-mv-error').style.display = 'block';
                 document.getElementById('csc-mv-error-text').textContent = message;
-            }
+            };
 
-            function cscRenderMasterView(data) {
+            window.cscRenderMasterView = function cscRenderMasterView(data) {
                 document.getElementById('csc-mv-loading').style.display = 'none';
                 document.getElementById('csc-mv-content').style.display = 'block';
 
@@ -1442,7 +1405,7 @@ if (!function_exists('csc_masters_admin_page')) {
                 return num.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 });
             }
 
-            function cscEscapeHtml(str) {
+            window.cscEscapeHtml = function cscEscapeHtml(str) {
                 if (str === null || str === undefined) return '';
                 return String(str)
                     .replace(/&/g, '&amp;')
@@ -1450,7 +1413,7 @@ if (!function_exists('csc_masters_admin_page')) {
                     .replace(/>/g, '&gt;')
                     .replace(/"/g, '&quot;')
                     .replace(/'/g, '&#039;');
-            }
+            };
         })();
         </script>
         <?php
@@ -1572,26 +1535,59 @@ if (!function_exists('csc_save_master_token_ajax')) {
         }
 
         $mid = sanitize_text_field($_POST['mid'] ?? '');
-        $token = sanitize_text_field($_POST['token'] ?? '');
+        $regen = !empty($_POST['regen']);
 
-        if (empty($mid) || empty($token) || strlen($token) < 16) {
-            wp_send_json_error(['message' => 'Недостаточно данных']);
+        if (empty($mid)) {
+            wp_send_json_error(array('message' => __('Не указан ID мастера', 'csc')));
         }
 
         // Получаем свежий список мастеров (сброс кэша)
         $masters = csc_get_masters(true);
 
         if (!isset($masters[$mid])) {
-            wp_send_json_error(['message' => 'Мастер не найден']);
+            wp_send_json_error(array('message' => __('Мастер не найден', 'csc')));
         }
 
-        // Сохраняем токен
-        $masters[$mid]['dashboard_token'] = $token;
-        csc_save_masters($masters);
+        // ИСПРАВЛЕНО (SHA-256): админ больше не вводит «живой» токен.
+        // 1) regen=1 — сервер создаёт новый постоянный токен, в хранилище кладётся только его хэш;
+        // 2) без regen — поле формы передаётся только как stored (хэш sha256$... или legacy открытый),
+        //    что сохраняет совместимость со скрытым полем таблицы мастеров при обычном сохранении.
+        $token = sanitize_text_field($_POST['token'] ?? '');
+
+        if ($regen) {
+            $plain = bin2hex(random_bytes(24)); // 48 символов
+            $masters[$mid]['dashboard_token'] = csc_hash_token($plain);
+            csc_save_masters($masters);
+        } elseif (!empty($token)) {
+            if (csc_is_hashed_token($token)) {
+                $stored = $token;
+            } elseif (strlen($token) >= 16) {
+                $stored = function_exists('csc_hash_token') ? csc_hash_token($token) : $token;
+            } else {
+                wp_send_json_error(array('message' => __('Слишком короткий токен (минимум 16 символов)', 'csc')));
+            }
+            $masters[$mid]['dashboard_token'] = $stored;
+            csc_save_masters($masters);
+        }
+        // Если stored-токена всё ещё нет (новый мастер / пустое поле) — генерируем,
+        // чтобы ссылка кабинета была рабочей.
+        if (empty($masters[$mid]['dashboard_token'])) {
+            $plain = bin2hex(random_bytes(24));
+            $masters[$mid]['dashboard_token'] = csc_hash_token($plain);
+            csc_save_masters($masters);
+        }
+
+        // Ссылка входа формируется с одноразовым входным креденшелом,
+        // а не с stored-значением (хэш в URL недопустим).
+        $login_token = function_exists('csc_issue_master_login_token')
+            ? csc_issue_master_login_token($mid, $masters)
+            : '';
 
         wp_send_json_success([
             'message' => 'Токен сохранен',
-            'link' => home_url('/?csc_master_dashboard=1&mid=' . urlencode($mid) . '&token=' . urlencode($token))
+            'link'    => $login_token !== ''
+                ? home_url('/?csc_master_dashboard=1&mid=' . urlencode($mid) . '&token=' . urlencode($login_token))
+                : home_url('/?csc_master_dashboard=1'),
         ]);
     }
 }
@@ -1677,8 +1673,14 @@ if (!function_exists('csc_moderate_master_ajax')) {
         // ============================================================
         $master_email = isset($master['email']) ? $master['email'] : '';
         if (!empty($master_email)) {
-            $dashboard_token = isset($master['dashboard_token']) ? $master['dashboard_token'] : '';
-            $dashboard_url = home_url('/?csc_master_dashboard=1&mid=' . urlencode($mid) . '&token=' . urlencode($dashboard_token));
+            // ИСПРАВЛЕНО (SHA-256): stored-значение — хэш, в e-mail подставляется
+            // одноразовый входной креденшел (ссылка активна 24 часа).
+            $dashboard_token = function_exists('csc_issue_master_login_token')
+                ? csc_issue_master_login_token($mid, $masters)
+                : '';
+            $dashboard_url = $dashboard_token !== ''
+                ? home_url('/?csc_master_dashboard=1&mid=' . urlencode($mid) . '&token=' . urlencode($dashboard_token))
+                : home_url('/?csc_master_dashboard=1');
 
             if ($action === 'approve') {
                 $subject = '✅ Ваша заявка одобрена!';
@@ -1896,17 +1898,16 @@ if (!function_exists('csc_get_master_details_ajax')) {
         // ============================================================
         // ВОССТАНОВЛЕНО 6.2: МАОППИНГ ОПЫТА РАБОТЫ СО СКЛОНЕНИЕМ (из 3.6)
         // ============================================================
-        $experience_val = 'Не указано';
+        $experience_val = __('Не указано', 'csc');
         if (isset($master['experience_years']) && $master['experience_years'] > 0) {
             $exp_years = intval($master['experience_years']);
-            $experience_val = $exp_years . ' ' . _n('год', 'года', $exp_years >= 2 && $exp_years <= 4 ? $exp_years : 5);
-            // Более точное склонение: 1 год, 2-4 года, 5+ лет
-            if ($exp_years === 1) {
-                $experience_val = '1 год';
-            } elseif ($exp_years >= 2 && $exp_years <= 4) {
-                $experience_val = $exp_years . ' года';
-            } else {
-                $experience_val = $exp_years . ' лет';
+            // Склонение через _n() с корректным числовым аргументом:
+            // 1 год / 2-4 года / 5+ лет. Для десятков (11-15) и т.п. используем
+            // остаток от деления на 10 — стандартный приём для славянских языков.
+            $plural_n = ($exp_years % 100 >= 11 && $exp_years % 100 <= 14) ? 5 : ($exp_years % 10 == 1 ? 1 : ($exp_years % 10 >= 2 && $exp_years % 10 <= 4 ? 2 : 5));
+            $experience_val = $exp_years . ' ' . _n('год', 'лет', $plural_n, 'csc');
+            if ($plural_n === 2) {
+                $experience_val = $exp_years . ' ' . _n('год', 'года', 2, 'csc');
             }
         } elseif (!empty($master['experience'])) {
             $experience_val = $master['experience'];

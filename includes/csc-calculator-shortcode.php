@@ -30,7 +30,7 @@ function csc_calculator_shortcode() {
     ob_start();
     ?>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="<?php echo esc_url(CSC_PLUGIN_URL . 'assets/vendor/html2canvas/html2canvas.min.js'); ?>"></script>
 <style>
 :root {
     --csc-primary: #3b82f6;
@@ -1669,8 +1669,14 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     async function cscSubscribeCustomerToPush() {
-        const btn = document.getElementById('csc-push-subscribe-btn');
+        // [ФИКС] Кнопка подписки рендерится в #csc-form-container ПОЗЖЕ этого скрипта,
+        // поэтому getElementById на этапе парсинга возвращал null и обработчик никогда
+        // не навешивался — клик по кнопке «Получать уведомления о статусе заявки» не работал.
+        // Привязка через делегированный слушатель на document работает для любого
+        // момента появления кнопки (включая перерисовку шага 2 формы).
+        let btn = document.getElementById('csc-push-subscribe-btn');
         const statusEl = document.getElementById('csc-push-status');
+        if (!btn) btn = this && this.closest ? this.closest('.csc-push-subscribe-btn') : null;
         if (!btn) return;
 
         const isSecure = location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
@@ -1775,7 +1781,45 @@ document.addEventListener('DOMContentLoaded', function() {
     const pushBtn = document.getElementById('csc-push-subscribe-btn');
     if (pushBtn) {
         pushBtn.addEventListener('click', cscSubscribeCustomerToPush);
+    } else {
+        // [ФИКС] Делегирование: кнопка появляется в DOM позже этого скрипта
+        // (рендерится JS-шаблоном формы), поэтому прямой addEventListener выше
+        // не срабатывал. Слушаем клики на document и перенаправляем их обработчику.
+        document.addEventListener('click', function (e) {
+            const target = e.target && e.target.closest ? e.target.closest('#csc-push-subscribe-btn') : null;
+            if (target) cscSubscribeCustomerToPush.call(target);
+        });
     }
+
+    // [ФИКС] Синхронизация состояния кнопки после перерисовки формы: если подписка
+    // уже сохранена ранее, показываем «активны» без повторного нажатия.
+    function cscRestorePushBtnState() {
+        const b = document.getElementById('csc-push-subscribe-btn');
+        if (!b || b.classList.contains('subscribed')) return;
+        const p = document.getElementById('csc-phone');
+        const pn = p ? p.value.trim().replace(/\D/g, '') : '';
+        if (pn.length < 10) return;
+        fetch('<?php echo admin_url("admin-ajax.php"); ?>', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'action=csc_push_status&user_type=customer&user_id=' + encodeURIComponent(pn)
+        })
+            .then(r => r.json())
+            .then(res => {
+                if (res && res.success && res.data && res.data.subscribed) {
+                    b.classList.add('subscribed');
+                    const icon = b.querySelector('.csc-push-icon');
+                    const text = b.querySelector('.csc-push-text');
+                    const status = document.getElementById('csc-push-status');
+                    if (icon) icon.textContent = '✅';
+                    if (text) text.textContent = 'Уведомления о статусе включены';
+                    if (status) status.textContent = 'активны';
+                }
+            })
+            .catch(() => {});
+    }
+    const phoneInputForPush = document.getElementById('csc-phone');
+    if (phoneInputForPush) phoneInputForPush.addEventListener('change', cscRestorePushBtnState);
 
     // ==========================================
     // Переменные из PHP

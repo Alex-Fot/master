@@ -174,7 +174,7 @@ if (!function_exists('csc_log_notification')) {
 
         $result = $wpdb->insert($table, $data);
         if ($result === false) {
-            error_log('[CSC_NOTIF] Ошибка вставки уведомления: ' . $wpdb->last_error);
+            csc_log('Ошибка вставки уведомления: ' . $wpdb->last_error);
             return 0;
         }
         return $wpdb->insert_id;
@@ -351,7 +351,9 @@ if (!function_exists('csc_vapid_generate_jwt')) {
 }
 
 if (!function_exists('csc_der_to_raw_signature')) {
-    function csc_der_to_raw_signature($der, $part_len) {
+    // ИСПРАВЛЕНО: единая каноническая реализация (используется и модулем push).
+    // $part_len теперь опционален (по умолчанию 32 — стандарт для P-256).
+    function csc_der_to_raw_signature($der, $part_len = 32) {
         $pos = 0;
         if (ord($der[$pos++]) !== 0x30) return $der;
         $pos++; 
@@ -550,16 +552,49 @@ if (!function_exists('csc_send_web_push_notification')) {
             return false;
         }
 
+        // ИСПРАВЛЕНО (кликабельные push): URL перехода. Если вызывающий код
+        // передал ссылку через фильтр — используем её; иначе строим стандартную:
+        // мастеру — вход в кабинет с одноразовым креденшелом + open_order,
+        // клиенту — страница заявки в ЛК по номеру.
+        $click_url = '';
+        if (!empty($order_number)) {
+            if ($recipient_type === 'master' && function_exists('csc_issue_master_login_token')) {
+                $login_token = csc_issue_master_login_token($recipient_id);
+                if ($login_token !== '') {
+                    $click_url = add_query_arg([
+                        'csc_master_dashboard' => '1',
+                        'mid'                  => $recipient_id,
+                        'token'                => $login_token,
+                        'open_order'           => $order_number,
+                    ], home_url('/'));
+                }
+            } elseif ($recipient_type === 'customer' || $recipient_type === 'admin') {
+                // Админ просматривает заявки в админке; клиент — в ЛК по параметру.
+                if ($recipient_type === 'admin' && current_user_can('manage_options')) {
+                    $click_url = add_query_arg(['page' => 'csc_orders_admin', 'csc_open_order' => $order_number], admin_url('options-general.php'));
+                } else {
+                    $click_url = add_query_arg(['csc_open_order' => $order_number], home_url('/'));
+                }
+            }
+        }
+        $click_url = apply_filters('csc_push_notification_url', $click_url, $order_number, $recipient_type, $recipient_id);
+
         // 4. Формирование payload
+        $csc_plugin_url = defined('CSC_PLUGIN_URL') ? CSC_PLUGIN_URL : WP_PLUGIN_URL . '/custom-service-calculator/';
         $payload_data = [
             'title'        => $title,
             'body'         => $message,
+            'message'      => $message,
             'order_number' => $order_number,
             'user_type'    => $recipient_type,
-            'icon'         => get_site_icon_url(192, '/icon-192.png'),
-            'badge'        => get_site_icon_url(72, '/badge-72.png'),
+            'open_order'   => $order_number,
+            // ИСПРАВЛЕНО (Push-иконки): фолбэки — полные URL к файлам плагина
+            // (раньше '/icon-192.png' указывал в корень сайта, где файлов нет → 404).
+            'icon'         => get_site_icon_url(192, $csc_plugin_url . 'assets/icon-192.png'),
+            'badge'        => get_site_icon_url(72, $csc_plugin_url . 'assets/badge-72.png'),
             'tag'          => $order_number,
-            'data'         => ['order' => $order_number]
+            'url'          => $click_url,
+            'data'         => ['order' => $order_number, 'url' => $click_url]
         ];
         $payload_json = wp_json_encode($payload_data);
 
@@ -687,99 +722,3 @@ if (!function_exists('csc_webpush_remove_invalid_subscription')) {
         }
     }
 }
-
-// ВРЕМЕННАЯ ДИАГНОСТИКА v2 — удалить после проверки
-add_action('admin_init', function() {
-    if (!current_user_can('manage_options')) return;
-    if (!isset($_GET['csc_test_tg'])) return;
-    
-    $s = get_option('csc_main_settings', []);
-    $raw_token = $s['telegram_token'] ?? '(empty)';
-    $decrypted = function_exists('csc_get_telegram_token') ? csc_get_telegram_token() : '(function not exists)';
-    $chat_id = $s['telegram_chat_id'] ?? '(empty)';
-    
-    echo '<pre style="background:#000;color:#0f0;padding:20px;font-size:12px;">';
-    echo "=== CSC Telegram Diagnostics v2 ===\n";
-    echo "Raw token in DB:     " . substr($raw_token, 0, 20) . "...\n";
-    echo "Decrypted token:     " . substr($decrypted, 0, 20) . "...\n";
-    echo "Admin chat_id:       $chat_id\n\n";
-    
-    // Тест 1: getMe
-    if ($decrypted && $decrypted !== '(function not exists)') {
-        echo "--- TEST 1: getMe ---\n";
-        $api = "https://api.telegram.org/bot{$decrypted}/getMe";
-        $r = wp_remote_get($api, ['timeout' => 15, 'sslverify' => true]);
-        
-        if (is_wp_error($r)) {
-            echo "❌ WP_Error: " . $r->get_error_message() . "\n";
-        } else {
-            $code = wp_remote_retrieve_response_code($r);
-            $body = wp_remote_retrieve_body($r);
-            echo "HTTP Code: $code\n";
-            echo "Response: " . substr($body, 0, 500) . "\n";
-            
-            if ($code === 200) {
-                $data = json_decode($body, true);
-                if ($data['ok'] ?? false) {
-                    echo "✅ Bot name: " . ($data['result']['username'] ?? '?') . "\n";
-                }
-            }
-        }
-        
-        // Тест 2: sendMessage
-        echo "\n--- TEST 2: sendMessage ---\n";
-        $send_api = "https://api.telegram.org/bot{$decrypted}/sendMessage";
-        $r2 = wp_remote_post($send_api, [
-            'body' => [
-                'chat_id' => $chat_id,
-                'text' => '🧪 CSC тест ' . date('H:i:s'),
-                'parse_mode' => 'HTML'
-            ],
-            'timeout' => 15,
-            'sslverify' => true
-        ]);
-        
-        if (is_wp_error($r2)) {
-            echo "❌ WP_Error: " . $r2->get_error_message() . "\n";
-        } else {
-            $code2 = wp_remote_retrieve_response_code($r2);
-            $body2 = wp_remote_retrieve_body($r2);
-            echo "HTTP Code: $code2\n";
-            echo "Response: " . substr($body2, 0, 500) . "\n";
-            
-            if ($code2 === 200) {
-                $data2 = json_decode($body2, true);
-                if ($data2['ok'] ?? false) {
-                    echo "✅ Message sent! ID: " . ($data2['result']['message_id'] ?? '?') . "\n";
-                } else {
-                    echo "❌ Telegram error: " . ($data2['description'] ?? 'unknown') . "\n";
-                }
-            }
-        }
-        
-        // Тест 3: Проверка cURL
-        echo "\n--- TEST 3: cURL check ---\n";
-        if (function_exists('curl_init')) {
-            $ch = curl_init($api);
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 15);
-            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-            $curl_result = curl_exec($ch);
-            $curl_error = curl_error($ch);
-            $curl_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            curl_close($ch);
-            
-            echo "cURL HTTP Code: $curl_code\n";
-            if ($curl_error) {
-                echo "❌ cURL Error: $curl_error\n";
-            } else {
-                echo "✅ cURL works. Response: " . substr($curl_result, 0, 200) . "\n";
-            }
-        } else {
-            echo "⚠️ cURL not available\n";
-        }
-    }
-    
-    echo '</pre>';
-    exit;
-});

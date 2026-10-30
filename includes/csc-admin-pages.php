@@ -361,13 +361,34 @@ function csc_add_admin_menu() {
 // ============================================================
 // 3. СТРАНИЦА ГЛАВНЫХ НАСТРОЕК
 // ============================================================
+
+/**
+ * Разбор токена, присланного из формы админки (модуль csc-crypto.php).
+ * - Пустая строка или значение-маска (содержит '*') => оставить ранее сохранённый токен.
+ * - Иначе => зашифровать новый токен перед записью в БД.
+ *
+ * @param string $submitted Сырое значение из $_POST['telegram_token']
+ * @return string Значение для записи в опцию (зашифрованное либо открытое при недоступности OpenSSL)
+ */
+if (!function_exists('csc_resolve_submitted_token')) {
+    function csc_resolve_submitted_token($submitted) {
+        $old = get_option('csc_main_settings', []);
+        $old_token = is_array($old) ? ($old['telegram_token'] ?? '') : '';
+        // Поле не тронуто (пусто) или прислана маска — оставляем хранимый токен как есть
+        if ($submitted === '' || strpos($submitted, '*') !== false) {
+            return $old_token;
+        }
+        return function_exists('csc_prepare_token_for_storage')
+            ? csc_prepare_token_for_storage($submitted)
+            : $submitted;
+    }
+}
+
 function csc_main_settings_page() {
     if ($_POST && wp_verify_nonce($_POST['_wpnonce'], 'csc_main_settings_action')) {
         $settings = [
             // УЛУЧШЕНИЕ №1: Шифрование токена при сохранении
-            'telegram_token'    => function_exists('csc_prepare_token_for_storage')
-                                    ? csc_prepare_token_for_storage(sanitize_text_field($_POST['telegram_token'] ?? ''))
-                                    : sanitize_text_field($_POST['telegram_token'] ?? ''),
+            'telegram_token'    => csc_resolve_submitted_token(sanitize_text_field($_POST['telegram_token'] ?? '')),
             'telegram_chat_id'  => sanitize_text_field($_POST['telegram_chat_id'] ?? ''),
             'work_hours_start'  => intval($_POST['work_hours_start']),
             'work_hours_end'    => intval($_POST['work_hours_end']),
@@ -406,10 +427,15 @@ function csc_main_settings_page() {
     $s = get_option('csc_main_settings', []);
     $templates = isset($s['templates']) ? $s['templates'] : [];
 
-    // УЛУЧШЕНИЕ №1: расшифрованный токен для отображения в поле
-    $display_token = function_exists('csc_get_telegram_token')
-        ? csc_get_telegram_token()
-        : ($s['telegram_token'] ?? '');
+    // УЛУЧШЕНИЕ №1: в HTML админки показываем ТОЛЬКО маскированный токен,
+    // полный токен больше не светится в source-code страницы.
+    // Пустое поле при сохранении = «не менять текущий токен» (см. csc_resolve_submitted_token).
+    $raw_stored   = $s['telegram_token'] ?? '';
+    $display_token = '';
+    if (!empty($raw_stored)) {
+        $plain_for_mask = function_exists('csc_decrypt_token') ? csc_decrypt_token($raw_stored) : $raw_stored;
+        $display_token = function_exists('csc_mask_token') ? csc_mask_token($plain_for_mask) : $plain_for_mask;
+    }
     ?>
     <div class="wrap">
     <h1>Основные настройки калькулятора</h1>
@@ -422,8 +448,8 @@ function csc_main_settings_page() {
                 <tr>
                     <th>Бот Токен:</th>
                     <td>
-                        <input type="text" name="telegram_token" value="<?php echo esc_attr($display_token); ?>" class="regular-text">
-                        <p class="description">Токен шифруется перед сохранением в базу данных (AES-256-GCM).</p>
+                        <input type="text" name="telegram_token" value="" placeholder="<?php echo esc_attr($display_token ? ('Текущий: ' . $display_token) : '1234567890:AAH...'); ?>" class="regular-text" autocomplete="off">
+                        <p class="description">Токен шифруется перед сохранением в БД (AES-256-GCM).<?php if ($display_token): ?> Текущий: <code><?php echo esc_html($display_token); ?></code>. Оставьте поле пустым, чтобы не менять токен.<?php endif; ?></p>
                     </td>
                 </tr>
                 <tr>
@@ -669,6 +695,15 @@ function csc_main_settings_page() {
             </table>
         </div>
 
+        <div class="card" style="max-width: 800px; padding: 20px; margin-top: 20px; border-left: 4px solid #3b82f6;">
+            <h2>🔔 Push-уведомления администратору</h2>
+            <p class="description">Включите браузерные уведомления о новых заявках и проблемах с маршрутизацией (повторный поиск, отсутствие мастеров). Клик по уведомлению открывает карточку заявки в разделе «Заявки».</p>
+            <p>
+                <button type="button" class="button button-primary" id="csc-admin-push-subscribe">🔔 Включить push-уведомления мне</button>
+                <span id="csc-admin-push-status" style="margin-left: 10px; font-size: 13px; color: #64748b;"></span>
+            </p>
+        </div>
+
         <div class="card" style="max-width: 800px; padding: 20px; margin-top: 20px; border-left: 4px solid #10b981;">
             <h2>🧹 Управление Web Push подписками</h2>
             <p class="description">Если клиенты сменили устройства или браузеры, старые подписки могут накапливаться. Нажмите кнопку ниже для полной очистки базы Push-подписок.</p>
@@ -683,6 +718,53 @@ function csc_main_settings_page() {
     </div>
     <script>
     jQuery(document).ready(function($){
+        // 🔔 Подписка администратора на браузерные push-уведомления о заявках.
+        var adminPushBtn = $('#csc-admin-push-subscribe');
+        if (adminPushBtn.length) {
+            $.post(ajaxurl, { action: 'csc_push_status', user_type: 'admin', user_id: 'admin' }, function(res){
+                if (res && res.success && res.data.subscribed) {
+                    $('#csc-admin-push-status').text('✅ Подписка активна').css('color', '#10b981');
+                    adminPushBtn.text('🔔 Обновить подписку');
+                }
+            });
+            adminPushBtn.on('click', async function(){
+                var st = $('#csc-admin-push-status');
+                if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+                    st.text('❌ Требуется HTTPS').css('color', '#ef4444'); return;
+                }
+                if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+                    st.text('❌ Браузер не поддерживает push').css('color', '#ef4444'); return;
+                }
+                var vapidKey = '<?php echo esc_js(get_option("csc_vapid_public_key", "")); ?>';
+                if (!vapidKey) { st.text('❌ VAPID-ключи не сгенерированы (см. блок статуса Web Push ниже)').css('color', '#ef4444'); return; }
+                st.text('Подключение...').css('color', '#64748b');
+                try {
+                    var perm = await Notification.requestPermission();
+                    if (perm !== 'granted') throw new Error('Разрешите уведомления в настройках браузера');
+                    var reg = await navigator.serviceWorker.getRegistration('/');
+                    if (!reg || !reg.active) {
+                        reg = await navigator.serviceWorker.register('/csc-sw.js', { scope: '/' });
+                        await navigator.serviceWorker.ready;
+                    }
+                    function b64u(buf){ var s=btoa(String.fromCharCode.apply(null,new Uint8Array(buf))); return s.replace(/=/g,'').replace(/\+/g,'-').replace(/\//g,'_'); }
+                    var sub = await reg.pushManager.getSubscription();
+                    if (!sub || sub.expirationTime) {
+                        var bin = atob(vapidKey.replace(/-/g,'+').replace(/_/g,'/'));
+                        var arr = Uint8Array.from(bin, function(c){ return c.charCodeAt(0); });
+                        sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: arr.buffer });
+                    }
+                    await fetch(ajaxurl, { method: 'POST', body: new URLSearchParams({
+                        action: 'csc_push_subscribe', user_type: 'admin', user_id: 'admin',
+                        subscription: JSON.stringify(sub.toJSON ? sub.toJSON() : sub)
+                    })});
+                    st.text('✅ Готово — вы будете получать уведомления о заявках').css('color', '#10b981');
+                    adminPushBtn.text('🔔 Обновить подписку');
+                } catch (e) {
+                    st.text('❌ ' + (e.message || 'Ошибка подписки')).css('color', '#ef4444');
+                }
+            });
+        }
+
         $('#csc-clear-push-subs').on('click', function(){
             if(!confirm('Вы уверены? Все сохраненные браузерные подписки будут удалены. Клиентам потребуется разрешить уведомления заново.')) return;
             $('#csc-push-clear-status').text('Очистка...').css('color', '#64748b');
@@ -1346,10 +1428,20 @@ function csc_orders_admin_page() {
         $all_orders = csc_get_all_orders();
         if (isset($all_orders[$ord_num])) {
             $old_status = $all_orders[$ord_num]['status'] ?? '';
+            // Защита от гонки с вебхуком оплаты: если заказ уже оплачен, не переводим его из awaiting_payment «в никуда».
+            if ($old_status === CSC_STATUS_AWAITING_PAYMENT && ($all_orders[$ord_num]['payment_status'] ?? '') === 'paid') {
+                echo '<div class="notice notice-warning is-dismissible"><p>Заказ ' . esc_html($ord_num) . ' уже оплачен — статус изменён быть не может. Сначала оформите возврат в модуле платежей.</p></div>';
+            } else {
             $all_orders[$ord_num]['status'] = $new_status;
             if ($new_status === CSC_STATUS_CANCELLED) {
                 $all_orders[$ord_num]['routing_status'] = 'cancelled';
                 $all_orders[$ord_num]['cancelled_at'] = current_time('mysql');
+                // Зависшие заказы «Ожидает оплаты»: при ручной отмене помечаем платёж как
+                // неоплаченный, чтобы крон-проверка зависших платежей больше не трогала заказ.
+                if ($old_status === CSC_STATUS_AWAITING_PAYMENT && in_array($all_orders[$ord_num]['payment_status'] ?? '', ['pending', ''], true)) {
+                    $all_orders[$ord_num]['payment_status'] = 'unpaid';
+                    $all_orders[$ord_num]['cancel_reason'] = 'Отменено администратором (зависший заказ в ожидании оплаты)';
+                }
             }
             if (in_array($new_status, [CSC_STATUS_PROCESSING, CSC_STATUS_COMPLETED]) && ($all_orders[$ord_num]['routing_status'] ?? '') === 'searching') {
                 $all_orders[$ord_num]['routing_status'] = 'manual_override';
@@ -1380,9 +1472,10 @@ function csc_orders_admin_page() {
                 $master_id = $all_orders[$ord_num]['master_id'] ?? '';
                 csc_log_notification($ord_num, 'customer', $phone, 'web', "📌 Статус изменен вручную", "Статус заявки #$ord_num изменен администратором на \"$new_status\".", ['action' => 'manual_status_change']);
                 if ($master_id) {
-                    cscАМ_log_notification($ord_num, 'master', $master_id, 'web', "📦 Статус заказа изменен", "Администратор установил статус \"$new_status\" для заказа #$ord_num.", ['action' => 'manual_status_change']);
+                    csc_log_notification($ord_num, 'master', $master_id, 'web', "📦 Статус заказа изменен", "Администратор установил статус \"$new_status\" для заказа #$ord_num.", ['action' => 'manual_status_change']);
                 }
             }
+            } // else (защита от изменения уже оплаченного заказа)
         }
     }
 
@@ -1392,6 +1485,43 @@ function csc_orders_admin_page() {
     });
     $masters = function_exists('csc_get_masters') ? csc_get_masters() : [];
     $view = sanitize_key($_GET['view'] ?? 'list');
+
+    // Фильтр по статусу (в т.ч. быстрый доступ к зависшим заказам «Ожидает оплаты»)
+    $status_filter = sanitize_text_field(wp_unslash($_GET['status_filter'] ?? ''));
+    if ($status_filter !== '' && strpos($status_filter, ':') !== false) {
+        list($status_filter, $payment_status_filter) = explode(':', $status_filter, 2);
+    } else {
+        $payment_status_filter = '';
+    }
+    if ($status_filter !== '') {
+        $all_orders = array_filter($all_orders, function ($o) use ($status_filter, $payment_status_filter) {
+            if (($o['status'] ?? '') !== $status_filter) return false;
+            if ($payment_status_filter !== '' && ($o['payment_status'] ?? '') !== $payment_status_filter) return false;
+            return true;
+        });
+    }
+
+    // ОПТИМИЗАЦИЯ (Кэш заказов): счётчики чипов через SQL GROUP BY
+    // (csc_get_order_status_counts) вместо перечитывания всего списка;
+    // повторный запрос к кэшу/БД здесь больше не нужен.
+    $status_counts = function_exists('csc_get_order_status_counts')
+        ? csc_get_order_status_counts()
+        : [];
+    if ($payment_status_filter !== '') {
+        // Для комбинированного чипа «статус:платёж» считаем по отфильтрованному списку
+        $awaiting_with_payment = 0;
+        foreach ($all_orders as $o) {
+            if (($o['status'] ?? '') === CSC_STATUS_AWAITING_PAYMENT
+                && ($o['payment_status'] ?? '') === 'pending') {
+                $awaiting_with_payment++;
+            }
+        }
+        $chip_key = CSC_STATUS_AWAITING_PAYMENT . ':pending';
+        $status_counts[$chip_key] = $awaiting_with_payment;
+    }
+    if (!isset($status_counts[CSC_STATUS_AWAITING_PAYMENT])) {
+        $status_counts[CSC_STATUS_AWAITING_PAYMENT] = 0;
+    }
 
     // ============================================================
     // УЛУЧШЕНИЕ №4: ПАГИНАЦИЯ
@@ -1412,8 +1542,25 @@ function csc_orders_admin_page() {
 
     // Базовые URL для навигации (сохраняем все GET-параметры кроме paged)
     $base_admin_url = esc_url(add_query_arg(['page' => 'csc_orders_admin'], admin_url('options-general.php')));
-    $admin_url_list = esc_url(add_query_arg(['page' => 'csc_orders_admin', 'view' => 'list'], admin_url('options-general.php')));
+    // Сохраняем активный фильтр в ссылках навигации (view/list, пагинация)
+    $admin_url_list = esc_url(add_query_arg(array_filter([
+        'page' => 'csc_orders_admin',
+        'view' => 'list',
+        'status_filter' => ($status_filter !== '' ? $status_filter . ($payment_status_filter !== '' ? ':' . $payment_status_filter : '') : null),
+    ]), admin_url('options-general.php')));
     $admin_url_calendar = esc_url(add_query_arg(['page' => 'csc_orders_admin', 'view' => 'calendar'], admin_url('options-general.php')));
+
+    // Чипы быстрой фильтрации по статусу (включая зависшие «Ожидает оплаты»)
+    $filter_chips = [
+        ''                                  => 'Все',
+        CSC_STATUS_PENDING                   => 'Ожидает',
+        CSC_STATUS_SEARCHING                 => 'Поиск мастера',
+        CSC_STATUS_AWAITING_PAYMENT          => '💳 Ожидает оплаты (зависшие)',
+        CSC_STATUS_AWAITING_PAYMENT . ':pending' => 'Ожидает оплаты: платёж в процессе',
+        CSC_STATUS_PROCESSING                => 'В работе',
+        CSC_STATUS_COMPLETED                 => 'Выполнено',
+        CSC_STATUS_CANCELLED                 => 'Отменено',
+    ];
     ?>
     <div class="wrap">
     <h1>Управление заявками <span class="title-count" style="color:#64748b; font-size:14px; font-weight:normal;">(<?php echo esc_html($total_orders); ?> всего)</span></h1>
@@ -1424,6 +1571,25 @@ function csc_orders_admin_page() {
     </h2>
 
     <?php if ($view == 'list'): ?>
+
+    <!-- ЧИПЫ БЫСТРОЙ ФИЛЬТРАЦИИ ПО СТАТУСУ -->
+    <div class="tablenav" style="margin: 10px 0;">
+        <div class="tablenav-pages" style="float:none; text-align:left;">
+            <span class="displaying-num">Фильтр:</span>
+            <?php foreach ($filter_chips as $chip_key => $chip_label):
+                $chip_count = $chip_key === '' ? array_sum($status_counts) : ($status_counts[$chip_key] ?? 0);
+                $chip_url = esc_url(add_query_arg(array_filter([
+                    'page' => 'csc_orders_admin',
+                    'view' => 'list',
+                    'status_filter' => $chip_key !== '' ? $chip_key : null,
+                ]), admin_url('options-general.php')));
+                $is_active = ($status_filter . ($payment_status_filter !== '' ? ':' . $payment_status_filter : '')) === $chip_key;
+                ?>
+                <a class="page-numbers<?php echo $is_active ? ' current' : ''; ?>" href="<?php echo $chip_url; ?>"><?php echo esc_html($chip_label); ?> (<?php echo esc_html($chip_count); ?>)</a>
+            <?php endforeach; ?>
+        </div>
+    </div>
+
     <!-- ============================================================
     УЛУЧШЕНИЕ №4: ИНФО-БЛОК ПАГИНАЦИИ
     ============================================================ -->
@@ -1444,6 +1610,8 @@ function csc_orders_admin_page() {
         <select id="csc-bulk-status" style="height: 30px; padding: 0 8px;">
             <option value="">— Изменить статус на —</option>
             <option value="pending">Ожидает</option>
+            <option value="searching">Поиск мастера</option>
+            <option value="awaiting_payment">Ожидает оплаты</option>
             <option value="processing">В работе</option>
             <option value="completed">Выполнено</option>
             <option value="cancelled">Отменено</option>
@@ -1501,8 +1669,15 @@ function csc_orders_admin_page() {
                     <form method="post" class="csc-single-status-form" style="display: flex; gap: 5px;">
                         <?php wp_nonce_field('csc_update_status_' . $o['order_number'], '_csc_status_nonce'); ?>
                         <input type="hidden" name="order_number" value="<?php echo esc_attr($o['order_number']); ?>">
+                        <?php if (($o['status'] ?? '') === CSC_STATUS_AWAITING_PAYMENT): ?>
+                            <!-- Быстрая ручная отмена зависшего заказа «Ожидает оплаты» -->
+                            <button type="submit" name="csc_update_status" value="1" class="button button-small" style="color:#d63638;" data-confirm="Отменить зависший заказ #<?php echo esc_attr($o['order_number']); ?> (ожидает оплаты)?">❌ Отменить</button>
+                            <input type="hidden" name="new_status" value="cancelled">
+                        <?php endif; ?>
                         <select name="new_status" style="font-size: 12px; height: 28px;">
                             <option value="pending" <?php selected($o['status'] ?? '', CSC_STATUS_PENDING); ?>>Ожидает</option>
+                            <option value="searching" <?php selected($o['status'] ?? '', CSC_STATUS_SEARCHING); ?>>Поиск мастера</option>
+                            <option value="awaiting_payment" <?php selected($o['status'] ?? '', CSC_STATUS_AWAITING_PAYMENT); ?>>Ожидает оплаты</option>
                             <option value="processing" <?php selected($o['status'] ?? '', CSC_STATUS_PROCESSING); ?>>В работе</option>
                             <option value="completed" <?php selected($o['status'] ?? '', CSC_STATUS_COMPLETED); ?>>Выполнено</option>
                             <option value="cancelled" <?php selected($o['status'] ?? '', CSC_STATUS_CANCELLED); ?>>Отменено</option>
@@ -1556,6 +1731,14 @@ function csc_orders_admin_page() {
     const CSC_REMINDER_NONCE = '<?php echo esc_js(wp_create_nonce("csc_admin_nonce")); ?>';
     const CSC_AJAX_URL = '<?php echo esc_url(admin_url("admin-ajax.php")); ?>';
     jQuery(document).ready(function($){
+        // Подтверждение быстрой отмены зависшего заказа «Ожидает оплаты»
+        $(document).on('click', '.csc-single-status-form button[data-confirm]', function(e){
+            if (!confirm($(this).data('confirm'))) {
+                e.preventDefault();
+                return false;
+            }
+        });
+
         $('#csc-select-all-header').on('change', function(){
             $('.csc-order-checkbox').prop('checked', this.checked);
         });
@@ -1669,7 +1852,7 @@ function csc_orders_admin_page() {
     </script>
 
     <?php else: // РЕЖИМ КАЛЕНДАРЯ ?>
-    <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js'></script>
+    <script src='<?php echo esc_url(CSC_PLUGIN_URL . 'assets/vendor/fullcalendar/index.global.min.js'); ?>'></script>
     <div id='csc-calendar' style="background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-top: 20px;"></div>
     <script>
     document.addEventListener('DOMContentLoaded', function() {
@@ -1769,6 +1952,14 @@ function csc_orders_admin_page() {
     let currentModalOrder = '';
     let cachedModalData = null;
     let currentLogTab = 'history';
+
+    // 🔗 Deep-link из push-уведомления администратора: ?page=csc_orders_admin&csc_open_order=NNN
+    (function(){
+        var m = /[?&]csc_open_order=([0-9A-Za-z\-]+)/.exec(location.search);
+        if (!m) return;
+        history.replaceState(null, '', location.href.replace(/[?&]csc_open_order=[0-9A-Za-z\-]+/, ''));
+        jQuery(function(){ setTimeout(function(){ openOrderLogModal(m[1]); }, 300); });
+    })();
 
     function openOrderLogModal(orderNum) {
         const modal = document.getElementById('csc-order-log-modal');

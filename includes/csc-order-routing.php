@@ -19,9 +19,18 @@ require_once plugin_dir_path(__FILE__) . 'csc-notifications.php';
 // ХЕЛПЕРЫ СБРОСА КЭША (ЕДИНЫЕ ДЛЯ ВСЕХ МОДУЛЕЙ)
 // ============================================================
 if (!function_exists('csc_cache_delete_orders')) {
+    /**
+    * ЕДИНАЯ ТОЧКА ИНВАЛИДАЦИИ КЭША ЗАКАЗОВ (Кэш заказов).
+    * Удаляет ключ объектного кэша, который питает csc_get_all_orders(),
+    * а также сбрасывает трансиентный снапшот для Telegram-бота.
+    * Должна вызываться ПОСЛЕ ЛЮБОЙ записи в хранилище заказов
+    * (прямые $wpdb->update()/insert() мимо csc_update_order — тоже здесь).
+    */
     function csc_cache_delete_orders() {
         wp_cache_delete('csc_all_orders_v2');
         wp_cache_delete('csc_all_orders_tg_v2');
+        // Совместимость: старый трансиентный снапшот списка заказов
+        delete_transient('csc_all_orders_tg_v2');
     }
 }
 
@@ -62,7 +71,7 @@ if (!function_exists('csc_backup_order_on_routing_failure')) {
         ];
         $backup_queue[$order_number] = $backup_entry;
         update_option('csc_routing_backup_queue', $backup_queue, false);
-        error_log("[CSC_ROUTING] Заказ {$order_number} помещен в резервную очередь из-за: {$failure_reason}");
+        csc_log("Заказ {$order_number} помещен в резервную очередь из-за: {$failure_reason}", 'error', 'ROUTING');
     }
 }
 
@@ -84,7 +93,7 @@ if (!function_exists('csc_check_routing_backup_queue')) {
             $under_max_attempts = $entry['attempts_count'] < $max_attempts;
 
             if ($order_exists && $should_retry && $under_max_attempts) {
-                error_log("[CSC_ROUTING] Повторная попытка маршрутизации для заказа {$num} из резервной очереди.");
+                csc_log("Повторная попытка маршрутизации для заказа {$num} из резервной очереди.", 'debug', 'ROUTING');
                 $backup_queue[$num]['attempts_count']++;
                 $backup_queue[$num]['last_attempt'] = time();
 
@@ -102,15 +111,15 @@ if (!function_exists('csc_check_routing_backup_queue')) {
                     if (function_exists('csc_route_order_to_next')) {
                         csc_route_order_to_next($num, 'backup_queue_retry');
                     } else {
-                        error_log("[CSC_ROUTING] ERROR: csc_route_order_to_next не найдена при повторной попытке для {$num}");
+                        csc_log("ERROR: csc_route_order_to_next не найдена при повторной попытке для {$num}", 'error', 'ROUTING');
                     }
                 } else {
                     unset($backup_queue[$num]);
-                    error_log("[CSC_ROUTING] Заказ {$num} не найден в основной очереди, удален из резервной.");
+                    csc_log("Заказ {$num} не найден в основной очереди, удален из резервной.", 'warning', 'ROUTING');
                 }
             } elseif (!$order_exists || $entry['attempts_count'] >= $max_attempts) {
                 unset($backup_queue[$num]);
-                error_log("[CSC_ROUTING] Заказ {$num} удален из резервной очереди (превышено число попыток или отменен).");
+                csc_log("Заказ {$num} удален из резервной очереди (превышено число попыток или отменен).", 'debug', 'ROUTING');
             }
         }
         update_option('csc_routing_backup_queue', $backup_queue, false);
@@ -134,7 +143,7 @@ if (!function_exists('csc_routing_log')) {
         $logs = array_slice($logs, -100);
         update_option('csc_routing_logs', $logs, false);
         if (defined('WP_DEBUG') && WP_DEBUG) {
-            error_log('[CSC_ROUTING] ' . json_encode($log_entry, JSON_UNESCAPED_UNICODE));
+            csc_log(json_encode($log_entry, JSON_UNESCAPED_UNICODE), 'debug', 'ROUTING');
         }
     }
 }
@@ -606,6 +615,28 @@ if (!function_exists('csc_route_order_to_next')) {
             csc_update_order($order_number, $all_orders[$order_number]);
             csc_cache_delete_orders();
 
+            // ИСПРАВЛЕНО (логика «Ожидают» в ЛК мастера): заказ показывается во
+            // вкладке «Ожидают» ТОЛЬКО текущему кандидату, которому сделан оффер,
+            // а не всем активным мастерам. Раньше статус pending + уведомление
+            // «всем» создавали иллюзию, что заявку видят все сразу.
+            if (!empty($all_orders[$order_number]['status']) && $all_orders[$order_number]['status'] !== CSC_STATUS_PENDING) {
+                $all_orders[$order_number]['status'] = CSC_STATUS_PENDING;
+                csc_update_order($order_number, $all_orders[$order_number]);
+                csc_cache_delete_orders();
+            }
+
+            // Внутрикабинетное уведомление + Web Push — только текущему кандидату.
+            if (function_exists('csc_notify_master')) {
+                csc_notify_master(
+                    $next_master_id,
+                    'Новая заявка #' . $order_number,
+                    sprintf('Вам предложена заявка #%s. Примите или отклоните до истечения таймера (%d сек).', $order_number, intval(CSC_ROUTING_TIMEOUT)),
+                    $order_number,
+                    'new_order',
+                    '🆕'
+                );
+            }
+
             csc_routing_log($order_number, 'offer_sent', ['master_id' => $next_master_id, 'message_id' => $msg_id]);
             do_action('csc_routing_offer_sent', $order_number, $next_master_id, $msg_id);
         } else {
@@ -623,6 +654,12 @@ if (!function_exists('csc_route_order_to_next')) {
                     'reason' => 'no_candidates_in_radius',
                     'rejected_in_circle_1' => $rejected,
                 ]);
+                // ИСПРАВЛЕНО (требование): при отсутствии мастеров вблизи —
+                // уведомление администратору «повторный поиск» и расширенный
+                // поиск по ближайшим районам (круг 2).
+                if (function_exists('csc_notify_admin_search_restarted')) {
+                    csc_notify_admin_search_restarted($order_number, $order);
+                }
                 // Рекурсивный запуск второго круга
                 csc_route_order_to_next($order_number, 'circle_2_expand');
                 return;

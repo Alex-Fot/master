@@ -506,6 +506,13 @@ const REVIEW_EXPIRY_DAYS = 35;
 const MAX_REVIEW_PHOTOS  = 10;
 const MAX_REVIEW_PHOTO_SIZE = 5 * 1024 * 1024; // 5 МБ
 const SOUND_URL = '<?php echo esc_js($sound_url); ?>';
+// i18n: локализованные подписи статусов из PHP (csc_status_labels_js — переводятся gettext на сервере)
+const CSC_STATUS_LABELS = <?php echo wp_json_encode(function_exists('csc_status_labels_js') ? csc_status_labels_js() : new stdClass()); ?>;
+
+// ИСПРАВЛЕНО (защита ЛК): токен сессии клиента хранится только в памяти страницы.
+// Выдаётся сервером при входе (res.data.auth_token) и подставляется в запросы,
+// требующие подтверждения доступа (платежи). В URL/cookie/localStorage не попадает.
+let cscSessionToken = '';
 
 // ============================================================
 // СОСТОЯНИЕ
@@ -791,7 +798,9 @@ document.getElementById('csc-login-form').addEventListener('submit', function(e)
     fd.append('action', 'csc_get_user_orders');
     fd.append('phone', phoneRaw);
     fd.append('order_number', orderNum);
-    fd.append('auth_token', '');
+    // ИСПРАВЛЕНО (защита ЛК): предъявляем токен сессии из памяти страницы,
+    // если он уже был выдан сервером при предыдущем входе.
+    fd.append('auth_token', cscSessionToken || '');
     fd.append('_wpnonce', NONCE);
 
     fetch(AJAX_URL, { method: 'POST', body: fd })
@@ -800,6 +809,8 @@ document.getElementById('csc-login-form').addEventListener('submit', function(e)
         submitBtn.disabled = false;
         submitBtn.textContent = 'Найти заявки';
         if (res.success && res.data && res.data.orders && res.data.orders.length > 0) {
+            // Сохраняем выданный сервером токен сессии (только в памяти страницы)
+            if (res.data.auth_token) { cscSessionToken = res.data.auth_token; }
             const phoneNorm = phoneRaw.replace(/[^0-9]/g, '');
             markNotificationsRead(phoneNorm);
             initPushSubscription(phoneNorm);
@@ -842,9 +853,11 @@ function renderOrders(orders, meta) {
     html += '</tr></thead><tbody>';
 
     orders.forEach(o => {
-        const STATUS_LABELS = { pending:'Ожидает', searching:'Поиск мастера', awaiting_payment:'Ожидает оплаты', processing:'В работе', completed:'Выполнено', cancelled:'Отменено', no_masters:'Нет мастеров', routing_timeout:'Ошибка: время поиска истекло' };
+        // i18n: подписи берутся из CSC_STATUS_LABELS (wp_json_encode из csc_status_labels_js),
+        // словарь ниже — фолбэк на случай, если PHP-карта не передалась.
+        const STATUS_FALLBACK = { pending:'Ожидает', searching:'Поиск мастера', awaiting_payment:'Ожидает оплаты', processing:'В работе', completed:'Выполнено', cancelled:'Отменено', no_masters:'Нет мастеров', routing_timeout:'Ошибка: время поиска истекло' };
         const rawStatus = ((o.status || 'pending') + '').toLowerCase();
-        const statusText = STATUS_LABELS[rawStatus] || rawStatus;
+        const statusText = (typeof CSC_STATUS_LABELS === 'object' && CSC_STATUS_LABELS[rawStatus]) ? CSC_STATUS_LABELS[rawStatus] : (STATUS_FALLBACK[rawStatus] || rawStatus);
         const isCancelled = !!o.cancelled_at || rawStatus === 'cancelled';
                 let statusClass = '';
         if (isCancelled) statusClass = 'cancelled';
@@ -1158,6 +1171,39 @@ document.getElementById('csc-submit-review-btn').addEventListener('click', funct
 
     xhr.send(fd);
 });
+
+// ============================================================
+// ГЛУБОКАЯ ССЫЛКА: ?csc_open_order=NNN (из push-уведомления клиента)
+// Подставляем номер заявки в форму входа и автоматически ищем её.
+// Телефон взять неоткуда (push не хранит телефон) — просим ввести,
+// автоподача сработает только если пользователь уже вводил телефон
+// на этой странице ранее (значение поля сохранено в памяти формы).
+// ============================================================
+(function() {
+    const params = new URLSearchParams(window.location.search);
+    const openOrder = params.get('csc_open_order');
+    if (!openOrder) return;
+    const orderInput = document.getElementById('csc-cab-order');
+    const loginForm  = document.getElementById('csc-login-form');
+    if (!orderInput || !loginForm) return;
+    orderInput.value = openOrder;
+    // Прокручиваем к форме и подсвечиваем поле
+    orderInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    orderInput.focus();
+    const phoneInput = document.getElementById('csc-cab-phone');
+    if (phoneInput && phoneInput.value.trim()) {
+        // Телефон уже известен — сразу выполняем поиск заявки
+        setTimeout(function() {
+            if (typeof loginForm.requestSubmit === 'function') {
+                loginForm.requestSubmit();
+            } else {
+                loginForm.dispatchEvent(new Event('submit', { cancelable: true }));
+            }
+        }, 300);
+    } else if (typeof showToast === 'function') {
+        showToast('Введите телефон, чтобы открыть заявку ' + openOrder, 'info');
+    }
+})();
 
 }); // конец DOMContentLoaded
 </script>

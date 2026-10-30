@@ -37,7 +37,10 @@ add_action('admin_menu', 'csc_add_master_moderation_page');
 // ============================================================
 if (!function_exists('csc_add_master_notification')) {
 function csc_add_master_notification($master_id, $type, $title, $message, $data = []) {
-$option_key = 'csc_master_notifications_' . $master_id;
+// ИСПРАВЛЕНО (личные уведомления мастера): дашборд читает уведомления из ключа
+// 'csc_in_cabinet_master_{$mid}' — запись в 'csc_master_notifications_{$mid}'
+// делала все уведомления (модерация, новые заявки) невидимыми в ЛК.
+$option_key = 'csc_in_cabinet_master_' . $master_id;
 $notifications = get_option($option_key, []);
 if (!is_array($notifications)) $notifications = [];
 array_unshift($notifications, [
@@ -70,7 +73,8 @@ csc_log_notification('', 'master', $master_id, 'internal', $title, $message, $da
 // ============================================================
 if (!function_exists('csc_get_master_notifications')) {
 function csc_get_master_notifications($master_id) {
-$option_key = 'csc_master_notifications_' . $master_id;
+// ИСПРАВЛЕНО: чтение из того же ключа, который использует дашборд ЛК.
+$option_key = 'csc_in_cabinet_master_' . $master_id;
 $notifications = get_option($option_key, []);
 if (!is_array($notifications)) return [];
 return $notifications;
@@ -81,7 +85,8 @@ return $notifications;
 // ============================================================
 if (!function_exists('csc_mark_master_notifications_read')) {
 function csc_mark_master_notifications_read($master_id) {
-$option_key = 'csc_master_notifications_' . $master_id;
+// ИСПРАВЛЕНО: тот же ключ хранилища, что у дашборда ЛК.
+$option_key = 'csc_in_cabinet_master_' . $master_id;
 $notifications = get_option($option_key, []);
 if (!is_array($notifications)) return;
 foreach ($notifications as &$n) {
@@ -113,9 +118,9 @@ $masters[$master_id]['status'] = 'active';
 $masters[$master_id]['is_online'] = true;
 $masters[$master_id]['approved_at'] = current_time('mysql');
 $masters[$master_id]['rejection_reason'] = '';
-// Отправка ссылки мастеру
-$dashboard_token = isset($master['dashboard_token']) ? $master['dashboard_token'] : '';
-$dashboard_url = home_url('/?csc_master_dashboard=1&mid=' . urlencode($master_id) . '&token=' . urlencode($dashboard_token));
+// Отправка ссылки мастеру (одноразовый креденшел вместо stored-хэша)
+$login_cred = function_exists('csc_issue_master_login_token') ? csc_issue_master_login_token($master_id) : '';
+$dashboard_url = home_url('/?csc_master_dashboard=1&mid=' . urlencode($master_id)) . ($login_cred !== '' ? '&token=' . urlencode($login_cred) : '');
 $subject = '✅ Ваша заявка одобрена!';
 $message = "Здравствуйте, {$master['name']}!
 
@@ -225,8 +230,8 @@ $masters[$master_id]['penalties_total'] = 0;
 $masters[$master_id]['penalties_amount'] = 0;
 // === НОВОЕ 1.3: ВНУТРИКАБИНЕТНОЕ УВЕДОМЛЕНИЕ + PUSH ===
 if (function_exists('csc_add_master_notification')) {
-$dashboard_token = isset($master['dashboard_token']) ? $master['dashboard_token'] : '';
-$dashboard_url = home_url('/?csc_master_dashboard=1&mid=' . urlencode($master_id) . '&token=' . urlencode($dashboard_token));
+$login_cred = function_exists('csc_issue_master_login_token') ? csc_issue_master_login_token($master_id) : '';
+$dashboard_url = home_url('/?csc_master_dashboard=1&mid=' . urlencode($master_id)) . ($login_cred !== '' ? '&token=' . urlencode($login_cred) : '');
 csc_add_master_notification(
 $master_id,
 'unblock',
