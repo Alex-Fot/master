@@ -2401,7 +2401,40 @@
     // ============================================================
     // 23. ИНИЦИАЛИЗАЦИЯ (ОБЪЕДИНЕНО 6.2: 5.1 + 6.0 + 6.2 баланс)
     // ============================================================
+    /**
+     * Переход к заявке из URL/пуша: ?open_order=NNN (CSC_MASTER_CONFIG.openOrder).
+     * Переключает на вкладку с этой заявкой (обычно «Ожидают») и открывает модалку.
+     */
+    function switchToTab(tabName) {
+        const btn = Array.prototype.slice.call($$('.csc-tab-btn')).find(b => b.dataset.tab === tabName);
+        if (btn) btn.click();
+        else { STATE.currentTab = tabName; renderOrders(); }
+    }
+
+    function handleOpenOrderParam() {
+        const num = (window.CSC_MASTER_CONFIG && CSC_MASTER_CONFIG.openOrder) || '';
+        if (!num) return;
+        const order = STATE.orders.find(o => String(o.order_number) === String(num));
+        if (!order) {
+            showToast('warning', __c('loading_order', 'Загрузка заказа'), '#' + num, 2500);
+            loadOrders().then(() => {
+                const fresh = STATE.orders.find(o => String(o.order_number) === String(num));
+                if (fresh) {
+                    switchToTab(mapStatus(fresh.status));
+                    openOrderModal(fresh);
+                } else {
+                    switchToTab('waiting');
+                    showToast('info', __c('check_waiting_tab', 'Заявка не найдена — проверьте вкладку «Ожидают»'), '#' + num, 4000);
+                }
+            }).catch(() => {});
+            return;
+        }
+        switchToTab(mapStatus(order.status));
+        setTimeout(() => openOrderModal(order), 150);
+    }
+
     function init() {
+        window.__cscPageLoadedAt = Math.floor(Date.now() / 1000); // смещение серверного времени для офф-таймера
         initTheme();
         initSoundToggle();
         initTabs();
@@ -2417,7 +2450,8 @@
             loadStats(),
             loadNotifications(),
             loadBalance(),
-        ]).catch(err => console.error('Init load error:', err));
+        ]).catch(err => console.error('Init load error:', err))
+          .then(() => handleOpenOrderParam());
 
         startPolling();
 

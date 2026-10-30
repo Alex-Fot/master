@@ -695,6 +695,15 @@ function csc_main_settings_page() {
             </table>
         </div>
 
+        <div class="card" style="max-width: 800px; padding: 20px; margin-top: 20px; border-left: 4px solid #3b82f6;">
+            <h2>🔔 Push-уведомления администратору</h2>
+            <p class="description">Включите браузерные уведомления о новых заявках и проблемах с маршрутизацией (повторный поиск, отсутствие мастеров). Клик по уведомлению открывает карточку заявки в разделе «Заявки».</p>
+            <p>
+                <button type="button" class="button button-primary" id="csc-admin-push-subscribe">🔔 Включить push-уведомления мне</button>
+                <span id="csc-admin-push-status" style="margin-left: 10px; font-size: 13px; color: #64748b;"></span>
+            </p>
+        </div>
+
         <div class="card" style="max-width: 800px; padding: 20px; margin-top: 20px; border-left: 4px solid #10b981;">
             <h2>🧹 Управление Web Push подписками</h2>
             <p class="description">Если клиенты сменили устройства или браузеры, старые подписки могут накапливаться. Нажмите кнопку ниже для полной очистки базы Push-подписок.</p>
@@ -709,6 +718,53 @@ function csc_main_settings_page() {
     </div>
     <script>
     jQuery(document).ready(function($){
+        // 🔔 Подписка администратора на браузерные push-уведомления о заявках.
+        var adminPushBtn = $('#csc-admin-push-subscribe');
+        if (adminPushBtn.length) {
+            $.post(ajaxurl, { action: 'csc_push_status', user_type: 'admin', user_id: 'admin' }, function(res){
+                if (res && res.success && res.data.subscribed) {
+                    $('#csc-admin-push-status').text('✅ Подписка активна').css('color', '#10b981');
+                    adminPushBtn.text('🔔 Обновить подписку');
+                }
+            });
+            adminPushBtn.on('click', async function(){
+                var st = $('#csc-admin-push-status');
+                if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+                    st.text('❌ Требуется HTTPS').css('color', '#ef4444'); return;
+                }
+                if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+                    st.text('❌ Браузер не поддерживает push').css('color', '#ef4444'); return;
+                }
+                var vapidKey = '<?php echo esc_js(get_option("csc_vapid_public_key", "")); ?>';
+                if (!vapidKey) { st.text('❌ VAPID-ключи не сгенерированы (см. блок статуса Web Push ниже)').css('color', '#ef4444'); return; }
+                st.text('Подключение...').css('color', '#64748b');
+                try {
+                    var perm = await Notification.requestPermission();
+                    if (perm !== 'granted') throw new Error('Разрешите уведомления в настройках браузера');
+                    var reg = await navigator.serviceWorker.getRegistration('/');
+                    if (!reg || !reg.active) {
+                        reg = await navigator.serviceWorker.register('/csc-sw.js', { scope: '/' });
+                        await navigator.serviceWorker.ready;
+                    }
+                    function b64u(buf){ var s=btoa(String.fromCharCode.apply(null,new Uint8Array(buf))); return s.replace(/=/g,'').replace(/\+/g,'-').replace(/\//g,'_'); }
+                    var sub = await reg.pushManager.getSubscription();
+                    if (!sub || sub.expirationTime) {
+                        var bin = atob(vapidKey.replace(/-/g,'+').replace(/_/g,'/'));
+                        var arr = Uint8Array.from(bin, function(c){ return c.charCodeAt(0); });
+                        sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: arr.buffer });
+                    }
+                    await fetch(ajaxurl, { method: 'POST', body: new URLSearchParams({
+                        action: 'csc_push_subscribe', user_type: 'admin', user_id: 'admin',
+                        subscription: JSON.stringify(sub.toJSON ? sub.toJSON() : sub)
+                    })});
+                    st.text('✅ Готово — вы будете получать уведомления о заявках').css('color', '#10b981');
+                    adminPushBtn.text('🔔 Обновить подписку');
+                } catch (e) {
+                    st.text('❌ ' + (e.message || 'Ошибка подписки')).css('color', '#ef4444');
+                }
+            });
+        }
+
         $('#csc-clear-push-subs').on('click', function(){
             if(!confirm('Вы уверены? Все сохраненные браузерные подписки будут удалены. Клиентам потребуется разрешить уведомления заново.')) return;
             $('#csc-push-clear-status').text('Очистка...').css('color', '#64748b');
@@ -1896,6 +1952,14 @@ function csc_orders_admin_page() {
     let currentModalOrder = '';
     let cachedModalData = null;
     let currentLogTab = 'history';
+
+    // 🔗 Deep-link из push-уведомления администратора: ?page=csc_orders_admin&csc_open_order=NNN
+    (function(){
+        var m = /[?&]csc_open_order=([0-9A-Za-z\-]+)/.exec(location.search);
+        if (!m) return;
+        history.replaceState(null, '', location.href.replace(/[?&]csc_open_order=[0-9A-Za-z\-]+/, ''));
+        jQuery(function(){ setTimeout(function(){ openOrderLogModal(m[1]); }, 300); });
+    })();
 
     function openOrderLogModal(orderNum) {
         const modal = document.getElementById('csc-order-log-modal');

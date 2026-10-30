@@ -209,6 +209,16 @@ if (!function_exists('csc_notify_admin')) {
         if (!empty($s['telegram_chat_id']) && function_exists('csc_send_tg_notification')) {
             csc_send_tg_notification($s['telegram_chat_id'], $title, $message, $order_number, 'admin', 'admin');
         }
+        // Браузерный push администратору (подписка с кнопки «Push-уведомления»
+        // на странице настроек; ключ хранилища — csc_push_subs_admin_admin).
+        if ($order_number !== '' && function_exists('csc_send_web_push_notification')) {
+            $admin_subs = get_option('csc_push_subs_admin_admin', []);
+            if (is_array($admin_subs)) {
+                foreach ($admin_subs as $sub_json) {
+                    csc_send_web_push_notification($sub_json, $icon . ' ' . $title, $message, $order_number, 'admin', 'admin');
+                }
+            }
+        }
     }
 }
 
@@ -257,7 +267,6 @@ if (!function_exists('csc_trigger_status_changed')) {
                 }
                 break;
                 
-            case CSC_STATUS_COMPLETED:
             case CSC_STATUS_COMPLETED:
                 $total = floatval($order['total'] ?? 0);
                 csc_notify_customer($phone,

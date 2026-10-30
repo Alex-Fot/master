@@ -568,8 +568,13 @@ if (!function_exists('csc_send_web_push_notification')) {
                         'open_order'           => $order_number,
                     ], home_url('/'));
                 }
-            } elseif ($recipient_type === 'customer') {
-                $click_url = add_query_arg(['csc_open_order' => $order_number], home_url('/'));
+            } elseif ($recipient_type === 'customer' || $recipient_type === 'admin') {
+                // Админ просматривает заявки в админке; клиент — в ЛК по параметру.
+                if ($recipient_type === 'admin' && current_user_can('manage_options')) {
+                    $click_url = add_query_arg(['page' => 'csc_orders_admin', 'csc_open_order' => $order_number], admin_url('options-general.php'));
+                } else {
+                    $click_url = add_query_arg(['csc_open_order' => $order_number], home_url('/'));
+                }
             }
         }
         $click_url = apply_filters('csc_push_notification_url', $click_url, $order_number, $recipient_type, $recipient_id);
@@ -581,6 +586,7 @@ if (!function_exists('csc_send_web_push_notification')) {
             'message'      => $message,
             'order_number' => $order_number,
             'user_type'    => $recipient_type,
+            'open_order'   => $order_number,
             'icon'         => get_site_icon_url(192, '/icon-192.png'),
             'badge'        => get_site_icon_url(72, '/badge-72.png'),
             'tag'          => $order_number,
