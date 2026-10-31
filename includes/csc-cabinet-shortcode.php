@@ -413,6 +413,8 @@ function csc_personal_cabinet_shortcode() {
 <div id="csc-cabinet">
     <div class="csc-toast" id="csc-toast"></div>
 
+    <?php if (function_exists('csc_render_quick_menu')) echo csc_render_quick_menu('cabinet'); ?>
+
     <!-- Кнопка уведомлений клиента -->
     <button type="button" class="csc-notifications-client-btn" id="csc-client-notif-btn" title="Уведомления">
         <span class="csc-notif-icon">💬</span>

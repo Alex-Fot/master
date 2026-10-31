@@ -835,6 +835,8 @@ if (!function_exists('csc_render_become_master_form')) {
         </style>';
         ?>
         <div class="csc-registration-page">
+        <?php // Быстрое меню «⋮»: раздел «Стать мастером» неактивен, значок заменён на переход к калькулятору.
+              if (function_exists('csc_render_quick_menu')) echo csc_render_quick_menu('master'); ?>
             <div class="csc-registration-container">
                 <div class="csc-registration-header">
                     <h1 class="csc-registration-title">Стать мастером</h1>

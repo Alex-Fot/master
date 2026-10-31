@@ -441,6 +441,7 @@ require_once CSC_PLUGIN_DIR . 'includes/csc-logger.php';
 require_once CSC_PLUGIN_DIR . 'includes/csc-js-i18n.php';
 
 require_once CSC_PLUGIN_DIR . 'includes/csc-core-functions.php';
+require_once CSC_PLUGIN_DIR . 'includes/csc-quick-menu.php'; // быстрое меню «⋮» (калькулятор + ЛК)
 require_once CSC_PLUGIN_DIR . 'includes/csc-admin-pages.php';
 require_once CSC_PLUGIN_DIR . 'includes/csc-calculator-shortcode.php';
 require_once CSC_PLUGIN_DIR . 'includes/csc-cabinet-shortcode.php';
