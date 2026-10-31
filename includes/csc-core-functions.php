@@ -205,6 +205,15 @@ if (!function_exists('csc_db_row_to_order_array')) {
             'commission'          => floatval($row['commission'] ?? 0),
             'master_income'       => floatval($row['master_income'] ?? 0),
             'payment_method'      => $row['payment_method'] ?? 'cash',
+            // ИСПРАВЛЕНО (сохранение round-trip): платёжные поля читаются из БД — раньше
+            // они пропадали сразу после миграции заказов в таблицу.
+            'payment_status'      => $row['payment_status'] ?? 'no_payment_required',
+            'payment_provider'    => $row['payment_provider'] ?? '',
+            'payment_mode'        => $row['payment_mode'] ?? '',
+            'paid_amount'         => floatval($row['paid_amount'] ?? 0),
+            'remaining_amount'    => floatval($row['remaining_amount'] ?? 0),
+            'paid_at'             => !empty($row['paid_at']) ? $row['paid_at'] : null,
+            'refunded_amount'     => floatval($row['refunded_amount'] ?? 0),
             'services'            => json_decode($row['services'] ?? '[]', true) ?: [],
             'services_for_master' => json_decode($row['services_for_master'] ?? '[]', true) ?: [],
             'files'               => json_decode($row['files'] ?? '[]', true) ?: [],
@@ -268,6 +277,16 @@ if (!function_exists('csc_order_array_to_db_row')) {
             'commission'          => floatval($order['commission'] ?? 0),
             'master_income'       => floatval($order['master_income'] ?? 0),
             'payment_method'      => $order['payment_method'] ?? 'cash',
+            // ИСПРАВЛЕНО (потеря данных): колонки платёжного модуля существовали в схеме,
+            // но никогда не заполнялись — ЛЮБОЙ вызов csc_update_order()/csc_save_order()
+            // обнулял их в БД (фильтр «Ожидает оплаты: pending» после этого ничего не находил).
+            'payment_status'      => $order['payment_status'] ?? 'no_payment_required',
+            'payment_provider'    => $order['payment_provider'] ?? '',
+            'payment_mode'        => $order['payment_mode'] ?? '',
+            'paid_amount'         => floatval($order['paid_amount'] ?? 0),
+            'remaining_amount'    => floatval($order['remaining_amount'] ?? 0),
+            'paid_at'             => !empty($order['paid_at']) ? $order['paid_at'] : null,
+            'refunded_amount'     => floatval($order['refunded_amount'] ?? 0),
             'services'            => wp_json_encode($order['services'] ?? []),
             'services_for_master' => wp_json_encode($order['services_for_master'] ?? []),
             'files'               => wp_json_encode($order['files'] ?? []),

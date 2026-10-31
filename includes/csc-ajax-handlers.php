@@ -1466,14 +1466,21 @@ if (!function_exists('csc_bulk_update_status_handler')) {
             wp_send_json_error(['message' => __('Ошибка безопасности (nonce)', 'csc')]);
         }
         
-        $order_numbers = array_map('sanitize_text_field', $_POST['order_numbers'] ?? []);
-        $new_status = sanitize_text_field($_POST['new_status'] ?? '');
+        // ИСПРАВЛЕНО (массовое изменение статусов): значения POST читались без wp_unslash() —
+        // при magic-quotes-наследии/фильтрах хостинга в значениях остаются слэши, номера заказов
+        // не совпадают с ключами $all_orders и обновляется 0 заказов («ничего не происходит»).
+        // Плюс фолбэк на bracket-нотацию order_numbers[] и отбрасывание пустых значений.
+        $order_numbers = array_map('sanitize_text_field', (array) wp_unslash($_POST['order_numbers'] ?? $_POST['order_numbers[]'] ?? []));
+        $order_numbers = array_values(array_filter($order_numbers));
+        $new_status = sanitize_text_field(wp_unslash($_POST['new_status'] ?? ''));
         
         if (empty($order_numbers) || empty($new_status)) {
             wp_send_json_error(['message' => __('Не выбраны заказы или статус', 'csc')]);
         }
         
-        $valid_statuses = [CSC_STATUS_PENDING, CSC_STATUS_SEARCHING, CSC_STATUS_AWAITING_PAYMENT, CSC_STATUS_PROCESSING, CSC_STATUS_COMPLETED, CSC_STATUS_CANCELLED];
+        // ИСПРАВЛЕНО (UX): no_masters/routing_timeout — легальные ручные статусы (есть в
+        // select единичного изменения); без них бэкенд отклонял выбор с «Недопустимый статус».
+        $valid_statuses = [CSC_STATUS_PENDING, CSC_STATUS_SEARCHING, CSC_STATUS_AWAITING_PAYMENT, CSC_STATUS_PROCESSING, CSC_STATUS_COMPLETED, CSC_STATUS_CANCELLED, CSC_STATUS_NO_MASTERS, CSC_STATUS_ROUTING_TIMEOUT];
         if (!in_array($new_status, $valid_statuses)) {
             wp_send_json_error(['message' => __('Недопустимый статус', 'csc')]);
         }
@@ -1494,12 +1501,29 @@ if (!function_exists('csc_bulk_update_status_handler')) {
                 if ($new_status === CSC_STATUS_CANCELLED) {
                     $all_orders[$num]['routing_status'] = 'cancelled';
                     $all_orders[$num]['cancelled_at'] = current_time('mysql');
+                    // Синхронизация с единичным изменением статуса: освобождение мастера
+                    $all_orders[$num]['master_released'] = true;
                     // Зависшие заказы «Ожидает оплаты»: при ручной отмене помечаем платёж как
                     // неоплаченный, чтобы крон-проверка зависших платежей больше не трогала заказ.
                     if ($old_status === CSC_STATUS_AWAITING_PAYMENT && in_array($all_orders[$num]['payment_status'] ?? '', ['pending', ''], true)) {
                         $all_orders[$num]['payment_status'] = 'unpaid';
                         $all_orders[$num]['cancel_reason'] = __('Отменено администратором (зависший заказ в ожидании оплаты)', 'csc');
                     }
+                }
+
+                // ИСПРАВЛЕНО (корневая причина бага): сохранение шло из УСТАРЕВШЕГО кэшированного
+                // снимка всего списка ($all_orders). При persistent object cache (Redis/Memcached)
+                // и TTL 5 мин устаревший объект перезаписывал свежие данные заказа целиком
+                // (status возвращался к старому + терялись payment_status/paid_at/files) —
+                // визуально «ничего не происходит». Теперь перечитываем актуальный заказ
+                // и мутируем только нужные поля.
+                $fresh = function_exists('csc_get_order') ? csc_get_order($num) : null;
+                if (is_array($fresh)) {
+                    $all_orders[$num] = $fresh;
+                }
+                // Синхронизация с единичным изменением статуса (admit manual override for routing)
+                if (in_array($new_status, [CSC_STATUS_PROCESSING, CSC_STATUS_COMPLETED], true) && ($all_orders[$num]['routing_status'] ?? '') === 'searching') {
+                    $all_orders[$num]['routing_status'] = 'manual_override';
                 }
 
                 // ИСПРАВЛЕНО: Сохраняем измененный заказ через унифицированную функцию
@@ -1552,7 +1576,9 @@ if (!function_exists('csc_bulk_update_status_handler')) {
                 if (function_exists('csc_send_web_push_notification')) {
                     $subs = get_option("csc_push_subs_customer_{$phone}", []);
                     foreach ($subs as $sub_json) {
-                        csc_send_web_push_notification($sub_json, "📌 Статус #$num", "Ваш заказ теперь: $new_status", $num, 'customer', $phone);
+                        // ИСПРАВЛЕНО (UX): человекочитаемое название статуса вместо сырого ключа БД
+                        $new_status_label = function_exists('csc_status_label') ? csc_status_label($new_status) : $new_status;
+                        csc_send_web_push_notification($sub_json, "📌 Статус #$num", "Ваш заказ теперь: $new_status_label", $num, 'customer', $phone);
                     }
                 }
                 
