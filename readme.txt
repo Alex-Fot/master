@@ -4,7 +4,7 @@ Tags: calculator, booking, orders, services, marketplace
 Requires at least: 6.0
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 9.0
+Stable tag: 9.0.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -74,6 +74,15 @@ OpenStreetMap Nominatim (геокодинг, лимит 1 запрос/сек), 
 
 == Changelog ==
 
+= 9.0.1 =
+* Web Push: шифрование payload приведено к канону RFC 8291/8188 (info-строка "WebPush: info\0" + ключи клиента/сервера, salt через HKDF, padding до record_size) — проверено roundtrip-тестом против Python-эталона (http_ece/pywebpush); исправлен вызов openssl_pkey_derive() (fatal на PHP 8).
+* Routing: csc_check_routing_timeouts() обрабатывает зависшие заявки без offer_time по routing_started_at; просроченные офферы больше не «вися» в статусе «Ожидает».
+* Master dashboard: исключены из выдачи заказы с отказом мастера (rejected_by) и чужие просроченные офферы; в JS просроченные карточки скрываются; после входа токен/open_order стираются из URL (защита от повторного клика по push → 403).
+* Admin: страница «Управление заявками» — фильтры сгруппированы с подписями, исправлено наложение колонок «Статус»/«Действия», добавлена кнопка «🔄 Перезапустить поиск», PHP-константы в JS заменены строками.
+* Cabinet: автологин клиента из push-ссылки по параметру csc_phone + очистка URL; убран спам-push по каждому заказу при входе в ЛК.
+* Service Worker: точное сравнение URL вместо includes(), фолбэк showNotification при openWindow===null, убран renotify; bump версии сбрасывает кэш корневого csc-sw.js на CDN.
+* Uninstall: корректная очистка cron-хука csc_tg_webhook_selfcheck_hourly.
+
 = 9.0 =
 * Geocoding: единый User-Agent для Nominatim и гарантированная задержка >= 1 сек между запросами (OSM Usage Policy).
 * Security: токены кабинетов хранятся как SHA-256 хэши с ленивой миграцией; одноразовые креденшелы входа; rate-limit подбора токенов для клиентов и мастеров; токены убраны из URL (заголовок X-CSC-Token).
@@ -97,6 +106,9 @@ OpenStreetMap Nominatim (геокодинг, лимит 1 запрос/сек), 
 * Личный кабинет клиента, история заказов.
 
 == Upgrade Notice ==
+
+= 9.0.1 =
+Критично для Web Push: исправлено шифрование payload (совместимость с Chrome/Firefox) и фатальная ошибка openssl_pkey_derive на PHP 8. Версия bump'нута специально — это сбрасывает кэш корневого csc-sw.js на CDN/браузерах.
 
 = 9.0 =
 Важно: обновите плагин — включены улучшения безопасности (хэширование токенов, защита от подбора) и починен геокодер Nominatim. После обновления старые открытые токены будут мигрированы в хэши автоматически при первом использовании.
