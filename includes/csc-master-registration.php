@@ -835,6 +835,7 @@ if (!function_exists('csc_render_become_master_form')) {
         </style>';
         ?>
         <div class="csc-registration-page">
+            <?php if (function_exists('csc_quick_menu_assets')) csc_quick_menu_assets(); ?>
             <div class="csc-registration-container">
                 <div class="csc-registration-header">
                     <h1 class="csc-registration-title">Стать мастером</h1>

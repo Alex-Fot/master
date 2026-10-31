@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Custom Service Calculator
  * Description: Веб-приложение для расчёта и бронирования услуг с плиточным выбором разделов.
- * Version: 9.1
+ * Version: 9.1.1
  * Author: Александр Федотов
  * License: GPLv2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -29,7 +29,7 @@ if (!defined('ABSPATH')) exit;
 // ============================================================
 define('CSC_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('CSC_PLUGIN_URL', plugin_dir_url(__FILE__));
-define('CSC_PLUGIN_VERSION', '9.1');
+define('CSC_PLUGIN_VERSION', '9.1.1');
 define('CSC_DB_VERSION', '2.3'); // 2.3: индексы idx_master_id / idx_current_candidate / idx_date для SQL-выборок заказов (Кэш заказов); 2.2: перенос миграций БД в admin_init — колонки создаются при ОБНОВЛЕНИИ плагина, а не только при активации
 
 // 3.5: Словарь статусов — константы нужны уже в хуке активации (csc_migrate_statuses_to_latin)

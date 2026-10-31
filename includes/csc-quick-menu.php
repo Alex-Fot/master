@@ -18,26 +18,74 @@ if (!defined('ABSPATH')) exit;
 //    восстанавливается при повторном входе.
 // ============================================================
 
+if (!function_exists('csc_quick_menu_find_shortcode_page')) {
+    /**
+     * Поиск опубликованной страницы по шорткоду (кэшируется в транзиенте).
+     */
+    function csc_quick_menu_find_shortcode_page($shortcode_tag) {
+        $cache_key = '_csc_qm_page_' . $shortcode_tag;
+        $cached    = get_transient($cache_key);
+        if (is_string($cached) && $cached !== '') {
+            $p = get_post(absint($cached));
+            if ($p && $p->post_status === 'publish') {
+                return get_permalink($p);
+            }
+        }
+        $pages = get_pages(['post_status' => 'publish', 'numberposts' => -1]);
+        foreach ($pages as $p) {
+            if (has_shortcode((string) $p->post_content, $shortcode_tag)) {
+                set_transient($cache_key, $p->ID, HOUR_IN_SECONDS);
+                return get_permalink($p);
+            }
+        }
+        return '';
+    }
+}
+
+if (!function_exists('csc_quick_menu_current_section')) {
+    /**
+     * Раздел, на котором находится посетитель: 'calculator' | 'cabinet' |
+     * 'master' | '' — определяется по ID текущей страницы/поста и её шорткодам
+     * (плюс фолбэк по id контейнеров, если рендер идёт не через page_id).
+     */
+    function csc_quick_menu_current_section() {
+        static $cached = null;
+        if ($cached !== null) {
+            return $cached;
+        }
+        $cached  = '';
+        $content = '';
+        $qid     = get_queried_object_id();
+        if ($qid) {
+            $content = (string) get_post_field('post_content', $qid);
+        }
+        if (has_shortcode($content, 'service_calculator')) {
+            $cached = 'calculator';
+        } elseif (has_shortcode($content, 'csc_personal_cabinet')) {
+            $cached = 'cabinet';
+        } elseif (has_shortcode($content, 'csc_become_master')) {
+            $cached = 'master';
+        } else {
+            // Фолбэк: прямой вызов билдера shortcode без контекста запроса.
+            $id = is_singular() ? (int) get_the_ID() : 0;
+            if ($id) {
+                $c2 = (string) get_post_field('post_content', $id);
+                if (has_shortcode($c2, 'service_calculator'))         $cached = 'calculator';
+                elseif (has_shortcode($c2, 'csc_personal_cabinet'))   $cached = 'cabinet';
+                elseif (has_shortcode($c2, 'csc_become_master'))      $cached = 'master';
+            }
+        }
+        return $cached;
+    }
+}
+
 if (!function_exists('csc_quick_menu_urls')) {
     /**
      * URL пунктов меню: страница с шорткодом [csc_become_master] и страница ЛК.
      */
     function csc_quick_menu_urls() {
-        $find_shortcode_page = function ($shortcode_tag) {
-            $pages = get_pages([
-                'post_status' => 'publish',
-                'numberposts' => -1,
-            ]);
-            foreach ($pages as $p) {
-                if (has_shortcode((string) $p->post_content, $shortcode_tag)) {
-                    return get_permalink($p);
-                }
-            }
-            return '';
-        };
-
         // Мастер: страница с [csc_become_master] → главная (фолбэк).
-        $master_url = $find_shortcode_page('csc_become_master');
+        $master_url = csc_quick_menu_find_shortcode_page('csc_become_master');
         $master_url = $master_url ? esc_url($master_url) : esc_url(home_url('/'));
 
         // Кабинет: опция csc_cabinet_page_id (используется и в push deep-link)
@@ -45,17 +93,24 @@ if (!function_exists('csc_quick_menu_urls')) {
         $cab_id  = absint(get_option('csc_cabinet_page_id', 0));
         $cab_url = ($cab_id && get_permalink($cab_id)) ? esc_url(get_permalink($cab_id)) : '';
         if (!$cab_url) {
-            $found = $find_shortcode_page('csc_personal_cabinet');
+            $found   = csc_quick_menu_find_shortcode_page('csc_personal_cabinet');
             $cab_url = $found ? esc_url($found) : esc_url(home_url('/'));
         }
+
+        // Калькулятор: страница с [service_calculator] → главная (фолбэк).
+        $calc_url = csc_quick_menu_find_shortcode_page('service_calculator');
+        $calc_url = $calc_url ? esc_url($calc_url) : esc_url(home_url('/'));
 
         return [
             'master'  => $master_url,
             'cabinet' => $cab_url,
+            'calc'    => $calc_url,
+            'section' => csc_quick_menu_current_section(),
             'labels'  => [
                 'menu'    => __('Меню', 'csc'),
                 'master'  => __('Стать мастером', 'csc'),
                 'cabinet' => __('Личный кабинет', 'csc'),
+                'calc'    => __('Рассчитать услугу', 'csc'),
             ],
         ];
     }
@@ -186,6 +241,9 @@ if (!function_exists('csc_quick_menu_assets')) {
 /* Состояние перетаскивания */
 .csc-qm.dragging { border-color: var(--csc-primary, #3b82f6); opacity: 0.95; cursor: ew-resize; }
 .csc-qm.dragging .csc-qm-item { transition: none; }
+/* Неактивный (текущий) раздел: значок подменён на переход к калькулятору */
+.csc-qm-item.current { opacity: 0.55; }
+.csc-qm-item.current:hover { opacity: 1; }
 @media (max-width: 768px) {
     .csc-qm { top: 10px; padding: 4px 6px; }
     .csc-qm-button, .csc-qm.open .csc-qm-item { width: 34px; height: 34px; }
@@ -243,6 +301,41 @@ if (!function_exists('csc_quick_menu_assets')) {
         try { localStorage.setItem(LS_KEY, String(Math.round(el.getBoundingClientRect().left))); } catch (e) {}
     }
 
+    // Значок 3: калькулятор — подмена неактивного (текущего) раздела
+    var ICON_CALC = '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+        '<rect x="5" y="3" width="14" height="18" rx="2.5"/>' +
+        '<line x1="8" y1="7" x2="16" y2="7"/>' +
+        '<circle cx="9" cy="12" r=".6"/><circle cx="12" cy="12" r=".6"/><circle cx="15" cy="12" r=".6"/>' +
+        '<circle cx="9" cy="16" r=".6"/><circle cx="12" cy="16" r=".6"/><circle cx="15" cy="16" r=".6"/>' +
+        '</svg>';
+
+    function escAttr(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    // Пункт меню. Если ключ совпадает с текущим разделом (CFG.section),
+    // раздел НЕ активен: его значок подменён на переход к калькулятору.
+    function itemHTML(key, href, label, icon) {
+        var cur   = CFG.section && CFG.section === key;
+        var khref = cur ? (CFG.calc || '/') : href;
+        var klbl  = cur ? CFG.labels.calc : label;
+        var kicon = cur ? ICON_CALC : icon;
+        return '<a class="csc-qm-item csc-qm-' + key + (cur ? ' current' : '') + '"' +
+            ' href="' + escAttr(khref) + '"' +
+            ' aria-label="' + escAttr(klbl) + '"' +
+            (cur ? ' data-current="1"' : '') + '>' +
+            kicon + '<span class="csc-qm-tip">' + escAttr(klbl) + '</span></a>';
+    }
+
+    function samePath(href) {
+        try {
+            var u = new URL(href, location.origin);
+            return u.pathname.replace(/\/+$/, '') === location.pathname.replace(/\/+$/, '');
+        } catch (e) { return false; }
+    }
+
     function build() {
         if (document.querySelector('.csc-qm')) return;
         if (!document.body) return;
@@ -250,8 +343,10 @@ if (!function_exists('csc_quick_menu_assets')) {
         // На странице ЛК меню появляется только после авторизации: до входа
         // оно перекрывало бы форму, а пункт «Личный кабинет» был бы циклической
         // ссылкой. Ждём класс .logged-in (навешивается в renderOrders).
+        // Исключение: если текущий раздел сам «cabinet», ссылка на него всё
+        // равно никуда не ведёт — меню можно монтировать сразу.
         var cabinet = document.getElementById('csc-cabinet');
-        if (cabinet && !cabinet.classList.contains('logged-in')) {
+        if (cabinet && !cabinet.classList.contains('logged-in') && CFG.section !== 'cabinet') {
             var mo = new MutationObserver(function () {
                 if (cabinet.classList.contains('logged-in')) {
                     mo.disconnect();
@@ -297,13 +392,11 @@ if (!function_exists('csc_quick_menu_assets')) {
         }
 
         el.innerHTML =
-            '<button type="button" class="csc-qm-button csc-qm-toggle" aria-expanded="false" aria-haspopup="true" title="' + CFG.labels.menu + '">' +
+            '<button type="button" class="csc-qm-button csc-qm-toggle" aria-expanded="false" aria-haspopup="true" title="' + escAttr(CFG.labels.menu) + '">' +
                 '<span class="csc-qm-grip" aria-hidden="true">&#8942;</span>' +
             '</button>' +
-            '<a class="csc-qm-item csc-qm-master" href="' + CFG.master + '" aria-label="' + CFG.labels.master + '">' +
-                ICON_MASTER + '<span class="csc-qm-tip">' + CFG.labels.master + '</span></a>' +
-            '<a class="csc-qm-item csc-qm-cabinet" href="' + CFG.cabinet + '" aria-label="' + CFG.labels.cabinet + '">' +
-                ICON_PERSON + '<span class="csc-qm-tip">' + CFG.labels.cabinet + '</span></a>';
+            itemHTML('master',  CFG.master,  CFG.labels.master,  ICON_MASTER) +
+            itemHTML('cabinet', CFG.cabinet, CFG.labels.cabinet, ICON_PERSON);
         document.body.appendChild(el);
 
         restorePosition(el);
@@ -324,15 +417,36 @@ if (!function_exists('csc_quick_menu_assets')) {
         toggle.addEventListener('click', function () {
             setOpen(!el.classList.contains('open'));
         });
-        document.addEventListener('click', function (ev) {
+        // Клик вне меню закрываем на pointerdown: после навигации по <a>
+        // событие click может не дойти, а pointerdown гарантированно
+        // предшествует любому клику/тапу.
+        document.addEventListener('pointerdown', function (ev) {
             if (el.classList.contains('open') && !el.contains(ev.target)) setOpen(false);
         });
         document.addEventListener('keydown', function (ev) {
             if (ev.key === 'Escape' && el.classList.contains('open')) setOpen(false);
         });
 
+        // Защита от «мёртвых» ссылок: если пункт ведёт на текущую страницу
+        // (фолбэк home_url() или совпадение разделов) — не перезагружать её.
+        Array.prototype.forEach.call(el.querySelectorAll('.csc-qm-item'), function (a) {
+            a.addEventListener('click', function (ev) {
+                if (!ev.metaKey && !ev.ctrlKey && !ev.shiftKey && samePath(a.getAttribute('href'))) {
+                    ev.preventDefault();
+                    setOpen(false);
+                }
+            });
+        });
+
         // ---- удержание = перетаскивание по горизонтали ----
         var pid = null, startX = 0, startLeft = 0, holdTimer = null, moved = false;
+
+        function beginDrag() {
+            moved = true;
+            el.classList.add('dragging');
+            setOpen(false);
+            try { toggle.setPointerCapture(pid); } catch (e) {}
+        }
 
         toggle.addEventListener('pointerdown', function (ev) {
             if (ev.button !== undefined && ev.button !== 0) return;
@@ -340,13 +454,9 @@ if (!function_exists('csc_quick_menu_assets')) {
             startX = ev.clientX;
             startLeft = el.getBoundingClientRect().left;
             moved = false;
-            // preventDefault только когдаdrag начался — обычный клик не ломаем
-            holdTimer = setTimeout(function () {
-                moved = true;
-                el.classList.add('dragging');
-                setOpen(false);
-                try { toggle.setPointerCapture(pid); } catch (e) {}
-            }, HOLD_MS);
+            // preventDefault делаем ТОЛЬКО когда drag реально начался —
+            // иначе браузер не сгенерирует «клик» и кнопка перестанет открывать меню.
+            holdTimer = setTimeout(beginDrag, HOLD_MS);
         });
 
         toggle.addEventListener('pointermove', function (ev) {
@@ -354,12 +464,10 @@ if (!function_exists('csc_quick_menu_assets')) {
             var dx = ev.clientX - startX;
             if (!moved && Math.abs(dx) > MOVE_TOL) {
                 clearTimeout(holdTimer);
-                moved = true;
-                el.classList.add('dragging');
-                setOpen(false);
-                try { toggle.setPointerCapture(pid); } catch (e) {}
+                beginDrag();
             }
             if (moved) {
+                ev.preventDefault(); // глулим скролл/выделение на touch-устройствах
                 el.style.left = clamp(startLeft + dx, el) + 'px';
                 el.style.right = 'auto';
             }
@@ -396,10 +504,15 @@ if (!function_exists('csc_quick_menu_assets')) {
 
     window.cscQuickMenu = { mount: build };
 
+    function boot() { build(); }
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', build);
+        document.addEventListener('DOMContentLoaded', boot);
+        // Резервный запуск: если страница рендерится в буфер и вставляется
+        // в DOM после DOMContentLoaded (некоторые конструкторы/темы),
+        // дожидаемся полной загрузки.
+        window.addEventListener('load', boot);
     } else {
-        build();
+        boot();
     }
 })();
 </script>
