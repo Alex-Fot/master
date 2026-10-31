@@ -24,29 +24,12 @@ if (!function_exists('csc_push_to_in_cabinet')) {
         $notifications = get_option($option_key, []);
         if (!is_array($notifications)) $notifications = [];
         
-        // ИСПРАВЛЕНО (кликабельные уведомления): для уведомлений о новых заявках
-        // формируем кликабельную ссылку. Мастеру — на страницу входа в кабинет с
-        // одноразовым креденшелом + ?open_order=N (ЛК сам откроет вкладку
-        // «Ожидают» и модалку заявки); клиенту — на страницу ЛК с фильтром по
-        // номеру. Ссылка живёт сутки (ttl одноразового токена).
-        $click_url = '';
-        if (!empty($payload['order_number'])) {
-            if ($recipient_type === 'master' && function_exists('csc_issue_master_login_token')) {
-                $login_token = csc_issue_master_login_token($recipient_id);
-                if ($login_token !== '') {
-                    $click_url = add_query_arg([
-                        'csc_master_dashboard' => '1',
-                        'mid'                  => $recipient_id,
-                        'token'                => $login_token,
-                        'open_order'           => $payload['order_number'],
-                    ], home_url('/'));
-                }
-            } elseif ($recipient_type === 'customer') {
-                $click_url = add_query_arg([
-                    'csc_open_order' => $payload['order_number'],
-                ], home_url('/'));
-            }
-        }
+        // ИСПРАВЛЕНО (кликабельные уведомления): единый построитель URL из
+        // модуля уведомлений — те же ссылки, что и в web push (клиенту —
+        // телефон+заявка для автологина в ЛК, мастеру — креденшел + open_order).
+        $click_url = function_exists('csc_build_push_click_url')
+            ? csc_build_push_click_url($payload['order_number'] ?? '', $recipient_type, $recipient_id)
+            : '';
 
         // Добавляем в начало
         array_unshift($notifications, [
