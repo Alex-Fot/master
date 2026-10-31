@@ -156,6 +156,14 @@ if (!function_exists('csc_seo_get_defaults')) {
             // ── П12. Токены шаблонов ──
             'token_price_separator' => 'от ',
             'token_cities_limit'    => 6,
+
+            // ── П13. Автопинг поисковых систем (wp-cron) ──
+            'ping_auto_enabled'     => 0,   // по умолчанию выкл (Google deprecated ping endpoint)
+            'ping_auto_schedule'    => 'weekly', // hourly|daily|weekly|monthly
+            'ping_auto_google'      => 1,   // пинговать Google
+            'ping_auto_yandex'      => 1,   // пинговать Яндекс
+            'ping_auto_on_flush'    => 1,   // автособытие: пересборка карты после изменения каталога
+            'ping_last_result'      => '',  // служебное: результат последнего автопинга (read-only)
         ];
     }
 }
@@ -799,7 +807,76 @@ foreach (['update_option_csc_service_sections', 'update_option_csc_service_items
         delete_transient('csc_seo_page_' . md5('service_calculator'));
         delete_transient('csc_seo_page_' . md5('csc_become_master'));
         delete_transient('csc_seo_page_' . md5('csc_personal_cabinet'));
+        // П13: автособытие — перепинговать поисковики после изменения состава карты.
+        if (csc_seo_enabled('ping_auto_enabled') && csc_seo_get_settings()['ping_auto_on_flush']) {
+            if (!wp_next_scheduled('csc_seo_ping_event')) {
+                wp_schedule_single_event(time() + 60, 'csc_seo_ping_event');
+            }
+        }
     }, 10, 0);
+}
+
+// ============================================================
+// 5b. АВТОПИНГ ПОИСКОВЫХ СИСТЕМ (П13): расписание + обработчик
+//     Google официально deprecated ping-endpoint (2023), поэтому
+//     функция выключена по умолчанию; Яндекс пинг реально работает.
+// ============================================================
+
+add_filter('cron_schedules', 'csc_seo_cron_schedules');
+if (!function_exists('csc_seo_cron_schedules')) {
+    function csc_seo_cron_schedules($schedules) {
+        $schedules['csc_seo_monthly'] = ['interval' => 4 * WEEK_IN_SECONDS, 'display' => 'CSC SEO: каждые 4 недели'];
+        return $schedules;
+    }
+}
+
+add_action('init', 'csc_seo_schedule_ping', 11);
+if (!function_exists('csc_seo_schedule_ping')) {
+    /** Ставим/снимаем событие автопинга в зависимости от настроек. */
+    function csc_seo_schedule_ping() {
+        $s = csc_seo_get_settings();
+        if (empty($s['enabled']) || empty($s['ping_auto_enabled']) || empty($s['sitemap_enabled'])) {
+            // Снимаем все запланированные копии события (рекуррентное + single).
+            while (($rec = wp_get_schedule('csc_seo_ping_event')) !== false) {
+                wp_unschedule_event($rec, 'csc_seo_ping_event');
+                if (!wp_next_scheduled('csc_seo_ping_event')) break;
+            }
+            return;
+        }
+        $sch  = in_array($s['ping_auto_schedule'] ?? '', ['hourly', 'daily', 'weekly', 'csc_seo_monthly'], true) ? $s['ping_auto_schedule'] : 'weekly';
+        $next = wp_next_scheduled('csc_seo_ping_event');
+        if (!$next || wp_get_schedule('csc_seo_ping_event') !== $sch) {
+            if ($next) wp_unschedule_event($next, 'csc_seo_ping_event');
+            wp_schedule_event(time() + HOUR_IN_SECONDS, $sch, 'csc_seo_ping_event');
+        }
+    }
+}
+
+add_action('csc_seo_ping_event', 'csc_seo_do_ping');
+if (!function_exists('csc_seo_do_ping')) {
+    /** Фактический пинг XML-карты. Возвращает человекочитаемый результат и пишет его в настройку. */
+    function csc_seo_do_ping($manual = false) {
+        $s    = csc_seo_get_settings();
+        $path = trim((string)($s['sitemap_path'] ?? 'csc-sitemap.xml'), '/');
+        $sm   = home_url('/' . ($path === '' ? 'csc-sitemap.xml' : $path));
+        $res  = [];
+        if (!empty($s['ping_auto_google'])) {
+            $r   = wp_remote_get('https://www.google.com/sitemaps/ping?sitemap=' . rawurlencode($sm), ['timeout' => 8]);
+            $ok  = !is_wp_error($r) && (int)wp_remote_retrieve_response_code($r) === 200;
+            $res[] = 'Google: ' . ($ok ? 'OK' : 'нет ответа (GSC переобходит карту сам)');
+        }
+        if (!empty($s['ping_auto_yandex'])) {
+            $r   = wp_remote_get('https://yandex.ru/webmaster/sitemap?sitemap=' . rawurlencode($sm), ['timeout' => 8]);
+            $ok  = !is_wp_error($r) && (int)wp_remote_retrieve_response_code($r) < 400;
+            $res[] = 'Яндекс: ' . ($ok ? 'OK' : 'ошибка (загрузите карту в Вебмастере)');
+        }
+        $text = implode(' · ', $res) . ' · ' . gmdate('Y-m-d H:i') . ' UTC' . ($manual ? ' (вручную)' : ' (авто)');
+        $saved = csc_seo_get_settings(); // статический кэш: модифицируем копию и пишем целиком
+        $saved['ping_last_result'] = $text;
+        update_option('csc_seo_settings', $saved, false);
+        csc_seo_log('Ping: ' . $text);
+        return $text;
+    }
 }
 
 // Flush rewrite rules только при активации/обновлении плагина (дёшево и безопасно).
@@ -816,7 +893,10 @@ if (!function_exists('csc_seo_robots_txt')) {
         $s = csc_seo_get_settings();
         $add = "\n";
         if (!empty($s['robots_sitemap'])) {
-            $add .= "Sitemap: " . home_url('/csc-sitemap.xml') . "\n";
+            // Путь берём из настройки (админка → «Sitemap / robots.txt»), а не хардкод.
+            $path = trim((string)($s['sitemap_path'] ?? 'csc-sitemap.xml'), '/');
+            if ($path === '') $path = 'csc-sitemap.xml';
+            $add .= "Sitemap: " . home_url('/' . $path) . "\n";
         }
         // Служебные экраны кабинета мастера и upsale-интерфейса — не для индексов
         if (!empty($s['robots_disallow_service'])) {
@@ -1279,6 +1359,14 @@ if (!function_exists('csc_seo_admin_fields_schema')) {
                     ['k' => 'robots_disallow_service', 't' => 'checkbox', 'l' => 'Disallow для служебных query-параметров и /csc-sw.js'],
                     ['k' => 'robots_extra_lines', 't' => 'multiline', 'l' => 'Произвольные директивы (разрешены User-agent/Sitemap/Disallow/Allow/Crawl-delay/Host; по одной на строку)', 'rows' => 4],
                 ],
+                'Автопинг поисковых систем (П13)' => [
+                    ['k' => 'ping_auto_enabled', 't' => 'checkbox', 'l' => 'Автоматически пинговать поисковики при обновлении карты', 'd' => 'Google расформировал ping-endpoint в 2023 — используйте как факультативный сигнал; Яндекс реагирует. Основной канал — Search Console / Вебмастер.'],
+                    ['k' => 'ping_auto_schedule', 't' => 'select', 'l' => 'Расписание автопинга', 'opts' => ['hourly' => 'Каждый час', 'daily' => 'Ежедневно', 'weekly' => 'Еженедельно', 'csc_seo_monthly' => 'Каждые 4 недели']],
+                    ['k' => 'ping_auto_google', 't' => 'checkbox', 'l' => 'Пинговать Google'],
+                    ['k' => 'ping_auto_yandex', 't' => 'checkbox', 'l' => 'Пинговать Яндекс'],
+                    ['k' => 'ping_auto_on_flush', 't' => 'checkbox', 'l' => 'Неотложный пинг после изменения каталога/городов'],
+                    ['t' => 'readonly', 'k' => 'ping_last_result', 'l' => 'Результат последнего пинга'],
+                ],
             ],
         ];
 
@@ -1399,6 +1487,8 @@ if (!function_exists('csc_seo_sanitize_field')) {
                     }
                 }
                 return $out;
+            case 'readonly':
+                return (string)$cur; // служебные read-only значения не перезаписываются формой
             case 'text':
             default:
                 return sanitize_text_field((string)$raw);
@@ -1441,6 +1531,9 @@ if (!function_exists('csc_seo_render_field')) {
                     csc_seo_redirect_row((string)($r['from'] ?? ''), (string)($r['to'] ?? ''), (int)($r['code'] ?? 301));
                 }
                 echo '</tbody></table><button type="button" class="button" id="csc-seo-redirect-add">+ Добавить редирект</button>';
+                break;
+            case 'readonly':
+                echo '<code>' . esc_html((string)$val !== '' ? $val : '—') . '</code>';
                 break;
             case 'email':
                 echo '<input type="email" class="regular-text" id="' . esc_attr($id) . '" name="' . esc_attr($name) . '" value="' . esc_attr((string)$val) . '"' . (isset($f['ph']) ? ' placeholder="' . esc_attr($f['ph']) . '"' : '') . '>';
@@ -1539,13 +1632,10 @@ if (!function_exists('csc_seo_admin_page')) {
                     $action_notice = '<div class="notice notice-error is-dismissible"><p>Импорт отменён: некорректный JSON.</p></div>';
                 }
             } elseif ($act === 'ping_engines') {
-                $sm = home_url('/' . trim((string)$s['sitemap_path'], '/'));
-                $r1 = wp_remote_get('https://www.google.com/sitemaps/ping?sitemap=' . rawurlencode($sm), ['timeout' => 8]);
-                $r2 = wp_remote_get('https://yandex.ru/webmaster/sitemap?sitemap=' . rawurlencode($sm), ['timeout' => 8]);
-                $ok1 = !is_wp_error($r1) && (int)wp_remote_retrieve_response_code($r1) === 200;
-                $ok2 = !is_wp_error($r2) && (int)wp_remote_retrieve_response_code($r2) === 200;
-                csc_seo_log('Ping: google=' . ($ok1 ? 'ok' : 'fail') . ' yandex=' . ($ok2 ? 'ok' : 'fail'));
-                $action_notice = '<div class="notice notice-' . (($ok1 || $ok2) ? 'success' : 'warning') . ' is-dismissible"><p>Пинг поисковых систем: Google — <b>' . ($ok1 ? 'OK' : 'нет ответа (нормально, GSC сам переобходит)') . '</b>, Яндекс — <b>' . ($ok2 ? 'OK' : 'нет ответа (загрузите карту в Вебмастере)') . '</b>.</p></div>';
+                // Делегируем общей функции П13: учёт настроек ping_auto_*, запись ping_last_result, лог.
+                $text = csc_seo_do_ping(true);
+                $s['ping_last_result'] = $text; // обновляем локальную копию для рендера readonly-поля
+                $action_notice = '<div class="notice notice-success is-dismissible"><p>Пинг поисковых систем: <b>' . esc_html($text) . '</b>.</p></div>';
             }
         }
 
@@ -1772,4 +1862,41 @@ if (!function_exists('csc_seo_maybe_flush')) {
 // но удаляем правило переписывания из БД при следующем flush.
 register_deactivation_hook(__FILE__, function () {
     delete_option('csc_seo_rules_ver');
+    // П13: снимаем cron-события автопинга (рекуррентное + отложенные single).
+    while (($rec = wp_get_schedule('csc_seo_ping_event')) !== false) {
+        wp_unschedule_event($rec, 'csc_seo_ping_event');
+        if (!wp_next_scheduled('csc_seo_ping_event')) break;
+    }
 });
+
+// ============================================================
+// 12. SEO-АНАЛИЗ КАТАЛОГА (П14): диагностика покрытия ключами
+//     Показывает % заполненных seo_desc, среднюю длину title/desc,
+//     услуги без описания — прямые указания, что оптимизировать.
+// ============================================================
+
+if (!function_exists('csc_seo_analyze_catalog')) {
+    /** @return array{sections:int,sections_total:int,items:int,items_total:int,pct:float,warnings:string[]} */
+    function csc_seo_analyze_catalog() {
+        $res = ['sections' => 0, 'sections_total' => 0, 'items' => 0, 'items_total' => 0, 'pct' => 0.0, 'warnings' => []];
+        foreach ((array)csc_get_sections() as $sec) {
+            $res['sections_total']++;
+            if (!empty($sec['seo_desc'])) $res['sections']++;
+            else $res['warnings'][] = 'Раздел «' . ($sec['name'] ?? '?') . '» без SEO-описания';
+        }
+        foreach ((array)csc_get_items() as $item) {
+            $res['items_total']++;
+            if (!empty($item['seo_desc'])) $res['items']++;
+        }
+        $filled = $res['sections'] + $res['items'];
+        $total  = max(1, $res['sections_total'] + $res['items_total']);
+        $res['pct'] = round(100 * $filled / $total, 1);
+        if ($res['pct'] < 50) $res['warnings'][] = 'Заполнено лишь ' . $res['pct'] . '% SEO-описаний — сниппеты формируются автоматически, но ручные тексты ранжируются лучше.';
+        $s = csc_seo_get_settings();
+        if (empty($s['ssr_catalog']))   $res['warnings'][] = 'SSR-каталог выключен — краулер не видит цены и названия услуг в HTML.';
+        if (empty($s['sitemap_enabled']))$res['warnings'][] = 'XML-sitemap модуля выключен — карта недоступна поисковикам.';
+        if (empty($s['jsonld_service_catalog'])) $res['warnings'][] = 'ServiceCatalog отключён — нет rich-результатов с ценами.';
+        $res['warnings'] = array_slice($res['warnings'], 0, 12);
+        return $res;
+    }
+}
