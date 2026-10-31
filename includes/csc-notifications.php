@@ -252,9 +252,17 @@ if (!function_exists('csc_send_tg_notification')) {
         $tg_token = function_exists('csc_get_telegram_token')
             ? csc_get_telegram_token()
             : ($s['telegram_token'] ?? '');
+        // ИСПРАВЛЕНО (диагностика «Telegram молчит»): раньше при отсутствии
+        // токена/chat_id сообщение просто логировалось как failed без причины —
+        // найти причину в админке было невозможно. Теперь причина пишется и в
+        // payload лога, и в error_log.
         if (!$tg_token || !$chat_id) {
-            $log_id = csc_log_notification($order_number, $recipient_type, $recipient_id, 'telegram', $title, $message, []);
+            $reason = !$tg_token ? 'Не задан токен бота (Настройки → Telegram)' : 'Не задан telegram_chat_id администратора';
+            $log_id = csc_log_notification($order_number, $recipient_type, $recipient_id, 'telegram', $title, $message, ['error' => $reason]);
             csc_update_notification_status($log_id, 'failed');
+            if (function_exists('csc_log')) {
+                csc_log("Telegram не отправлен ({$reason}): «{$title}» заказ #{$order_number}", 'warning', 'TELEGRAM');
+            }
             return false;
         }
 
@@ -279,6 +287,11 @@ if (!function_exists('csc_send_tg_notification')) {
 
         if (is_wp_error($response)) {
             csc_update_notification_status($log_id, 'failed', $response->get_error_message());
+            update_option('csc_tg_last_send_result', [
+                'at'     => current_time('mysql'),
+                'status' => 'error',
+                'error'  => $response->get_error_message(),
+            ], false);
             return false;
         }
 
@@ -288,10 +301,24 @@ if (!function_exists('csc_send_tg_notification')) {
         if ($code === 200 && ($resp['ok'] ?? false)) {
             $msg_id = $resp['result']['message_id'] ?? null;
             csc_update_notification_status($log_id, 'delivered', $msg_id);
+            update_option('csc_tg_last_send_result', [
+                'at'     => current_time('mysql'),
+                'status' => 'delivered',
+                'chat'   => (string)$chat_id,
+                'error'  => '',
+            ], false);
             return $msg_id;
         } else {
             $error_desc = $resp['description'] ?? 'Unknown TG error';
             csc_update_notification_status($log_id, 'failed', wp_json_encode($error_desc));
+            // ИСПРАВЛЕНО (диагностика): помечаем последнюю ошибку отправки —
+            // её видно на странице «Калькулятор услуг» (строка «Статус Telegram»).
+            update_option('csc_tg_last_send_result', [
+                'at'     => current_time('mysql'),
+                'status' => 'failed (HTTP ' . (int)$code . ')',
+                'chat'   => (string)$chat_id,
+                'error'  => is_string($error_desc) ? $error_desc : wp_json_encode($error_desc),
+            ], false);
             return false;
         }
     }
