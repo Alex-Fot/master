@@ -36,7 +36,13 @@ if (!function_exists('csc_quick_menu_build_urls')) {
         // Страница калькулятора: текущая, если на ней рендерится [service_calculator],
         // иначе — первая опубликованная страница с шорткодом.
         $calc_url = '';
-        if ($current_id && has_shortcode((string) get_post_field('post_content', $current_id), 'service_calculator')) {
+        // [9.1.3] приоритет — настройка csc_main_settings['calculator_page_id'] (если есть),
+        // затем факт рендера шорткода на текущей странице, затем глобальный поиск.
+        $s = get_option('csc_main_settings', []);
+        $calc_page = absint($s['calculator_page_id'] ?? 0);
+        if ($calc_page && get_permalink($calc_page)) {
+            $calc_url = get_permalink($calc_page);
+        } elseif ($current_id && has_shortcode((string) get_post_field('post_content', $current_id), 'service_calculator')) {
             $calc_url = get_permalink($current_id);
         } else {
             $found = get_posts([
@@ -75,7 +81,8 @@ if (!function_exists('csc_quick_menu_build_urls')) {
 
         // Форма «стать мастером»: страница с [csc_become_master] или админ-страница.
         $master_url = '';
-        if ($current_id && has_shortcode((string) get_post_field('post_content', $current_id), 'csc_become_master')) {
+        if ($current_id && (has_shortcode((string) get_post_field('post_content', $current_id), 'csc_become_master')
+             || csc_quick_menu_find_shortcode_page('csc_become_master') === $current_id)) {
             $master_url = get_permalink($current_id);
         } else {
             $found = get_posts([
@@ -119,18 +126,43 @@ if (!function_exists('csc_quick_menu_print_assets')) {
         if ($printed) return;
         $printed = true;
 
-        // [9.1.2] Диагностика: window.cscQmDbg фиксирует загрузку скрипта и факт boot'а.
-        // Если на странице cscQmDbg.booted=false — JS до меню не дошёл (конфликт/обрезка).
+        // [9.1.3] Двойная доставка активов:
+        //  (a) инлайн — прямо в разметку шорткода (работает даже если хуки
+        //      wp_head/wp_footer уже «прошли» или страница отдаётся из кэша);
+        //  (b) через wp_head/wp_footer — на случай, если фильтры контента
+        //      (конструкторы страниц, плагины оптимизации) вырежут <style>/<script>
+        //      из тела страницы. Дубликат идемпотентен: boot защищён флагом
+        //      CSC_QUICK_MENU_BOOTED, повторное добавление кликеров игнорируется.
+        csc_quick_menu_register_hooks();
+        echo csc_quick_menu_css_markup();
+        echo csc_quick_menu_js_markup();
+    }
+}
+
+if (!function_exists('csc_quick_menu_register_hooks')) {
+    function csc_quick_menu_register_hooks() {
+        static $hooked = false;
+        if ($hooked || !function_exists('add_action')) return;
+        $hooked = true;
+        add_action('wp_head', 'csc_quick_menu_print_css_hook', 5);
+        add_action('wp_footer', 'csc_quick_menu_print_js_hook', 50);
+    }
+}
+if (!function_exists('csc_quick_menu_print_css_hook')) {
+    function csc_quick_menu_print_css_hook() { echo csc_quick_menu_css_markup(); }
+}
+if (!function_exists('csc_quick_menu_print_js_hook')) {
+    function csc_quick_menu_print_js_hook() { echo csc_quick_menu_js_markup(); }
+}
+
+if (!function_exists('csc_quick_menu_css_markup')) {
+    function csc_quick_menu_css_markup() {
+        ob_start();
         ?>
 <style id="csc-quick-menu-css">
 /* ===== Быстрое меню «⋮» — цвета наследуют тему контейнера ===== */
-/* [9.1.2] display:flex убран: без него обёртка — normal-flow блок нулевой высоты,
-   absolute-плашка в нём становилась «призраком» (0×0), клики по ⋮ не попадали
-   в кнопку → «ничего не происходит», drag невозможен. .csc-qm позиционируется
-   абсолютно сам; pointer-events:none на обёртке больше не нужен. */
-.csc-qm-wrap{position:absolute;top:14px;left:0;right:0;z-index:99998;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
+.csc-qm-wrap{position:absolute;top:14px;left:0;right:0;height:0;z-index:99998;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
 .csc-qm{--qm-bg:rgba(255,255,255,.78);--qm-fg:#1e293b;--qm-br:rgba(15,23,42,.14);--qm-ring:rgba(59,130,246,.35);--qm-accent:#3b82f6;--qm-hover:rgba(59,130,246,.10);position:absolute;left:50%;transform:translateX(-50%);top:0;pointer-events:auto;background:var(--qm-bg);border:1px solid var(--qm-br);border-radius:999px;box-shadow:0 6px 18px rgba(15,23,42,.10);display:flex;align-items:center;height:44px;padding:0 4px;backdrop-filter:blur(12px) saturate(160%);-webkit-backdrop-filter:blur(12px) saturate(160%);transition:box-shadow .25s ease,border-color .25s ease;max-width:min(94vw,520px)}
-/* [9.1.2] после place()/drag JS переводит в left+translate:none — transform больше не мешает */
 .csc-qm.qm-placed{left:0;transform:none}
 [data-theme="dark"] .csc-qm,.csc-qm[data-theme="dark"]{--qm-bg:rgba(15,23,42,.72);--qm-fg:#f1f5f9;--qm-br:rgba(255,255,255,.16);--qm-ring:rgba(96,165,250,.35);--qm-accent:#60a5fa;--qm-hover:rgba(96,165,250,.14);box-shadow:0 6px 18px rgba(0,0,0,.45)}
 .csc-qm.open{border-color:var(--qm-accent);box-shadow:0 0 0 var(--qm-ring),0 8px 24px rgba(15,23,42,.16)}
@@ -152,10 +184,76 @@ if (!function_exists('csc_quick_menu_print_assets')) {
 .csc-qm-item:hover::after,.csc-qm-item:focus-visible::after{opacity:.95;transform:translateX(-50%) scale(1)}
 @media (prefers-reduced-motion:reduce){.csc-qm,.csc-qm-items,.csc-qm-item,.csc-qm-item::after{transition:none!important}}
 </style>
+<?php
+        return ob_get_clean();
+    }
+}
+
+// ============================================================
+// 2c. [9.1.3] Определение текущего раздела по факту рендера шорткода.
+//     has_shortcode(post_content,...) НЕ работает для блоков Gutenberg
+//     (шорткод лежит в HTML-комментарях блока) и для шаблонов конструкторов —
+//     поэтому страница калькулятора ошибочно считалась «не текущей», а ссылки
+//     вели на home_url('/'). Теперь раздел фиксируется в момент реального
+//     вызова рендера меню (см. csc_render_quick_menu).
+// ============================================================
+if (!function_exists('csc_quick_menu_find_shortcode_page')) {
+    function csc_quick_menu_find_shortcode_page($shortcode) {
+        static $cache = [];
+        if (isset($cache[$shortcode])) return $cache[$shortcode];
+        $current_id = get_queried_object_id();
+        // 1) прямая проверка post_content (классические страницы с шорткодом)
+        if ($current_id && has_shortcode((string) get_post_field('post_content', $current_id), $shortcode)) {
+            return $cache[$shortcode] = $current_id;
+        }
+        // 2) поиск по опубликованным страницам: post_content ИЛИ raw-block HTML
+        $found = 0;
+        $pages = get_posts([
+            'post_type' => ['page', 'landing-page'], 'posts_per_page' => 200,
+            'orderby' => 'ID', 'order' => 'ASC', 'exclude' => array_filter([$current_id]),
+        ]);
+        foreach ($pages as $p) {
+            $content = (string) $p->post_content;
+            if (has_shortcode($content, $shortcode) || strpos($content, '[' . $shortcode) !== false) {
+                $found = $p->ID; break;
+            }
+        }
+        // 3) meta-флаги установщика/страниц настроек
+        if (!$found) {
+            $meta_map = [
+                'service_calculator'   => 'csc_calc_page_flag',
+                'csc_personal_cabinet' => 'csc_cabinet_page_flag',
+                'csc_become_master'    => 'csc_master_reg_page_flag',
+            ];
+            if (!empty($meta_map[$shortcode])) {
+                $q = get_posts([
+                    'post_type' => 'any', 'posts_per_page' => 1,
+                    'meta_key' => $meta_map[$shortcode], 'meta_value' => '1',
+                ]);
+                if ($q) $found = $q[0]->ID;
+            }
+        }
+        return $cache[$shortcode] = $found;
+    }
+}
+
+// ============================================================
+// 2d. [9.1.3] JS меню — вынесен в функцию и печатается И инлайн, И через
+//     wp_footer. Улучшения boot:
+//       - запуск сразу + повтор на DOMContentLoaded (защита от раннего парсинга);
+//       - MutationObserver: если разметка меню появилась/обновилась после
+//         кэша-плагина или динамической подстановки — кликеры навешиваются;
+//       - диагностика window.cscQmDbg (loaded/booted/handlers/err).
+// ============================================================
+if (!function_exists('csc_quick_menu_js_markup')) {
+    function csc_quick_menu_js_markup() {
+        // [9.1.3] КРИТИЧЕСКИЙ FIX: JS печатается PHP-строкой (NOWDOC) — см. комментарий ниже.
+        $js = <<<'JS'
 <script id="csc-quick-menu-js">
 (function(){
     'use strict';
-    window.cscQmDbg = { loaded: true, booted: false, err: null }; // [9.1.2] диагностика boot'а
+    var DBG = window.cscQmDbg = window.cscQmDbg || {};
+    DBG.loaded = true; DBG.booted = false; DBG.err = DBG.err || null;
     try {
     if (window.CSC_QUICK_MENU_BOOTED) return;
     window.CSC_QUICK_MENU_BOOTED = true;
@@ -164,21 +262,29 @@ if (!function_exists('csc_quick_menu_print_assets')) {
     var HOLD_MS = 300;                   // порог «удержания» для начала перетаскивания
     var MOVE_TOL = 6;                    // px, ниже которых клик не считается перемещением
 
+    // [9.1.3] Ширина вьюпорта: documentElement.clientWidth может быть undefined в
+    // нестандартных окружениях → NaN в расчётах и плашка уезжала/не двигалась.
+    function vwpx(){
+        var d = document.documentElement || {}, b = document.body || {};
+        return Math.max(d.clientWidth || 0, window.innerWidth || 0, b.clientWidth || 0, 320);
+    }
+
     function each(sel, fn){ Array.prototype.forEach.call(document.querySelectorAll(sel), fn); }
 
-    // [9.1.2] place() задаёт qm.style.left в пикселях; без снятия transform из CSS
-    // сдвиг translateX(-50%) ломал бы hit-test и расчёт позиции — плашка «уезжала».
     function markPlaced(qm){ qm.classList.add('qm-placed'); }
 
-    each('.csc-qm', function(qm){
+    function initMenu(qm){
+        if (qm.dataset.qmReady === '1') return;          // идемпотентность (двойная доставка)
         var wrap   = qm.parentNode;                       // .csc-qm-wrap
         var toggle = qm.querySelector('.csc-qm-toggle');
         var items  = qm.querySelector('.csc-qm-items');
         if (!toggle || !items) return;
+        qm.dataset.qmReady = '1';
+        DBG.handlers = (DBG.handlers || 0) + 1;
 
         /* ---------- восстановление сохранённой позиции ---------- */
         function place(){
-            var vw = Math.max(document.documentElement.clientWidth, 320);
+            var vw = vwpx();
             var pct = parseFloat(localStorage.getItem(LS_POS) || '');
             if (isNaN(pct)) pct = 50;                     // по умолчанию — центр
             pct = Math.min(97, Math.max(3, pct));
@@ -186,14 +292,14 @@ if (!function_exists('csc_quick_menu_print_assets')) {
             var left = Math.round(vw * pct / 100 - w / 2);
             left = Math.max(4, Math.min(left, vw - w - 4));
             qm.style.position = 'absolute';
-            markPlaced(qm);                               // [9.1.2] гасим CSS translateX(-50%)
+            markPlaced(qm);                               // гасим CSS translateX(-50%)
             qm.style.left = left + 'px';
             qm.style.right = 'auto';
             updateSide(left + w / 2, vw);
         }
         /* сторона раскрытия: правая половина экрана → тянемся ВЛЕВО и наоборот */
         function updateSide(centerX, vw){
-            vw = vw || Math.max(document.documentElement.clientWidth, 320);
+            vw = vw || vwpx();
             var openLeft = centerX > vw / 2;
             qm.classList.toggle('csc-qm-side-left', openLeft);
             qm.classList.toggle('csc-qm-side-right', !openLeft);
@@ -237,10 +343,10 @@ if (!function_exists('csc_quick_menu_print_assets')) {
                 return;
             }
             drag.moved = true;
-            var vw = Math.max(document.documentElement.clientWidth, 320);
+            var vw = vwpx();
             var w  = qm.offsetWidth || 52;
             var left = Math.max(4, Math.min(drag.left0 + dx, vw - w - 4));
-            markPlaced(qm);                               // [9.1.2] translateX(-50%) погашен
+            markPlaced(qm);
             qm.style.left = left + 'px';
             updateSide(left + w / 2, vw);
         });
@@ -248,9 +354,9 @@ if (!function_exists('csc_quick_menu_print_assets')) {
             if (!drag) return;
             clearTimeout(drag.hold);
             if (drag.active) {
-                var vw = Math.max(document.documentElement.clientWidth, 320);
+                var vw = vwpx();
                 var w  = qm.offsetWidth || 52;
-                var center = (parseFloat(qm.style.left) || qm.offsetLeft) + w / 2;
+                var center = (parseFloat(qm.style.left) || qm.offsetLeft || 0) + w / 2;
                 localStorage.setItem(LS_POS, String(Math.round(Math.min(97, Math.max(3, center * 100 / vw)))));
                 if (drag.moved) qm.dataset.justDragged = '1';
                 qm.classList.remove('dragging');
@@ -262,16 +368,12 @@ if (!function_exists('csc_quick_menu_print_assets')) {
         window.addEventListener('resize', function(){ place(); });
 
         /* ---------- логика активного раздела ----------
-           Раздел, на котором находится посетитель, НЕ активен: его значок
-           заменён на переход к странице калькулятора. Подмена выполнена
-           уже НА СЕРВЕРЕ (PHP): current-элемент приходит с href=калькулятор,
-           data-current="1", иконкой-калькулятором и data-tip="Рассчитать услугу".
-           Здесь — только accessibility-атрибуты и защита от перехода
-           по ссылке на текущую страницу (без перезагрузки). */
+           Раздел посетителя НЕ активен: его значок заменён НА СЕРВЕРЕ на
+           переход к калькулятору (href=калькулятор, data-current="1").
+           Здесь — защита от перезагрузки текущей страницы. */
         each('.csc-qm-item', function(it){
             if (it.getAttribute('data-current') !== '1') return;
             it.classList.add('current');
-            it.setAttribute('aria-disabled', 'false'); // ссылка рабочая — ведёт на калькулятор
             it.addEventListener('click', function(e){
                 var u;
                 try { u = new URL(it.getAttribute('href') || '', location.origin); } catch (_) { return; }
@@ -282,17 +384,34 @@ if (!function_exists('csc_quick_menu_print_assets')) {
         });
 
         place();
-    });
+    }
 
-    window.cscQmDbg.booted = true;                        // [9.1.2] boot завершён успешно
+    function boot(){
+        each('.csc-qm', initMenu);
+        DBG.booted = true;
+    }
+
+    // [9.1.3] Boot в трёх фазах: немедленно (скрипт в конце body / после разметки),
+    // на DOMContentLoaded (скрипт из wp_head опережает разметку) и по MutationObserver
+    // (разметка шорткода могла появиться позже — AJAX-подгрузка, конструктор страниц).
+    boot();
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', boot);
+    }
+    try {
+        var mo = new MutationObserver(function(){ boot(); });
+        mo.observe(document.documentElement, { childList: true, subtree: true });
+        setTimeout(function(){ mo.disconnect(); }, 10000); // observer живёт 10 с — хватит на рендер
+    } catch (_) {}
+
     } catch (err) {
-        // [9.1.2] не глушим ошибку молча: фиксируем в диагностике и console
-        try { window.cscQmDbg.err = String(err && err.stack || err); } catch (_) {}
+        try { DBG.err = String(err && err.stack || err); } catch (_) {}
         if (window.console && console.warn) console.warn('[csc-quick-menu] boot error:', err);
     }
 })();
 </script>
-        <?php
+JS;
+        return $js;
     }
 }
 
@@ -321,6 +440,18 @@ if (!function_exists('csc_render_quick_menu')) {
      */
     function csc_render_quick_menu($section = 'calculator') {
         $urls  = csc_quick_menu_build_urls();
+        // [9.1.3] Подсветка текущего раздела: явный $section + резервная сверка
+        // page_id страниц меню с текущей страницей (has_shortcode не работает для
+        // Gutenberg-блоков — без этой сверки калькулятор считался «не текущим»).
+        if (!empty($urls['page_id'])) {
+            $pid      = (int) $urls['page_id'];
+            $cab_page = absint(get_option('csc_cabinet_page_id', 0));
+            $calc_pid = csc_quick_menu_find_shortcode_page('service_calculator');
+            $mas_pid  = csc_quick_menu_find_shortcode_page('csc_become_master');
+            if ($cab_page && $cab_page === $pid)                $section = 'cabinet';
+            elseif ($mas_pid && $mas_pid === $pid)              $section = 'master';
+            elseif ($calc_pid && $calc_pid === $pid)            $section = 'calculator';
+        }
         $items = [];
 
         // 1) Стать мастером
