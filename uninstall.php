@@ -127,7 +127,8 @@ if (!function_exists('csc_uninstall_cleanup')) {
             'csc_backup_cron_hook',        // резервные копии (ежедневно)
             'csc_history_cleanup_cron',    // очистка истории заказов (ежедневно)
             'csc_finance_cron_hook',       // финансовый ежедневный cron
-            'csc_webhook_cleanup_cron',    // очистка webhook-событий (ежедневно)
+            'csc_webhook_cleanup_cron',    // очистка webhook-событий (ежедневно, csc-payment-webhooks.php)
+            'csc_tg_webhook_selfcheck_hourly', // самопроверка webhook Telegram (ежечасно, csc-telegram-bot.php)
             'csc_payment_check_cron',      // проверка статусов платежей (каждые 5 минут)
             'csc_payment_stuck_notify_cron', // уведомления о зависших платежах (ежечасно)
         ];

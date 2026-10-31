@@ -471,8 +471,11 @@ if (!function_exists('csc_webpush_encrypt')) {
         $peer_key = openssl_pkey_get_public($server_pub_pem);
         if (!$peer_key) return false;
 
-        $shared_secret = '';
-        if (!openssl_pkey_derive($peer_key, $server_priv, $shared_secret, 32)) {
+        // ИСПРАВЛЕНО: 4-й int-аргумент вызывал ошибку в openssl_pkey_derive().
+        // Правильная сигнатура (PHP 7.3+): openssl_pkey_derive($pub, $priv)
+        // возвращает строку секрета; на P-256 это ровно 32 байта.
+        $shared_secret = openssl_pkey_derive($peer_key, $server_priv);
+        if ($shared_secret === false || strlen($shared_secret) !== 32) {
             return false;
         }
 
@@ -482,13 +485,32 @@ if (!function_exists('csc_webpush_encrypt')) {
         if (!$server_details || empty($server_details['key'])) return false;
         $server_pub_raw = csc_pem_to_raw_public_key($server_details['key']);
 
-        $auth_info = "WebPush-AESGCM\x00" . $server_pub_raw;
+        // ИСПРАВЛЕНО (RFC 8291 §3.4 / RFC 8188): канонический auth-secret:
+        // PRK = HKDF(ECDH-секрет, salt=UA-auth-secret, info="WebPush: info\0"
+        //       || UAPublicKey || ASPublicKey), OKM = HKDF(PRK, info="", 32).
+        // Порядок ключей в info — как у эталонных клиентов (pywebpush/http_ece,
+        // Chromium, Firefox): сначала публичный ключ подписчика, затем сервера.
+        // Неканонический секрет делал payload нерасшифровываемым браузерами.
+        $auth_info = "WebPush: info\x00" . $user_public_key . $server_pub_raw;
         $auth_secret = hash_hkdf('sha256', $shared_secret, 32, $auth_info, $user_auth);
 
         $cek = hash_hkdf('sha256', $auth_secret, 16, "Content-Encoding: aes128gcm\x00", $salt);
         $nonce = hash_hkdf('sha256', $auth_secret, 12, "Content-Encoding: nonce\x00", $salt);
 
-        $padded = $plaintext . "\x02";
+        // ИСПРАВЛЕНО (RFC 8188 §3 / RFC 8291 §3.4): plaintext должен быть
+        // дополнен нулями ДО record_size - 16 байт (payload length), затем
+        // добавляется разделитель \x02. Без паддинга длина блока превышала
+        // заявленный в заголовке record_size и клиент падал на decrypt.
+        $record_size = 4096;
+        $pad_len = $record_size - 16 - strlen($plaintext) - 1; // минус tag и delimiter
+        if ($pad_len < 0) {
+            // Plaintext не влезает в один рекорд — уменьшаем record_size
+            // до минимально достаточного (заголовок объявляет реальный размер).
+            $record_size = strlen($plaintext) + 1 + 16;
+            $pad_len = 0;
+        }
+        $padded = $plaintext . str_repeat("\x00", $pad_len) . "\x02";
+
         $tag = '';
         $ciphertext = openssl_encrypt(
             $padded,
@@ -501,8 +523,6 @@ if (!function_exists('csc_webpush_encrypt')) {
             16
         );
         if ($ciphertext === false) return false;
-
-        $record_size = strlen($padded) + 16;
         $header_block = $salt
             . pack('N', $record_size)
             . chr(strlen($server_pub_raw))

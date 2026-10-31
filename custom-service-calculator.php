@@ -434,7 +434,7 @@ require_once CSC_PLUGIN_DIR . 'includes/csc-logger.php';
 
 // 3.5: единый словарь статусов (константы + нормализация) — подключается первым,
 // до csc-core-functions.php и остальных модулей, использующих CSC_STATUS_*.
-require_once CSC_PLUGIN_DIR . 'includes/csc-status-i18n.php';
+// (Единственное подключение; ранее дублировался с строкой ~35 главного файла.)
 
 // i18n-словари для JS (csc_t(), csc_js_strings_*): подключаются до модулей,
 // которые локализуют скрипты (csc-master-dashboard / csc-master-registration).
