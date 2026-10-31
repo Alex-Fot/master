@@ -1182,25 +1182,49 @@ document.getElementById('csc-submit-review-btn').addEventListener('click', funct
 (function() {
     const params = new URLSearchParams(window.location.search);
     const openOrder = params.get('csc_open_order');
-    if (!openOrder) return;
+    // ИСПРАВЛЕНО (кликабельный push клиенту): телефон recipient_id уже есть в системе
+    // и передаётся в URL пуша как csc_phone — подставляем его в форму авторизации
+    // и выполняем вход автоматически, без ручного ввода.
+    const phoneParam = params.get('csc_phone');
     const orderInput = document.getElementById('csc-cab-order');
     const loginForm  = document.getElementById('csc-login-form');
     if (!orderInput || !loginForm) return;
-    orderInput.value = openOrder;
-    // Прокручиваем к форме и подсвечиваем поле
-    orderInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    orderInput.focus();
     const phoneInput = document.getElementById('csc-cab-phone');
+
+    if (phoneParam && phoneInput && !phoneInput.value.trim()) {
+        phoneInput.value = phoneParam;
+    }
+
+    if (openOrder) {
+        orderInput.value = openOrder;
+        // Прокручиваем к форме и подсвечиваем поле
+        orderInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        orderInput.focus();
+    }
+
     if (phoneInput && phoneInput.value.trim()) {
-        // Телефон уже известен — сразу выполняем поиск заявки
+        // Телефон известен (введён ранее или подставлен из push-ссылки) —
+        // сразу выполняем вход/поиск заявки (по номеру телефона + номеру заявки).
         setTimeout(function() {
             if (typeof loginForm.requestSubmit === 'function') {
                 loginForm.requestSubmit();
             } else {
                 loginForm.dispatchEvent(new Event('submit', { cancelable: true }));
             }
+            // ИСПРАВЛЕНО: очищаем одноразовые параметры из URL, чтобы
+            // перезагрузка страницы не вызывала повторный автологин,
+            // а телефон не оставался в истории браузера.
+            setTimeout(function() {
+                try {
+                    const clean = new URLSearchParams(window.location.search);
+                    clean.delete('csc_phone');
+                    clean.delete('csc_open_order');
+                    const qs = clean.toString();
+                    history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : '') + window.location.hash);
+                } catch (e) { /* replaceState недоступен (file:// и т.п.) — не критично */ }
+            }, 600);
         }, 300);
-    } else if (typeof showToast === 'function') {
+    } else if (openOrder && typeof showToast === 'function') {
         showToast('Введите телефон, чтобы открыть заявку ' + openOrder, 'info');
     }
 })();
