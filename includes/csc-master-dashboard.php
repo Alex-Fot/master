@@ -215,6 +215,24 @@ if (!function_exists('csc_render_master_dashboard')) {
 </head>
 <body class="csc-dashboard-body">
 
+<script>
+// ИСПРАВЛЕНО (кликабельный push мастеру): после успешного входа одноразовые
+// креденшелы не должны оставаться в URL/истории браузера — иначе повторный
+// клик по тому же уведомлению упирается в уже использованный токен (403).
+// open_order сохраняем в CSC_MASTER_CONFIG.openOrder (см. выше), поэтому
+// параметры token/mid/open_order из адресной строки можно безопасно стереть.
+(function () {
+    try {
+        var clean = new URLSearchParams(window.location.search);
+        if (!clean.has('token') && !clean.has('open_order')) return;
+        clean.delete('token');
+        clean.delete('open_order');
+        var qs = clean.toString();
+        history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : '') + window.location.hash);
+    } catch (e) { /* replaceState недоступен — не критично */ }
+})();
+</script>
+
 <div class="csc-bg-decoration" aria-hidden="true">
     <div class="csc-bg-blob csc-bg-blob-1"></div>
     <div class="csc-bg-blob csc-bg-blob-2"></div>

@@ -1501,6 +1501,14 @@ function csc_orders_admin_page() {
         });
     }
 
+    // ИСПРАВЛЕНО (UX админки): фильтр по мастеру (чипы «Мастер: ...»)
+    $master_filter = sanitize_text_field(wp_unslash($_GET['master_filter'] ?? ''));
+    if ($master_filter !== '') {
+        $all_orders = array_filter($all_orders, function ($o) use ($master_filter) {
+            return ($o['master_id'] ?? '') === $master_filter;
+        });
+    }
+
     // ОПТИМИЗАЦИЯ (Кэш заказов): счётчики чипов через SQL GROUP BY
     // (csc_get_order_status_counts) вместо перечитывания всего списка;
     // повторный запрос к кэшу/БД здесь больше не нужен.
@@ -1572,10 +1580,27 @@ function csc_orders_admin_page() {
 
     <?php if ($view == 'list'): ?>
 
-    <!-- ЧИПЫ БЫСТРОЙ ФИЛЬТРАЦИИ ПО СТАТУСУ -->
-    <div class="tablenav" style="margin: 10px 0;">
-        <div class="tablenav-pages" style="float:none; text-align:left;">
-            <span class="displaying-num">Фильтр:</span>
+    <!-- ============================================================
+    ИСПРАВЛЕНО (UX админки): фильтры были одной строкой «простынёй» —
+    теперь сгруппированы по смыслу с подписями групп.
+    ============================================================ -->
+    <style>
+        .csc-filter-bar { margin: 12px 0; padding: 12px 14px; background: #f8f9fa; border: 1px solid #e2e8f0; border-radius: 8px; }
+        .csc-filter-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+        .csc-filter-group:last-child { margin-bottom: 0; }
+        .csc-filter-label { font-weight: 600; color: #475569; font-size: 12px; text-transform: uppercase; letter-spacing: .3px; min-width: 92px; }
+        .csc-chip { display: inline-block; padding: 4px 10px; border: 1px solid #cbd5e1; border-radius: 999px; background: #fff; color: #334155; text-decoration: none; font-size: 12px; line-height: 1.4; white-space: nowrap; }
+        .csc-chip:hover { border-color: #2271b1; color: #2271b1; }
+        .csc-chip.current { background: #2271b1; border-color: #2271b1; color: #fff; font-weight: 600; }
+        /* ИСПРАВЛЕНО (UX админки): ячейка «Статус» больше не инлайн-флекс — форма перенесена в блок с flex-wrap, колонки имеют min-width, кнопки «Статус» и «Действия» не накладываются друг на друга */
+        .wp-list-table .csc-col-status { min-width: 190px; }
+        .wp-list-table .csc-col-actions { min-width: 210px; }
+        .wp-list-table td.csc-col-status form { display: block; }
+        .wp-list-table td.csc-col-status .csc-status-form-row { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; margin-top: 4px; }
+    </style>
+    <div class="csc-filter-bar">
+        <div class="csc-filter-group">
+            <span class="csc-filter-label">По статусу:</span>
             <?php foreach ($filter_chips as $chip_key => $chip_label):
                 $chip_count = $chip_key === '' ? array_sum($status_counts) : ($status_counts[$chip_key] ?? 0);
                 $chip_url = esc_url(add_query_arg(array_filter([
@@ -1585,7 +1610,25 @@ function csc_orders_admin_page() {
                 ]), admin_url('options-general.php')));
                 $is_active = ($status_filter . ($payment_status_filter !== '' ? ':' . $payment_status_filter : '')) === $chip_key;
                 ?>
-                <a class="page-numbers<?php echo $is_active ? ' current' : ''; ?>" href="<?php echo $chip_url; ?>"><?php echo esc_html($chip_label); ?> (<?php echo esc_html($chip_count); ?>)</a>
+                <a class="csc-chip<?php echo $is_active ? ' current' : ''; ?>" href="<?php echo $chip_url; ?>"><?php echo esc_html($chip_label); ?> (<?php echo esc_html($chip_count); ?>)</a>
+            <?php endforeach; ?>
+        </div>
+        <div class="csc-filter-group">
+            <span class="csc-filter-label">Мастер:</span>
+            <?php
+            $master_filter = sanitize_text_field(wp_unslash($_GET['master_filter'] ?? ''));
+            $mf_base = add_query_arg(array_filter([
+                'page' => 'csc_orders_admin',
+                'view' => 'list',
+                'status_filter' => ($status_filter !== '' ? $status_filter . ($payment_status_filter !== '' ? ':' . $payment_status_filter : '') : null),
+            ]), admin_url('options-general.php'));
+            ?>
+            <a class="csc-chip<?php echo $master_filter === '' ? ' current' : ''; ?>" href="<?php echo esc_url($mf_base); ?>">Все</a>
+            <?php foreach ($masters as $mf_id => $mf):
+                if (($mf['status'] ?? 'active') === 'archived') continue;
+                $mf_url = esc_url(add_query_arg('master_filter', rawurlencode((string) $mf_id), $mf_base));
+                ?>
+                <a class="csc-chip<?php echo $master_filter === (string) $mf_id ? ' current' : ''; ?>" href="<?php echo $mf_url; ?>"><?php echo esc_html($mf['name'] ?? $mf_id); ?></a>
             <?php endforeach; ?>
         </div>
     </div>
@@ -1630,8 +1673,8 @@ function csc_orders_admin_page() {
             <th>Мастер</th>
             <th>Услуги</th>
             <th style="width: 100px;">Итого</th>
-            <th style="width: 150px;">Статус</th>
-            <th style="width: 180px;">Действия</th>
+            <th class="csc-col-status">Статус</th>
+            <th class="csc-col-actions">Действия</th>
         </tr>
         </thead>
         <tbody>
@@ -1665,8 +1708,14 @@ function csc_orders_admin_page() {
                     <?php if(!empty($o['address'])): ?><br><em>Адрес: <?php echo esc_html($o['address']); ?></em><?php endif; ?>
                 </td>
                 <td><strong><?php echo esc_html(number_format(floatval($o['total'] ?? 0), 0, '.', ' ')); ?> ₽</strong></td>
-                <td>
-                    <form method="post" class="csc-single-status-form" style="display: flex; gap: 5px;">
+                <?php
+                // ИСПРАВЛЕНО (UX админки): статусная форма — не inline-flex (кнопки «Статус»/«Действия»
+                // больше не накладываются); добавлена ЯВНАЯ кнопка перезапуска поиска мастера.
+                $o_status_lower = mb_strtolower($o['status'] ?? '');
+                $can_restart    = in_array($o_status_lower, ['pending', 'searching', 'no_masters', 'routing_timeout', 'timeout_global'], true);
+                ?>
+                <td class="csc-col-status">
+                    <form method="post" class="csc-single-status-form">
                         <?php wp_nonce_field('csc_update_status_' . $o['order_number'], '_csc_status_nonce'); ?>
                         <input type="hidden" name="order_number" value="<?php echo esc_attr($o['order_number']); ?>">
                         <?php if (($o['status'] ?? '') === CSC_STATUS_AWAITING_PAYMENT): ?>
@@ -1674,27 +1723,40 @@ function csc_orders_admin_page() {
                             <button type="submit" name="csc_update_status" value="1" class="button button-small" style="color:#d63638;" data-confirm="Отменить зависший заказ #<?php echo esc_attr($o['order_number']); ?> (ожидает оплаты)?">❌ Отменить</button>
                             <input type="hidden" name="new_status" value="cancelled">
                         <?php endif; ?>
-                        <select name="new_status" style="font-size: 12px; height: 28px;">
-                            <option value="pending" <?php selected($o['status'] ?? '', CSC_STATUS_PENDING); ?>>Ожидает</option>
-                            <option value="searching" <?php selected($o['status'] ?? '', CSC_STATUS_SEARCHING); ?>>Поиск мастера</option>
-                            <option value="awaiting_payment" <?php selected($o['status'] ?? '', CSC_STATUS_AWAITING_PAYMENT); ?>>Ожидает оплаты</option>
-                            <option value="processing" <?php selected($o['status'] ?? '', CSC_STATUS_PROCESSING); ?>>В работе</option>
-                            <option value="completed" <?php selected($o['status'] ?? '', CSC_STATUS_COMPLETED); ?>>Выполнено</option>
-                            <option value="cancelled" <?php selected($o['status'] ?? '', CSC_STATUS_CANCELLED); ?>>Отменено</option>
-                        </select>
-                        <button type="submit" name="csc_update_status" class="button button-small">OK</button>
+                        <div class="csc-status-form-row">
+                            <select name="new_status" style="font-size: 12px; height: 28px;">
+                                <option value="pending" <?php selected($o['status'] ?? '', CSC_STATUS_PENDING); ?>>Ожидает</option>
+                                <option value="searching" <?php selected($o['status'] ?? '', CSC_STATUS_SEARCHING); ?>>Поиск мастера</option>
+                                <option value="awaiting_payment" <?php selected($o['status'] ?? '', CSC_STATUS_AWAITING_PAYMENT); ?>>Ожидает оплаты</option>
+                                <option value="processing" <?php selected($o['status'] ?? '', CSC_STATUS_PROCESSING); ?>>В работе</option>
+                                <option value="completed" <?php selected($o['status'] ?? '', CSC_STATUS_COMPLETED); ?>>Выполнено</option>
+                                <option value="cancelled" <?php selected($o['status'] ?? '', CSC_STATUS_CANCELLED); ?>>Отменено</option>
+                            </select>
+                            <button type="submit" name="csc_update_status" class="button button-small">OK</button>
+                        </div>
                     </form>
                 </td>
-                <td>
-                    <button type="button" class="button button-small" onclick="openOrderLogModal('<?php echo esc_js($o['order_number']); ?>')">📜 Логи</button>
-                    <!-- УЛУЧШЕНИЕ №2: Кнопка отправки напоминания вручную -->
-                    <button type="button"
-                        class="button button-small csc-send-reminder-btn"
-                        data-order="<?php echo esc_attr($o['order_number']); ?>"
-                        data-status="<?php echo esc_attr(mb_strtolower($o['status'] ?? '')); ?>"
-                        <?php if ($reminder_sent) echo 'style="color:#10b981;" title="Напоминание уже отправлено"'; ?>>
-                        🔔 <?php echo $reminder_sent ? '✓' : 'Напомнить'; ?>
-                    </button>
+                <td class="csc-col-actions">
+                    <div style="display: flex; gap: 5px; flex-wrap: wrap;">
+                        <button type="button" class="button button-small" onclick="openOrderLogModal('<?php echo esc_js($o['order_number']); ?>')">📜 Логи</button>
+                        <?php if ($can_restart): ?>
+                        <!-- ИСПРАВЛЕНО (UX админки): явная кнопка перезапуска поиска мастера для зависших статусов -->
+                        <button type="button"
+                            class="button button-small csc-send-reminder-btn csc-restart-routing-btn"
+                            data-order="<?php echo esc_attr($o['order_number']); ?>"
+                            data-status="<?php echo esc_attr($o_status_lower); ?>"
+                            title="Заявка зависла без мастера — запустить поиск по новому кругу">🔄 Перезапустить поиск</button>
+                        <?php else: ?>
+                        <!-- УЛУЧШЕНИЕ №2: Кнопка отправки напоминания вручную -->
+                        <button type="button"
+                            class="button button-small csc-send-reminder-btn"
+                            data-order="<?php echo esc_attr($o['order_number']); ?>"
+                            data-status="<?php echo esc_attr($o_status_lower); ?>"
+                            <?php if ($reminder_sent) echo 'style="color:#10b981;" title="Напоминание уже отправлено"'; ?>>
+                            🔔 <?php echo $reminder_sent ? '✓' : 'Напомнить'; ?>
+                        </button>
+                        <?php endif; ?>
+                    </div>
                 </td>
             </tr>
         <?php endforeach; else: ?>
@@ -1786,12 +1848,15 @@ function csc_orders_admin_page() {
             var orderNum = $btn.data('order');
             var orderStatus = ($btn.data('status') || '').toLowerCase();
 
-            // Для зависших статусов — перезапуск маршрутизации, а не напоминание
+            // Для зависших статусов — перезапуск маршрутизации, а не напоминание.
+            // ИСПРАВЛЕНО (UX админки): PHP-константы (CSC_STATUS_*) в JS недоступны —
+            // раньше это кидало ReferenceError и ломало обработчик; теперь литеральные строки.
             var restartStatuses = [
-                CSC_STATUS_NO_MASTERS,
-                CSC_STATUS_SEARCHING,
-                CSC_STATUS_ROUTING_TIMEOUT,
-                'timeout_global'
+                'no_masters',
+                'searching',
+                'routing_timeout',
+                'timeout_global',
+                'pending'
             ];
             var isRestart = restartStatuses.indexOf(orderStatus) !== -1;
 

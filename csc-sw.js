@@ -55,10 +55,14 @@ self.addEventListener('push', function(event) {
             { action: 'close', title: 'Закрыть' }
         ],
         tag: data.order_number || 'csc-notification',
-        renotify: true,
+        // ИСПРАВЛЕНО (SW): renotify=true при существующем tag заставлял браузер
+        // пере-показывать уже висящее уведомление (дубли/мигание). У каждого
+        // заказа свой tag — новое уведомление о другом заказе покажется отдельно,
+        // а повторное о том же заказе заменит старое. renotify не нужен.
+        renotify: false,
         requireInteraction: false
     };
-    
+
     event.waitUntil(
         self.registration.showNotification(data.title, options)
     );
@@ -67,25 +71,63 @@ self.addEventListener('push', function(event) {
 // Клик по уведомлению
 self.addEventListener('notificationclick', function(event) {
     event.notification.close();
-    
+
     const action = event.action;
     if (action === 'close') return;
-    
-    const url = event.notification.data?.url || self.location.origin;
-    
-    event.waitUntil(
-        clients.matchAll({ type: 'window', includeUncontrolled: true })
-            .then(function(clientList) {
-                for (const client of clientList) {
-                    if (client.url.includes(url) && 'focus' in client) {
-                        return client.focus();
+
+    const rawUrl = (event.notification.data && event.notification.data.url) || self.location.origin;
+
+    event.waitUntil((async function() {
+        // ИСПРАВЛЕНО (SW): раньше использовалось client.url.includes(url) —
+        // опасная подстрока: фокусировала любую вкладку, чей URL содержал
+        // целевой (например, токен/параметры совпадали с частью другого адреса),
+        // и не обновляла уже открытую страницу до нужной заявки.
+        // Теперь: точное сравнение origin + pathname + search; при совпадении —
+        // фокус и navigate к целевому URL; иначе — новое окно.
+        let target = null;
+        try { target = new URL(rawUrl, self.location.href); } catch (e) {}
+
+        const allClients = await clients.matchAll({ type: 'window', includeUncontrolled: true });
+
+        if (target) {
+            for (const client of allClients) {
+                let cUrl = null;
+                try { cUrl = new URL(client.url); } catch (e) { continue; }
+                if (cUrl.origin === target.origin &&
+                    (cUrl.pathname + cUrl.search) === (target.pathname + target.search)) {
+                    await client.focus();
+                    if ('navigate' in client) {
+                        try { await client.navigate(rawUrl); } catch (e) { /* уже там */ }
                     }
+                    return;
                 }
-                if (clients.openWindow) {
-                    return clients.openWindow(url);
-                }
-            })
-    );
+            }
+        }
+
+        const focusedClient = allClients.find(c => 'navigate' in c && c.focused);
+        if (focusedClient) {
+            // Есть активная вкладка сайта — открываем заявку в ней.
+            try {
+                await focusedClient.navigate(rawUrl);
+                await focusedClient.focus();
+                return;
+            } catch (e) { /* fallthrough: openWindow */ }
+        }
+
+        // Фолбэк: если openWindow вернул null (лимит окон/мобильные браузеры)
+        // или API недоступен — показываем резервное уведомление со ссылкой,
+        // чтобы клик по пушу не становился «мёртвым».
+        let opened = null;
+        try { opened = clients.openWindow ? await clients.openWindow(rawUrl) : null; } catch (e) {}
+        if (opened) return;
+
+        await self.registration.showNotification('Откройте заявку', {
+            body: rawUrl,
+            tag: 'csc-open-fallback-' + Date.now(),
+            data: { url: rawUrl },
+            actions: [{ action: 'open', title: 'Перейти по ссылке' }]
+        });
+    })());
 });
 
 // Установка Service Worker
