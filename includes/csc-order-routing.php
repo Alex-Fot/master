@@ -438,12 +438,24 @@ if (!function_exists('csc_route_order_to_next')) {
         $all_orders = csc_get_all_orders(true);
         if (!isset($all_orders[$order_number])) return;
 
-        $order = $all_orders[$order_number];
+        // ИСПРАВЛЕНО (ручной перезапуск из админки): проверяем routing_status по
+        // АКТУАЛЬНОЙ строке БД (csc_get_order), а не по снимку кэша списка — иначе
+        // на persistent object cache проверка могла видеть устаревший статус и
+        // молча отменять рассылку офферов.
+        $fresh_check = function_exists('csc_get_order') ? csc_get_order($order_number) : null;
+        if (is_array($fresh_check)) {
+            $rs_now = $fresh_check['routing_status'] ?? '';
+        } else {
+            $all_orders_chk = csc_get_all_orders(true);
+            $rs_now = $all_orders_chk[$order_number]['routing_status'] ?? '';
+        }
 
-        if (($order['routing_status'] ?? '') !== 'searching') {
-            csc_routing_log($order_number, 'route_skipped', ['reason' => 'status_not_searching', 'current_status' => $order['routing_status'] ?? 'unknown']);
+        if ($rs_now !== 'searching') {
+            csc_routing_log($order_number, 'route_skipped', ['reason' => 'status_not_searching', 'current_status' => $rs_now !== '' ? $rs_now : 'unknown']);
             return;
         }
+
+        $order = is_array($fresh_check) ? $fresh_check : ($all_orders[$order_number] ?? []);
 
         $routing_started = (int)($order['routing_started_at'] ?? time());
         if (time() - $routing_started > CSC_ROUTING_GLOBAL_TIMEOUT) {
@@ -827,8 +839,21 @@ if (!function_exists('csc_admin_restart_routing')) {
             return false;
         }
 
-        $all_orders = csc_get_all_orders(true);
-        if (!isset($all_orders[$order_number])) {
+        // ИСПРАВЛЕНО (ручной перезапуск из админки): снимок брался через
+        // csc_get_all_orders(true), но на persistent object cache (Redis/Memcached)
+        // он мог быть устаревшим на весь TTL кэша (5 мин). Мутация такого снимка
+        // и сохранение ЦЕЛИКОМ через csc_update_order() перезаписывало свежий заказ
+        // старыми данными: routing_status возвращался к 'no_masters'/'' и
+        // csc_route_order_to_next() молча выходил на первой же проверке
+        // (route_skipped: status_not_searching) — офферы мастерам НЕ рассылались.
+        // Теперь берём АКТУАЛЬНУЮ строку заказа напрямую из БД (csc_get_order())
+        // и синхронизируем с ней локальный снимок перед записью.
+        $order_data = function_exists('csc_get_order') ? csc_get_order($order_number) : null;
+        if (!is_array($order_data)) {
+            $all_orders = csc_get_all_orders(true);
+            $order_data = $all_orders[$order_number] ?? null;
+        }
+        if (!is_array($order_data)) {
             return false;
         }
 
