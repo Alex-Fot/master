@@ -1563,9 +1563,16 @@ function csc_calculator_shortcode() {
         transition-duration: 0.01ms !important;
     }
 }
+
+/* ============================================================
+   БЫСТРОЕ МЕНЮ «⋮» (csc-quick-menu) — стили и разметка вынесены
+   в includes/csc-quick-menu.php (общие для калькулятора и ЛК).
+   Стили наследуют CSS-переменные темы контейнера[data-theme].
+   ============================================================ */
 </style>
 <div id="csc-calculator" data-theme="light">
 <button id="csc-theme-toggle" class="csc-theme-toggle" aria-label="Переключить тему">🌙</button>
+<?php if (function_exists('csc_render_quick_menu')) echo csc_render_quick_menu('calculator'); ?>
 <div class="csc-toast" id="csc-toast"></div>
 <div class="csc-loader" id="csc-loader">
 <div class="csc-spinner"></div>
