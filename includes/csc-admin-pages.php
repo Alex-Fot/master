@@ -1455,9 +1455,17 @@ function csc_orders_admin_page() {
             if ($old_status === CSC_STATUS_AWAITING_PAYMENT && ($all_orders[$ord_num]['payment_status'] ?? '') === 'paid') {
                 echo '<div class="notice notice-warning is-dismissible"><p>Заказ ' . esc_html($ord_num) . ' уже оплачен — статус изменён быть не может. Сначала оформите возврат в модуле платежей.</p></div>';
             } else {
+            // ИСПРАВЛЕНО (корневая причина бага массового обновления): снимок $all_orders
+            // мог быть устаревшим (кэш wp_cache TTL 5 мин) — сохранение целиком перезаписывало
+            // свежий заказ старыми данными. Перечитываем актуальную версию заказа перед мутацией.
+            $fresh_single = function_exists('csc_get_order') ? csc_get_order($ord_num) : null;
+            if (is_array($fresh_single)) {
+                $all_orders[$ord_num] = $fresh_single;
+            }
             $all_orders[$ord_num]['status'] = $new_status;
             if ($new_status === CSC_STATUS_CANCELLED) {
                 $all_orders[$ord_num]['routing_status'] = 'cancelled';
+                $all_orders[$ord_num]['master_released'] = true;
                 $all_orders[$ord_num]['cancelled_at'] = current_time('mysql');
                 // Зависшие заказы «Ожидает оплаты»: при ручной отмене помечаем платёж как
                 // неоплаченный, чтобы крон-проверка зависших платежей больше не трогала заказ.
@@ -1839,7 +1847,10 @@ function csc_orders_admin_page() {
         });
 
         // Массовое изменение статусов
-        $('#csc-bulk-apply').on('click', function(){
+        // ИСПРАВЛЕНО (UX): делегирование (.on на document) — обработчик живёт даже если блок
+        // массовых действий будет перерисован; .off перед навешиванием — защита от дублей
+        // (двойной confirm/double-submit при повторных запусках этого скрипта).
+        $(document).off('click.cscBulk').on('click.cscBulk', '#csc-bulk-apply', function(){
             var selected = [];
             $('.csc-order-checkbox:checked').each(function(){ selected.push($(this).val()); });
             if (selected.length === 0) { alert('Выберите хотя бы один заказ'); return; }
