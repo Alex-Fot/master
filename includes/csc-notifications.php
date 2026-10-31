@@ -542,6 +542,58 @@ if (!function_exists('csc_webpush_encrypt')) {
     }
 }
 
+/**
+ * ИСПРАВЛЕНО (кликабельные push): единый построитель URL перехода по клику.
+ *
+ * - мастеру — вход в кабинет с одноразовым креденшелом + open_order;
+ *   если токен выдать не удалось — постоянная страница кабинета без токена
+ *   (страница сама покажет форму входа, а не wp_die 403);
+ * - админу — страница заявок в админке с автооткрытием модалки логов;
+ * - клиенту — страница ЛК (настраиваемая опция csc_cabinet_page_id, иначе
+ *   текущий URL) с параметрами телефона и номера заявки: JS-обработчик
+ *   deep-link подставляет их в форму входа и выполняет поиск автоматически.
+ *
+ * ВНИМАНИЕ: телефон попадает в payload зашифрованного push (RFC 8291) и в
+ * адресную строку после клика. Это осознанный компромисс ради автологина;
+ * номер уже известен владельцу подписки на этом устройстве.
+ */
+if (!function_exists('csc_build_push_click_url')) {
+    function csc_build_push_click_url($order_number, $recipient_type, $recipient_id) {
+        if (empty($order_number)) return '';
+
+        if ($recipient_type === 'master') {
+            $base = home_url('/?csc_master_dashboard=1');
+            $args = ['mid' => $recipient_id];
+            if (function_exists('csc_issue_master_login_token')) {
+                $login_token = csc_issue_master_login_token($recipient_id);
+                if ($login_token !== '') {
+                    $args['token']      = $login_token;
+                    $args['open_order'] = $order_number;
+                }
+            }
+            return add_query_arg($args, $base);
+        }
+
+        if ($recipient_type === 'admin') {
+            return add_query_arg([
+                'page'           => 'csc_orders_admin',
+                'csc_open_order' => $order_number,
+            ], admin_url('options-general.php'));
+        }
+
+        // customer (и любые иные типы с телефонным идентификатором)
+        $cabinet_page_id = absint(get_option('csc_cabinet_page_id', 0));
+        $base = ($cabinet_page_id && get_permalink($cabinet_page_id))
+            ? get_permalink($cabinet_page_id)
+            : home_url('/');
+
+        return add_query_arg([
+            'csc_phone'      => rawurlencode((string) $recipient_id),
+            'csc_open_order' => rawurlencode((string) $order_number),
+        ], $base);
+    }
+}
+
 if (!function_exists('csc_send_web_push_notification')) {
     function csc_send_web_push_notification($subscription_json, $title, $message, $order_number, $recipient_type, $recipient_id) {
         
@@ -572,31 +624,10 @@ if (!function_exists('csc_send_web_push_notification')) {
             return false;
         }
 
-        // ИСПРАВЛЕНО (кликабельные push): URL перехода. Если вызывающий код
-        // передал ссылку через фильтр — используем её; иначе строим стандартную:
-        // мастеру — вход в кабинет с одноразовым креденшелом + open_order,
-        // клиенту — страница заявки в ЛК по номеру.
-        $click_url = '';
-        if (!empty($order_number)) {
-            if ($recipient_type === 'master' && function_exists('csc_issue_master_login_token')) {
-                $login_token = csc_issue_master_login_token($recipient_id);
-                if ($login_token !== '') {
-                    $click_url = add_query_arg([
-                        'csc_master_dashboard' => '1',
-                        'mid'                  => $recipient_id,
-                        'token'                => $login_token,
-                        'open_order'           => $order_number,
-                    ], home_url('/'));
-                }
-            } elseif ($recipient_type === 'customer' || $recipient_type === 'admin') {
-                // Админ просматривает заявки в админке; клиент — в ЛК по параметру.
-                if ($recipient_type === 'admin' && current_user_can('manage_options')) {
-                    $click_url = add_query_arg(['page' => 'csc_orders_admin', 'csc_open_order' => $order_number], admin_url('options-general.php'));
-                } else {
-                    $click_url = add_query_arg(['csc_open_order' => $order_number], home_url('/'));
-                }
-            }
-        }
+        // ИСПРАВЛЕНО (кликабельные push): единый построитель csc_build_push_click_url()
+        // (клиент — телефон+заявка для автологина в ЛК, мастер — креденшел+open_order,
+        // админ — модалка логов). Фильтр позволяет переопределить ссылку.
+        $click_url = csc_build_push_click_url($order_number, $recipient_type, $recipient_id);
         $click_url = apply_filters('csc_push_notification_url', $click_url, $order_number, $recipient_type, $recipient_id);
 
         // 4. Формирование payload
@@ -612,7 +643,9 @@ if (!function_exists('csc_send_web_push_notification')) {
             // (раньше '/icon-192.png' указывал в корень сайта, где файлов нет → 404).
             'icon'         => get_site_icon_url(192, $csc_plugin_url . 'assets/icon-192.png'),
             'badge'        => get_site_icon_url(72, $csc_plugin_url . 'assets/badge-72.png'),
-            'tag'          => $order_number,
+            // ИСПРАВЛЕНО (SW): tag только для реальных заявок — иначе пустой
+            // order_number превращал все уведомления в один «залипающий» тег.
+            'tag'          => $order_number !== '' ? $order_number : ('csc-' . md5($title . $message)),
             'url'          => $click_url,
             'data'         => ['order' => $order_number, 'url' => $click_url]
         ];
