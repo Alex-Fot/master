@@ -427,6 +427,8 @@ if (!function_exists('csc_get_sections')) {
         if ($sections === null) {
             $data = get_option('csc_service_sections', []);
             $sections = is_array($data) ? $data : [];
+            // [CSC SEO] фильтр-точка: SEO-модуль подмешивает seo_desc из отдельного хранилища
+            $sections = apply_filters('csc_get_sections_result', $sections);
         }
         return $sections;
     }
@@ -438,6 +440,8 @@ if (!function_exists('csc_get_items')) {
         if ($items === null) {
             $data = get_option('csc_service_items', []);
             $items = is_array($data) ? $data : [];
+            // [CSC SEO] фильтр-точка для seo_desc услуг
+            $items = apply_filters('csc_get_items_result', $items);
         }
         return $items;
     }

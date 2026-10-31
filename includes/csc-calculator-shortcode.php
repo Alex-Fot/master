@@ -1939,7 +1939,8 @@ document.addEventListener('DOMContentLoaded', function() {
 `;
         html += '<div class="csc-section-tiles" id="csc-section-tiles">';
         for (const secId in sections) {
-            html += `<div class="csc-section-tile" data-section="${secId}">${sections[secId].name}</div>`;
+            const secDesc = sections[secId].seo_desc || sections[secId].name;
+            html += `<div class="csc-section-tile" data-section="${secId}" role="button" tabindex="0" title="${secDesc}">${sections[secId].name}</div>`;
         }
         html += '</div>';
         html += '<div id="csc-no-results" style="display:none; text-align:center; padding:20px; color:#64748b;">Ничего не найдено по вашему запросу.</div>';
@@ -1950,8 +1951,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 const item = items[itemId];
                 if (item.section_id === secId && item.is_available) {
                     hasItems = true;
+                    const itemTitle = item.seo_desc ? ` title="${item.seo_desc}"` : '';
                     html += `
-<div class="csc-service-item">
+<div class="csc-service-item"${itemTitle}>
 <div class="csc-service-info">
 <div class="csc-service-name">${item.name}</div>
 <div class="csc-service-meta">${Number(item.price).toLocaleString()} ₽ | ${item.duration} мин</div>
