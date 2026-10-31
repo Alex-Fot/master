@@ -107,6 +107,7 @@ if (!function_exists('csc_seo_get_defaults')) {
             'sitemap_changefreq'    => 1,
             'sitemap_priority'      => 1,
             'sitemap_max_urls'      => 5000,
+            'sitemap_split'         => 0,   // сегментация: при >лимита URL основной файл отдаёт sitemapindex
             'sitemap_cache_ttl'     => 300, // сек; кэш XML в трансиенте
             'robots_sitemap'        => 1,   // строка Sitemap: в robots.txt
             'robots_disallow_service' => 1, // Disallow для служебных query-параметров
@@ -155,14 +156,22 @@ if (!function_exists('csc_seo_get_defaults')) {
             // ── П12. Токены шаблонов ──
             'token_price_separator' => 'от ',
             'token_cities_limit'    => 6,
+
+            // ── П13. Автопинг поисковых систем (wp-cron) ──
+            'ping_auto_enabled'     => 0,   // по умолчанию выкл (Google deprecated ping endpoint)
+            'ping_auto_schedule'    => 'weekly', // hourly|daily|weekly|monthly
+            'ping_auto_google'      => 1,   // пинговать Google
+            'ping_auto_yandex'      => 1,   // пинговать Яндекс
+            'ping_auto_on_flush'    => 1,   // автособытие: пересборка карты после изменения каталога
+            'ping_last_result'      => '',  // служебное: результат последнего автопинга (read-only)
         ];
     }
 }
 
 if (!function_exists('csc_seo_get_settings')) {
-    function csc_seo_get_settings() {
+    function csc_seo_get_settings($force = false) {
         static $cache = null;
-        if ($cache === null) {
+        if ($force || $cache === null) {
             $raw = get_option('csc_seo_settings', []);
             $cache = wp_parse_args(is_array($raw) ? $raw : [], csc_seo_get_defaults());
         }
@@ -683,6 +692,8 @@ if (!function_exists('csc_seo_rewrite_rules')) {
         $path = trim((string)($s['sitemap_path'] ?? 'csc-sitemap.xml'), '/');
         if ($path === '') $path = 'csc-sitemap.xml';
         add_rewrite_rule('^' . preg_quote($path, '#') . '$', 'index.php?csc_sitemap=1', 'top');
+        // П5-индекс: /csc-sitemap-index.xml — index-sitemap (нужен при >5000 URL).
+        add_rewrite_rule('^' . preg_quote($path, '#') . '-index\.xml$', 'index.php?csc_sitemap_index=1', 'top');
     }
 }
 
@@ -690,6 +701,7 @@ add_filter('query_vars', 'csc_seo_query_vars');
 if (!function_exists('csc_seo_query_vars')) {
     function csc_seo_query_vars($vars) {
         $vars[] = 'csc_sitemap';
+        $vars[] = 'csc_sitemap_index';
         return $vars;
     }
 }
@@ -750,15 +762,49 @@ if (!function_exists('csc_seo_build_sitemap_xml')) {
 
 if (!function_exists('csc_seo_sitemap_output')) {
     function csc_seo_sitemap_output() {
+        // П5-индекс: index-sitemap по пути {sitemap_path}-index.xml.
+        if (isset($_GET['csc_sitemap_index']) || get_query_var('csc_sitemap_index')) {
+            if (!csc_seo_enabled('sitemap_enabled')) return;
+            $s   = csc_seo_get_settings();
+            $ttl = max(60, (int)($s['sitemap_cache_ttl'] ?? 300));
+            $xml = get_transient('csc_seo_sitemap_index_xml');
+            if ($xml === false || $xml === '') {
+                $xml = csc_seo_build_sitemap_index_xml();
+                set_transient('csc_seo_sitemap_index_xml', $xml, $ttl);
+            }
+            header('Content-Type: application/xml; charset=UTF-8');
+            header('X-Robots-Tag: noindex, follow', true);
+            header('Cache-Control: public, max-age=' . $ttl);
+            echo $xml;
+            exit;
+        }
+
         if (!isset($_GET['csc_sitemap']) && !get_query_var('csc_sitemap')) return;
         if (!csc_seo_enabled('sitemap_enabled')) return;
 
         $s   = csc_seo_get_settings();
         $ttl = max(60, (int)($s['sitemap_cache_ttl'] ?? 300));
-        $xml = get_transient('csc_seo_sitemap_xml');
-        if ($xml === false || $xml === '') {
-            $xml = csc_seo_build_sitemap_xml();
-            set_transient('csc_seo_sitemap_xml', $xml, $ttl);
+
+        // Сегментация: при sitemap_split=1 карта всегда режется на части ≤ sitemap_max_urls
+        // и основной URL отдаёт index-sitemap (лимит протокола — 50 000 URL / 50 МБ).
+        if (!empty($s['sitemap_split'])) {
+            $parts = csc_seo_sitemap_parts();
+            if (count($parts) > 1) {
+                $xml = csc_seo_render_index_xml($parts);
+            } else {
+                $xml = get_transient('csc_seo_sitemap_part_0');
+                if ($xml === false || $xml === '') {
+                    $all   = csc_seo_collect_sitemap_urls();
+                    $xml   = csc_seo_render_urlset($all, $s);
+                    set_transient('csc_seo_sitemap_part_0', $xml, $ttl);
+                }
+            }
+        } else {
+            $xml = get_transient('csc_seo_sitemap_xml');
+            if ($xml === false || $xml === '') {
+                $xml = csc_seo_build_sitemap_xml();
+                set_transient('csc_seo_sitemap_xml', $xml, $ttl);
+            }
         }
 
         header('Content-Type: application/xml; charset=UTF-8');
@@ -769,14 +815,195 @@ if (!function_exists('csc_seo_sitemap_output')) {
     }
 }
 
-// Сброс кэша карты страниц/сайта при изменении каталога или городов.
-foreach (['update_option_csc_service_sections', 'update_option_csc_service_items', 'update_option_csc_cities'] as $csc_seo_hook) {
+// --- П5-индекс: сбор URL, сегментация, рендер urlset/sitemapindex ---
+if (!function_exists('csc_seo_collect_sitemap_urls')) {
+    /** Полный список URL карты без лимита (для сегментации). */
+    function csc_seo_collect_sitemap_urls() {
+        $s = csc_seo_get_settings();
+        $calc_url   = csc_seo_find_shortcode_page_url('service_calculator');
+        $master_url = csc_seo_find_shortcode_page_url('csc_become_master');
+        $cab_url    = csc_seo_find_shortcode_page_url('csc_personal_cabinet');
+        $urls = [];
+        $now  = gmdate('Y-m-d');
+        if (!empty($s['sitemap_wp_pages'])) {
+            foreach (array_filter([$calc_url, $master_url, $cab_url]) as $u) {
+                $urls[] = ['loc' => $u, 'lastmod' => $now, 'changefreq' => 'daily', 'priority' => $u === $calc_url ? '1.0' : '0.7'];
+            }
+        }
+        if ($calc_url && !empty($s['sitemap_sections'])) {
+            foreach ((array)csc_get_sections() as $sid => $sec) {
+                $urls[] = ['loc' => $calc_url . '#section-' . $sid, 'lastmod' => $now, 'changefreq' => 'weekly', 'priority' => '0.8'];
+            }
+        }
+        if ($calc_url && !empty($s['sitemap_items'])) {
+            foreach ((array)csc_get_items() as $iid => $item) {
+                if (!empty($s['ssr_only_available']) && empty($item['is_available'])) continue;
+                $urls[] = ['loc' => $calc_url . '#item-' . $iid, 'lastmod' => $now, 'changefreq' => 'weekly', 'priority' => '0.6'];
+            }
+        }
+        if ($calc_url && !empty($s['sitemap_cities']) && function_exists('csc_get_cities')) {
+            foreach ((array)csc_get_cities() as $slug => $city) {
+                if (!empty($city['active'])) {
+                    $urls[] = ['loc' => add_query_arg('csc_city', $slug, $calc_url), 'lastmod' => $now, 'changefreq' => 'daily', 'priority' => '0.9'];
+                }
+            }
+        }
+        return $urls;
+    }
+}
+
+if (!function_exists('csc_seo_render_urlset')) {
+    function csc_seo_render_urlset(array $urls, array $s) {
+        $xml = '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
+        $xml .= '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . "\n";
+        foreach ($urls as $u) {
+            $xml .= '  <url><loc>' . esc_html($u['loc']) . '</loc>';
+            if (!empty($s['sitemap_lastmod']))    $xml .= '<lastmod>' . $u['lastmod'] . '</lastmod>';
+            if (!empty($s['sitemap_changefreq'])) $xml .= '<changefreq>' . $u['changefreq'] . '</changefreq>';
+            if (!empty($s['sitemap_priority']))   $xml .= '<priority>' . $u['priority'] . '</priority>';
+            $xml .= "</url>\n";
+        }
+        $xml .= '</urlset>' . "\n";
+        return $xml;
+    }
+}
+
+if (!function_exists('csc_seo_sitemap_parts')) {
+    /** Разбивает URL на чанки по sitemap_max_urls; кэширует каждый urlset в трансиенте. */
+    function csc_seo_sitemap_parts() {
+        $s   = csc_seo_get_settings();
+        $ttl = max(60, (int)($s['sitemap_cache_ttl'] ?? 300));
+        $per = max(100, min(50000, (int)($s['sitemap_max_urls'] ?? 5000)));
+        $urls = csc_seo_collect_sitemap_urls();
+        $chunks = array_chunk($urls, $per);
+        $parts = [];
+        foreach ($chunks as $i => $chunk) {
+            $key = 'csc_seo_sitemap_part_' . $i;
+            $xml = get_transient($key);
+            if ($xml === false || $xml === '') {
+                $xml = csc_seo_render_urlset($chunk, $s);
+                set_transient($key, $xml, $ttl);
+            }
+            $parts[] = [
+                'loc'     => $i === 0
+                    ? home_url('/' . trim((string)$s['sitemap_path'], '/'))
+                    : home_url('/' . trim((string)$s['sitemap_path'], '/') . '-' . ($i + 1) . '.xml'),
+                'lastmod' => gmdate('Y-m-d'),
+            ];
+        }
+        // Подчистить устаревшие части после сокращения каталога.
+        $stale = get_transient('csc_seo_sitemap_parts_count');
+        if ($stale !== false && (int)$stale > count($parts)) {
+            for ($i = count($parts); $i <= (int)$stale; $i++) delete_transient('csc_seo_sitemap_part_' . $i);
+        }
+        set_transient('csc_seo_sitemap_parts_count', count($parts), $ttl);
+        return $parts;
+    }
+}
+
+if (!function_exists('csc_seo_render_index_xml')) {
+    function csc_seo_render_index_xml(array $parts) {
+        $xml = '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
+        $xml .= '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . "\n";
+        foreach ($parts as $p) {
+            $xml .= '  <sitemap><loc>' . esc_html($p['loc']) . '</loc><lastmod>' . $p['lastmod'] . '</lastmod></sitemap>' . "\n";
+        }
+        $xml .= '</sitemapindex>' . "\n";
+        return $xml;
+    }
+}
+
+if (!function_exists('csc_seo_build_sitemap_index_xml')) {
+    /** Index-sitemap: ссылки на все части (включая основную карту). */
+    function csc_seo_build_sitemap_index_xml() {
+        $s = csc_seo_get_settings();
+        $parts = csc_seo_sitemap_parts();
+        $base  = home_url('/' . trim((string)$s['sitemap_path'], '/'));
+        // Если частей нет или они не нужны — индекс указывает на саму карту.
+        if (empty($parts)) $parts = [['loc' => $base, 'lastmod' => gmdate('Y-m-d')]];
+        return csc_seo_render_index_xml($parts);
+    }
+}
+
+// Сброс кэша карты страниц/сайта при изменении каталога, городов или SEO-описаний.
+foreach (['update_option_csc_service_sections', 'update_option_csc_service_items', 'update_option_csc_cities', 'update_option_csc_seo_desc_map'] as $csc_seo_hook) {
     add_action($csc_seo_hook, function () {
+        csc_seo_get_settings(true); // сброс статического кэша настроек после прямых update_option() в админке
         delete_transient('csc_seo_sitemap_xml');
         delete_transient('csc_seo_page_' . md5('service_calculator'));
         delete_transient('csc_seo_page_' . md5('csc_become_master'));
         delete_transient('csc_seo_page_' . md5('csc_personal_cabinet'));
+        // П13: автособытие — перепинговать поисковики после изменения состава карты.
+        if (csc_seo_enabled('ping_auto_enabled') && csc_seo_get_settings()['ping_auto_on_flush']) {
+            if (!wp_next_scheduled('csc_seo_ping_event')) {
+                wp_schedule_single_event(time() + 60, 'csc_seo_ping_event');
+            }
+        }
     }, 10, 0);
+}
+
+// ============================================================
+// 5b. АВТОПИНГ ПОИСКОВЫХ СИСТЕМ (П13): расписание + обработчик
+//     Google официально deprecated ping-endpoint (2023), поэтому
+//     функция выключена по умолчанию; Яндекс пинг реально работает.
+// ============================================================
+
+add_filter('cron_schedules', 'csc_seo_cron_schedules');
+if (!function_exists('csc_seo_cron_schedules')) {
+    function csc_seo_cron_schedules($schedules) {
+        $schedules['csc_seo_monthly'] = ['interval' => 4 * WEEK_IN_SECONDS, 'display' => 'CSC SEO: каждые 4 недели'];
+        return $schedules;
+    }
+}
+
+add_action('init', 'csc_seo_schedule_ping', 11);
+if (!function_exists('csc_seo_schedule_ping')) {
+    /** Ставим/снимаем событие автопинга в зависимости от настроек. */
+    function csc_seo_schedule_ping() {
+        $s = csc_seo_get_settings();
+        if (empty($s['enabled']) || empty($s['ping_auto_enabled']) || empty($s['sitemap_enabled'])) {
+            // Снимаем все запланированные копии события (рекуррентное + single).
+            while (($rec = wp_get_schedule('csc_seo_ping_event')) !== false) {
+                wp_unschedule_event($rec, 'csc_seo_ping_event');
+                if (!wp_next_scheduled('csc_seo_ping_event')) break;
+            }
+            return;
+        }
+        $sch  = in_array($s['ping_auto_schedule'] ?? '', ['hourly', 'daily', 'weekly', 'csc_seo_monthly'], true) ? $s['ping_auto_schedule'] : 'weekly';
+        $next = wp_next_scheduled('csc_seo_ping_event');
+        if (!$next || wp_get_schedule('csc_seo_ping_event') !== $sch) {
+            if ($next) wp_unschedule_event($next, 'csc_seo_ping_event');
+            wp_schedule_event(time() + HOUR_IN_SECONDS, $sch, 'csc_seo_ping_event');
+        }
+    }
+}
+
+add_action('csc_seo_ping_event', 'csc_seo_do_ping');
+if (!function_exists('csc_seo_do_ping')) {
+    /** Фактический пинг XML-карты. Возвращает человекочитаемый результат и пишет его в настройку. */
+    function csc_seo_do_ping($manual = false) {
+        $s    = csc_seo_get_settings();
+        $path = trim((string)($s['sitemap_path'] ?? 'csc-sitemap.xml'), '/');
+        $sm   = home_url('/' . ($path === '' ? 'csc-sitemap.xml' : $path));
+        $res  = [];
+        if (!empty($s['ping_auto_google'])) {
+            $r   = wp_remote_get('https://www.google.com/sitemaps/ping?sitemap=' . rawurlencode($sm), ['timeout' => 8]);
+            $ok  = !is_wp_error($r) && (int)wp_remote_retrieve_response_code($r) === 200;
+            $res[] = 'Google: ' . ($ok ? 'OK' : 'нет ответа (GSC переобходит карту сам)');
+        }
+        if (!empty($s['ping_auto_yandex'])) {
+            $r   = wp_remote_get('https://yandex.ru/webmaster/sitemap?sitemap=' . rawurlencode($sm), ['timeout' => 8]);
+            $ok  = !is_wp_error($r) && (int)wp_remote_retrieve_response_code($r) < 400;
+            $res[] = 'Яндекс: ' . ($ok ? 'OK' : 'ошибка (загрузите карту в Вебмастере)');
+        }
+        $text = implode(' · ', $res) . ' · ' . gmdate('Y-m-d H:i') . ' UTC' . ($manual ? ' (вручную)' : ' (авто)');
+        $saved = csc_seo_get_settings(true); // свежая копия из БД (обход устаревшего статического кэша)
+        $saved['ping_last_result'] = $text;
+        update_option('csc_seo_settings', $saved, false);
+        csc_seo_get_settings(true); // синхронизация статического кэша с записанным значением
+        csc_seo_log('Ping: ' . $text);
+        return $text;
+    }
 }
 
 // Flush rewrite rules только при активации/обновлении плагина (дёшево и безопасно).
@@ -793,7 +1020,13 @@ if (!function_exists('csc_seo_robots_txt')) {
         $s = csc_seo_get_settings();
         $add = "\n";
         if (!empty($s['robots_sitemap'])) {
-            $add .= "Sitemap: " . home_url('/csc-sitemap.xml') . "\n";
+            // Путь берём из настройки (админка → «Sitemap / robots.txt»), а не хардкод.
+            $path = trim((string)($s['sitemap_path'] ?? 'csc-sitemap.xml'), '/');
+            if ($path === '') $path = 'csc-sitemap.xml';
+            $add .= "Sitemap: " . home_url('/' . $path) . "\n";
+            if (!empty($s['sitemap_split'])) {
+                $add .= "Sitemap: " . home_url('/' . $path . '-index.xml') . "\n";
+            }
         }
         // Служебные экраны кабинета мастера и upsale-интерфейса — не для индексов
         if (!empty($s['robots_disallow_service'])) {
@@ -1248,12 +1481,21 @@ if (!function_exists('csc_seo_admin_fields_schema')) {
                     ['k' => 'sitemap_changefreq', 't' => 'checkbox', 'l' => 'Элемент changefreq'],
                     ['k' => 'sitemap_priority', 't' => 'checkbox', 'l' => 'Элемент priority'],
                     ['k' => 'sitemap_max_urls', 't' => 'number', 'l' => 'Лимит URL в карте', 'min' => 100, 'max' => 50000],
+                    ['k' => 'sitemap_split', 't' => 'checkbox', 'l' => 'Сегментация (index-sitemap): при превышении лимита <code>' . 'основной URL отдаёт &lt;sitemapindex&gt;, части — по N URL. Индекс: <code>{путь}-index.xml</code>'],
                     ['k' => 'sitemap_cache_ttl', 't' => 'number', 'l' => 'Кэш XML, секунд (0 = всегда перегенерировать)', 'min' => 0, 'max' => 86400],
                 ],
                 'robots.txt' => [
                     ['k' => 'robots_sitemap', 't' => 'checkbox', 'l' => 'Директива Sitemap:'],
                     ['k' => 'robots_disallow_service', 't' => 'checkbox', 'l' => 'Disallow для служебных query-параметров и /csc-sw.js'],
                     ['k' => 'robots_extra_lines', 't' => 'multiline', 'l' => 'Произвольные директивы (разрешены User-agent/Sitemap/Disallow/Allow/Crawl-delay/Host; по одной на строку)', 'rows' => 4],
+                ],
+                'Автопинг поисковых систем (П13)' => [
+                    ['k' => 'ping_auto_enabled', 't' => 'checkbox', 'l' => 'Автоматически пинговать поисковики при обновлении карты', 'd' => 'Google расформировал ping-endpoint в 2023 — используйте как факультативный сигнал; Яндекс реагирует. Основной канал — Search Console / Вебмастер.'],
+                    ['k' => 'ping_auto_schedule', 't' => 'select', 'l' => 'Расписание автопинга', 'opts' => ['hourly' => 'Каждый час', 'daily' => 'Ежедневно', 'weekly' => 'Еженедельно', 'csc_seo_monthly' => 'Каждые 4 недели']],
+                    ['k' => 'ping_auto_google', 't' => 'checkbox', 'l' => 'Пинговать Google'],
+                    ['k' => 'ping_auto_yandex', 't' => 'checkbox', 'l' => 'Пинговать Яндекс'],
+                    ['k' => 'ping_auto_on_flush', 't' => 'checkbox', 'l' => 'Неотложный пинг после изменения каталога/городов'],
+                    ['t' => 'readonly', 'k' => 'ping_last_result', 'l' => 'Результат последнего пинга'],
                 ],
             ],
         ];
@@ -1375,6 +1617,8 @@ if (!function_exists('csc_seo_sanitize_field')) {
                     }
                 }
                 return $out;
+            case 'readonly':
+                return (string)$cur; // служебные read-only значения не перезаписываются формой
             case 'text':
             default:
                 return sanitize_text_field((string)$raw);
@@ -1417,6 +1661,9 @@ if (!function_exists('csc_seo_render_field')) {
                     csc_seo_redirect_row((string)($r['from'] ?? ''), (string)($r['to'] ?? ''), (int)($r['code'] ?? 301));
                 }
                 echo '</tbody></table><button type="button" class="button" id="csc-seo-redirect-add">+ Добавить редирект</button>';
+                break;
+            case 'readonly':
+                echo '<code>' . esc_html((string)$val !== '' ? $val : '—') . '</code>';
                 break;
             case 'email':
                 echo '<input type="email" class="regular-text" id="' . esc_attr($id) . '" name="' . esc_attr($name) . '" value="' . esc_attr((string)$val) . '"' . (isset($f['ph']) ? ' placeholder="' . esc_attr($f['ph']) . '"' : '') . '>';
@@ -1476,6 +1723,7 @@ if (!function_exists('csc_seo_admin_page')) {
                 }
             }
             update_option('csc_seo_settings', $new, false);
+            csc_seo_get_settings(true); // синхронизация статического кэша с сохранёнными значениями
             delete_transient('csc_seo_sitemap_xml');
             do_action('csc_seo_flush'); // flush_rewrite_rules для sitemap-пути
             $saved = true;
@@ -1483,10 +1731,76 @@ if (!function_exists('csc_seo_admin_page')) {
 
         $s    = csc_seo_get_settings();
         $tabs = csc_seo_admin_fields_schema();
+
+        // ── Действия администратора (все с nonce и manage_options) ──
+        $action_notice = '';
+        if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['csc_seo_action']) && check_admin_referer('csc_seo_save_action')) {
+            if (!current_user_can('manage_options')) return;
+            $act = sanitize_key(wp_unslash($_POST['csc_seo_action']));
+            if ($act === 'reset') {
+                delete_option('csc_seo_settings');
+                $action_notice = '<div class="notice notice-warning is-dismissible"><p>Настройки SEO-модуля сброшены к значениям по умолчанию.</p></div>';
+            } elseif ($act === 'export_json') {
+                echo '<div class="notice notice-info"><p><b>Экспорт настроек (JSON)</b> — скопируйте в буфер:</p></div>';
+                echo '<textarea class="large-text code" rows="14" readonly onclick="this.select()">' . esc_textarea((string)wp_json_encode(csc_seo_get_settings(), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)) . '</textarea>';
+            } elseif ($act === 'import_json') {
+                $raw = isset($_POST['csc_seo_import']) ? trim((string)wp_unslash($_POST['csc_seo_import'])) : '';
+                $data = json_decode($raw, true);
+                if (is_array($data)) {
+                    $defaults = csc_seo_get_defaults();
+                    $clean = [];
+                    foreach ($data as $k => $v) {
+                        if (!array_key_exists($k, $defaults)) continue; // только известные ключи схемы
+                        $type = 'text';
+                        foreach ($tabs as $t) { foreach ($t['sections'] as $fs) { foreach ($fs as $f) { if (($f['k'] ?? '') === $k) $type = $f['t']; } } }
+                        $clean[$k] = csc_seo_sanitize_field($type, $k, $v, $defaults[$k]);
+                    }
+                    update_option('csc_seo_settings', array_merge($defaults, $clean), false);
+                    csc_seo_get_settings(true); // синхронизация статического кэша после импорта
+                    delete_transient('csc_seo_sitemap_xml');
+                    do_action('csc_seo_flush');
+                    $action_notice = '<div class="notice notice-success is-dismissible"><p>Импортировано настроек: ' . count($clean) . '.</p></div>';
+                } else {
+                    $action_notice = '<div class="notice notice-error is-dismissible"><p>Импорт отменён: некорректный JSON.</p></div>';
+                }
+            } elseif ($act === 'ping_engines') {
+                // Делегируем общей функции П13: учёт настроек ping_auto_*, запись ping_last_result, лог.
+                $text = csc_seo_do_ping(true);
+                $s['ping_last_result'] = $text; // обновляем локальную копию для рендера readonly-поля
+                $action_notice = '<div class="notice notice-success is-dismissible"><p>Пинг поисковых систем: <b>' . esc_html($text) . '</b>.</p></div>';
+            }
+        }
+
+        // Принудительный сброс статического кэша настроек перед рендером —
+        // гарантирует, что только что сохранённые/импортированные значения видны сразу.
+        $s = csc_seo_get_settings(true);
+
         $active = isset($_GET['tab']) && isset($tabs[sanitize_key($_GET['tab'])]) ? sanitize_key($_GET['tab']) : 'general';
         ?>
         <div class="wrap csc-seo-admin">
             <h1>🔎 SEO калькулятора услуг</h1>
+            <?php
+            // П14: SEO-анализ каталога (покрытие ключами, предупреждения) — сразу под заголовком.
+            if (function_exists('csc_seo_analyze_catalog')) {
+                $an = csc_seo_analyze_catalog();
+                $bar_color = $an['pct'] >= 80 ? '#2ea23e' : ($an['pct'] >= 50 ? '#dba617' : '#d63638');
+                echo '<div class="card" style="max-width:900px;margin-top:10px">';
+                echo '<h2 style="margin-top:0">SEO-покрытие каталога</h2>';
+                echo '<p><b>' . (int)$an['sections'] . '/' . (int)$an['sections_total'] . '</b> разделов и <b>' . (int)$an['items'] . '/' . (int)$an['items_total'] . '</b> услуг имеют ручное SEO-описание.</p>';
+                echo '<div style="background:#ddd;height:12px;border-radius:6px;overflow:hidden;max-width:400px">'
+                    . '<div style="width:' . esc_attr(min(100, $an['pct'])) . '%;height:100%;background:' . esc_attr($bar_color) . '"></div></div>'
+                    . '<p class="description">Заполненность: <b>' . esc_html($an['pct']) . '%</b></p>';
+                if (!empty($an['warnings'])) {
+                    echo '<ul style="margin:6px 0">';
+                    foreach ($an['warnings'] as $w) echo '<li>⚠️ ' . esc_html($w) . '</li>';
+                    echo '</ul>';
+                } else {
+                    echo '<p style="color:#2ea23e"><b>✅ Замечаний нет — каталог оптимизирован.</b></p>';
+                }
+                echo '<p><a class="button button-small" href="' . esc_url(add_query_arg(['page' => 'csc_seo_admin', 'tab' => 'meta'])) . '">Перейти к meta-настройкам</a></p>';
+                echo '</div>';
+            }
+            ?>
             <?php if ($saved): ?>
                 <div class="notice notice-success is-dismissible"><p>SEO-настройки сохранены.
                     <a href="<?php echo esc_url(home_url('/' . trim((string)$s['sitemap_path'], '/'))); ?>" target="_blank">Открыть sitemap</a> ·
@@ -1667,6 +1981,7 @@ if (!function_exists('csc_seo_maybe_flush')) {
             if (!is_array($stored)) $stored = [];
             update_option('csc_seo_settings', array_merge(csc_seo_get_defaults(), $stored), false);
             update_option('csc_seo_settings_ver', CSC_PLUGIN_VERSION, false);
+            csc_seo_get_settings(true); // перечитать миграцию в статический кэш
             delete_transient('csc_seo_sitemap_xml');
         }
         // 2) Flush rewrite rules при смене версии или пути sitemap.
@@ -1683,4 +1998,41 @@ if (!function_exists('csc_seo_maybe_flush')) {
 // но удаляем правило переписывания из БД при следующем flush.
 register_deactivation_hook(__FILE__, function () {
     delete_option('csc_seo_rules_ver');
+    // П13: снимаем cron-события автопинга (рекуррентное + отложенные single).
+    while (($rec = wp_get_schedule('csc_seo_ping_event')) !== false) {
+        wp_unschedule_event($rec, 'csc_seo_ping_event');
+        if (!wp_next_scheduled('csc_seo_ping_event')) break;
+    }
 });
+
+// ============================================================
+// 12. SEO-АНАЛИЗ КАТАЛОГА (П14): диагностика покрытия ключами
+//     Показывает % заполненных seo_desc, среднюю длину title/desc,
+//     услуги без описания — прямые указания, что оптимизировать.
+// ============================================================
+
+if (!function_exists('csc_seo_analyze_catalog')) {
+    /** @return array{sections:int,sections_total:int,items:int,items_total:int,pct:float,warnings:string[]} */
+    function csc_seo_analyze_catalog() {
+        $res = ['sections' => 0, 'sections_total' => 0, 'items' => 0, 'items_total' => 0, 'pct' => 0.0, 'warnings' => []];
+        foreach ((array)csc_get_sections() as $sec) {
+            $res['sections_total']++;
+            if (!empty($sec['seo_desc'])) $res['sections']++;
+            else $res['warnings'][] = 'Раздел «' . ($sec['name'] ?? '?') . '» без SEO-описания';
+        }
+        foreach ((array)csc_get_items() as $item) {
+            $res['items_total']++;
+            if (!empty($item['seo_desc'])) $res['items']++;
+        }
+        $filled = $res['sections'] + $res['items'];
+        $total  = max(1, $res['sections_total'] + $res['items_total']);
+        $res['pct'] = round(100 * $filled / $total, 1);
+        if ($res['pct'] < 50) $res['warnings'][] = 'Заполнено лишь ' . $res['pct'] . '% SEO-описаний — сниппеты формируются автоматически, но ручные тексты ранжируются лучше.';
+        $s = csc_seo_get_settings();
+        if (empty($s['ssr_catalog']))   $res['warnings'][] = 'SSR-каталог выключен — краулер не видит цены и названия услуг в HTML.';
+        if (empty($s['sitemap_enabled']))$res['warnings'][] = 'XML-sitemap модуля выключен — карта недоступна поисковикам.';
+        if (empty($s['jsonld_service_catalog'])) $res['warnings'][] = 'ServiceCatalog отключён — нет rich-результатов с ценами.';
+        $res['warnings'] = array_slice($res['warnings'], 0, 12);
+        return $res;
+    }
+}
