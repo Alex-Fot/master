@@ -238,27 +238,44 @@ if (!function_exists('csc_render_become_master_form')) {
         // КРИТИЧНО ИСПРАВЛЕНО: Стили выводятся ПРЯМО В HTML через echo
         // wp_head уже отработал, поэтому add_action бесполезен
         echo '<style id="csc-registration-inline-styles">
+            /* ===== v9.2: оформление по аналогии со страницей калькулятора =====
+               Палитра наследует CSS-переменные темы калькулятора (--csc-bg/--csc-card/
+               --csc-text/--csc-border/--csc-shadow/--csc-input-bg). Если калькулятор на
+               странице отсутствует — работают дефолты (светлые); тёмная тема подхватывается
+               по data-theme="dark" у любого предка или самого контейнера. */
             .csc-registration-page {
                 position: relative; /* опора для absolute-обёртки быстрого меню «⋮» (.csc-qm-wrap) */
                 min-height: 100vh !important;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+                background: var(--csc-bg, rgba(248,250,252,0.4)) !important;
                 padding: 40px 20px !important;
-                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif !important;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+                color: var(--csc-text, #1e293b) !important;
                 display: flex !important;
                 align-items: flex-start !important;
                 justify-content: center !important;
                 box-sizing: border-box !important;
+                transition: background 0.3s ease, color 0.3s ease !important;
             }
             
+            @supports (backdrop-filter: blur(12px)) or (-webkit-backdrop-filter: blur(12px)) {
+                .csc-registration-container {
+                    backdrop-filter: blur(20px) saturate(180%);
+                    -webkit-backdrop-filter: blur(20px) saturate(180%);
+                }
+            }
+
             .csc-registration-container {
                 width: 100% !important;
                 max-width: 760px !important;
                 margin: 0 auto !important;
-                background: #ffffff !important;
-                border-radius: 16px !important;
-                box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3) !important;
+                background: var(--csc-card, rgba(255,255,255,0.92)) !important;
+                color: var(--csc-text, #1e293b) !important;
+                border: 1px solid var(--csc-border, rgba(255,255,255,0.6)) !important;
+                border-radius: 24px !important;
+                box-shadow: var(--csc-shadow, 0 8px 32px rgba(0,0,0,0.08), inset 0 1px 0 rgba(255,255,255,0.9)) !important;
                 padding: 48px !important;
                 box-sizing: border-box !important;
+                transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease !important;
             }
             
             /* КРИТИЧНО: СКРЫТИЕ НЕАКТИВНЫХ ШАГОВ */
@@ -323,7 +340,7 @@ if (!function_exists('csc_render_become_master_form')) {
             .csc-registration-title {
                 font-size: 32px !important;
                 font-weight: 800 !important;
-                color: #1e293b !important;
+                color: var(--csc-text, #1e293b) !important;
                 margin: 0 0 8px !important;
             }
             
@@ -480,7 +497,7 @@ if (!function_exists('csc_render_become_master_form')) {
                 display: block !important;
                 font-weight: 600 !important;
                 margin-bottom: 8px !important;
-                color: #1e293b !important;
+                color: var(--csc-text, #1e293b) !important;
                 font-size: 14px !important;
             }
             
@@ -497,8 +514,8 @@ if (!function_exists('csc_render_become_master_form')) {
                 border-radius: 8px !important;
                 font-size: 15px !important;
                 transition: all 0.3s !important;
-                background: #ffffff !important;
-                color: #1e293b !important;
+                background: var(--csc-input-bg, #ffffff) !important;
+                color: var(--csc-text, #1e293b) !important;
                 box-sizing: border-box !important;
             }
             
@@ -548,7 +565,7 @@ if (!function_exists('csc_render_become_master_form')) {
                 border: 2px solid #e2e8f0 !important;
                 border-radius: 8px !important;
                 transition: all 0.3s !important;
-                background: #ffffff !important;
+                background: var(--csc-input-bg, #ffffff) !important;
             }
             
             .csc-checkbox-label:hover {
@@ -565,7 +582,7 @@ if (!function_exists('csc_render_become_master_form')) {
             }
             
             .csc-checkbox-text {
-                color: #1e293b !important;
+                color: var(--csc-text, #1e293b) !important;
                 font-weight: 500 !important;
                 line-height: 1.6 !important;
             }
@@ -580,7 +597,7 @@ if (!function_exists('csc_render_become_master_form')) {
                 border: 2px solid #e2e8f0 !important;
                 border-radius: 8px !important;
                 transition: all 0.3s !important;
-                background: #ffffff !important;
+                background: var(--csc-input-bg, #ffffff) !important;
                 margin-bottom: 8px !important;
             }
             
@@ -667,7 +684,7 @@ if (!function_exists('csc_render_become_master_form')) {
                 border: 2px solid #e2e8f0 !important;
                 border-radius: 8px !important;
                 flex-wrap: wrap !important;
-                background: #ffffff !important;
+                background: var(--csc-input-bg, #ffffff) !important;
             }
             
             .csc-schedule-times {
@@ -724,8 +741,8 @@ if (!function_exists('csc_render_become_master_form')) {
             }
             
             .csc-btn-secondary {
-                background: #e2e8f0 !important;
-                color: #1e293b !important;
+                background: var(--csc-ctl-br, #e2e8f0) !important;
+                color: var(--csc-text, #1e293b) !important;
             }
             
             .csc-btn-secondary:hover {
@@ -833,11 +850,146 @@ if (!function_exists('csc_render_become_master_form')) {
                 #csc-reg-map {
                     height: 280px !important;
             }
+
+            /* ===== v9.2 ТЁМНАЯ ТЕМА (по аналогии с калькулятором: data-theme="dark") =====
+               Переопределяем только то, что в светлой теме было захардкоженными цветами.
+               Селекторы с [data-theme] имеют больший вес, чем базовые правила выше. */
+            .csc-registration-page[data-theme="dark"],
+            [data-theme="dark"] .csc-registration-page {
+                --csc-bg: rgba(15,23,42,0.5);
+                --csc-card: rgba(30,41,59,0.5);
+                --csc-text: #f1f5f9;
+                --csc-border: rgba(255,255,255,0.1);
+                --csc-shadow: 0 8px 32px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.15);
+                --csc-input-bg: rgba(15,23,42,0.6);
+                color-scheme: dark;
+            }
+
+            [data-theme="dark"] .csc-registration-subtitle,
+            .csc-registration-page[data-theme="dark"] .csc-registration-subtitle,
+            [data-theme="dark"] .csc-form-group small,
+            .csc-registration-page[data-theme="dark"] .csc-form-group small,
+            [data-theme="dark"] .csc-file-upload-text,
+            .csc-registration-page[data-theme="dark"] .csc-file-upload-text,
+            [data-theme="dark"] .csc-agreement-content p,
+            .csc-registration-page[data-theme="dark"] .csc-agreement-content p,
+            [data-theme="dark"] .csc-progress-step-label,
+            .csc-registration-page[data-theme="dark"] .csc-progress-step-label {
+                color: #94a3b8 !important;
+            }
+
+            [data-theme="dark"] .csc-registration-container,
+            .csc-registration-page[data-theme="dark"] .csc-registration-container {
+                background: var(--csc-card, rgba(30,41,59,0.5)) !important;
+                border-color: var(--csc-border, rgba(255,255,255,0.1)) !important;
+                box-shadow: var(--csc-shadow) !important;
+            }
+
+            [data-theme="dark"] .csc-form-group input[type="text"],
+            [data-theme="dark"] .csc-form-group input[type="tel"],
+            [data-theme="dark"] .csc-form-group input[type="email"],
+            [data-theme="dark"] .csc-form-group input[type="number"],
+            [data-theme="dark"] .csc-form-group input[type="time"],
+            [data-theme="dark"] .csc-form-group select,
+            [data-theme="dark"] .csc-form-group textarea,
+            [data-theme="dark"] .csc-time-input,
+            [data-theme="dark"] .csc-checkbox-label,
+            [data-theme="dark"] .csc-radio-label,
+            [data-theme="dark"] .csc-schedule-day,
+            .csc-registration-page[data-theme="dark"] .csc-form-group input,
+            .csc-registration-page[data-theme="dark"] .csc-form-group select,
+            .csc-registration-page[data-theme="dark"] .csc-form-group textarea {
+                background: var(--csc-input-bg, rgba(15,23,42,0.6)) !important;
+                color: #f1f5f9 !important;
+                border-color: rgba(255,255,255,0.16) !important;
+            }
+
+            [data-theme="dark"] .csc-form-group select option,
+            .csc-registration-page[data-theme="dark"] .csc-form-group select option {
+                background: #0b1220 !important;
+                color: #f8fafc !important;
+            }
+
+            [data-theme="dark"] .csc-profile-completeness,
+            [data-theme="dark"] .csc-agreement-box,
+            [data-theme="dark"] .csc-file-upload,
+            .csc-registration-page[data-theme="dark"] .csc-profile-completeness,
+            .csc-registration-page[data-theme="dark"] .csc-agreement-box,
+            .csc-registration-page[data-theme="dark"] .csc-file-upload {
+                background: rgba(15,23,42,0.45) !important;
+                border-color: rgba(255,255,255,0.14) !important;
+            }
+
+            [data-theme="dark"] .csc-agreement-content h3,
+            [data-theme="dark"] .csc-agreement-content h4,
+            [data-theme="dark"] .csc-completeness-label,
+            [data-theme="dark"] .csc-form-group label,
+            [data-theme="dark"] .csc-checkbox-text,
+            .csc-registration-page[data-theme="dark"] .csc-agreement-content h3,
+            .csc-registration-page[data-theme="dark"] .csc-agreement-content h4,
+            .csc-registration-page[data-theme="dark"] .csc-completeness-label,
+            .csc-registration-page[data-theme="dark"] .csc-form-group label,
+            .csc-registration-page[data-theme="dark"] .csc-checkbox-text {
+                color: #f1f5f9 !important;
+            }
+
+            [data-theme="dark"] .csc-completeness-bar,
+            [data-theme="dark"] .csc-progress-step-number,
+            [data-theme="dark"] .csc-progress-line,
+            .csc-registration-page[data-theme="dark"] .csc-completeness-bar,
+            .csc-registration-page[data-theme="dark"] .csc-progress-step-number,
+            .csc-registration-page[data-theme="dark"] .csc-progress-line {
+                background: rgba(148,163,184,0.25) !important;
+            }
+
+            [data-theme="dark"] .csc-progress-step-number {
+                color: #94a3b8 !important;
+            }
+
+            [data-theme="dark"] #csc-geocode-address-btn,
+            .csc-registration-page[data-theme="dark"] #csc-geocode-address-btn {
+                background: transparent !important;
+                color: #818cf8 !important;
+                border-color: #818cf8 !important;
+            }
+
+            [data-theme="dark"] #csc-geocode-address-btn:hover:not(:disabled),
+            .csc-registration-page[data-theme="dark"] #csc-geocode-address-btn:hover:not(:disabled) {
+                background: #6366f1 !important;
+                color: #ffffff !important;
+            }
+
+            /* Кнопка переключения темы — тот же стиль, что у калькулятора (.csc-theme-toggle) */
+            .csc-reg-theme-toggle {
+                position: fixed;
+                bottom: 100px;
+                right: 30px;
+                width: 56px;
+                height: 56px;
+                border-radius: 50%;
+                background: var(--csc-card, rgba(255,255,255,0.5));
+                border: 1px solid var(--csc-border, rgba(255,255,255,0.5));
+                color: var(--csc-text, #1e293b);
+                font-size: 26px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+                z-index: 99998;
+                opacity: 0.85;
+                transition: all 0.3s ease;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.6);
+            }
+            .csc-reg-theme-toggle:hover { opacity: 1; transform: scale(1.07); }
+            @media (max-width: 768px) {
+                .csc-reg-theme-toggle { bottom: 84px; right: 16px; width: 46px; height: 46px; font-size: 21px; }
+            }
         </style>';
         ?>
-        <div class="csc-registration-page">
+        <div class="csc-registration-page" data-theme="light">
         <?php // Быстрое меню «⋮»: раздел «Стать мастером» неактивен, значок заменён на переход к калькулятору.
               if (function_exists('csc_render_quick_menu')) echo csc_render_quick_menu('master'); ?>
+            <button type="button" id="csc-reg-theme-toggle" class="csc-reg-theme-toggle" aria-label="Переключить тему">🌙</button>
             <div class="csc-registration-container">
                 <div class="csc-registration-header">
                     <h1 class="csc-registration-title">Стать мастером</h1>
@@ -1068,6 +1220,43 @@ if (!function_exists('csc_render_become_master_form')) {
                 </form>
             </div>
         </div>
+        <script>
+        /* ===== v9.2 Синхронизация темы страницы мастера с темой калькулятора =====
+           Калькулятор хранит выбор в localStorage['csc_calc_theme'] и ставит data-theme
+           на #csc-calculator. Здесь: читаем то же значение (или prefers-color-scheme),
+           ставим data-theme на контейнер страницы, реагируем на переключение кнопки и на
+           изменения на другой странице/табе (storage event). */
+        (function(){
+            var page = document.querySelector('.csc-registration-page');
+            var btn  = document.getElementById('csc-reg-theme-toggle');
+            if (!page) return;
+            function apply(theme){
+                page.setAttribute('data-theme', theme);
+                if (btn) btn.innerHTML = (theme === 'dark') ? '☀️' : '🌙';
+            }
+            function current(){
+                var t = null;
+                try { t = localStorage.getItem('csc_calc_theme'); } catch(e){}
+                if (t === 'dark' || t === 'light') return t;
+                var calc = document.getElementById('csc-calculator');
+                if (calc && calc.getAttribute('data-theme')) return calc.getAttribute('data-theme');
+                if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
+                return 'light';
+            }
+            apply(current());
+            if (btn) btn.addEventListener('click', function(){
+                var next = page.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+                try { localStorage.setItem('csc_calc_theme', next); } catch(e){}
+                apply(next);
+            });
+            window.addEventListener('storage', function(e){
+                if (e.key === 'csc_calc_theme' && (e.newValue === 'dark' || e.newValue === 'light')) apply(e.newValue);
+            });
+            /* Если на этой же странице есть калькулятор — синхронизируемся с его кнопкой */
+            var calcBtn = document.getElementById('csc-theme-toggle');
+            if (calcBtn) calcBtn.addEventListener('click', function(){ setTimeout(function(){ apply(current()); }, 50); });
+        })();
+        </script>
         <?php
         return ob_get_clean();
     }
