@@ -25,30 +25,135 @@ if (!defined('ABSPATH')) exit;
 // ============================================================
 
 if (!function_exists('csc_seo_get_defaults')) {
+    /**
+     * Полная схема настроек SEO-модуля. КАЖДЫЙ оптимизационный пункт аудита
+     * имеет собственный переключатель/поле в админке («🔎 SEO (CSC)», вкладки).
+     */
     function csc_seo_get_defaults() {
         return [
-            'enabled'            => 1,      // общий выключатель модуля
-            'sitemap_enabled'    => 1,      // /csc-sitemap.xml
-            'robots_sitemap'     => 1,      // строка Sitemap: в robots.txt
-            'og_enabled'         => 1,      // Open Graph / Twitter
-            'jsonld_enabled'     => 1,      // JSON-LD
-            'ssr_catalog'        => 1,      // server-side каталог услуг в шорткоде
-            'cross_links'        => 1,      // перелинковка (footer-меню городов)
-            'canonical_query'    => 1,      // canonical ?p=ID для страниц с шорткодами
-            'title_template'     => '%title% — %sitename%',
-            'calc_title'         => 'Расчёт стоимости услуг и вызов мастера — онлайн-калькулятор',
-            'calc_desc'          => 'Рассчитайте стоимость услуги за 30 секунд: выберите раздел, услуги, укажите адрес и время. Прозрачные цены, %. Работаем в %cities%. Гарантия на все работы.',
-            'cabinet_title'      => 'Личный кабинет клиента — статусы и история заказов',
-            'cabinet_desc'       => 'Вход по номеру телефона: история заявок, статусы выполнения, повтор заказа и оценка работ мастера.',
-            'master_title'       => 'Стать мастером — подключение к сервису',
-            'master_desc'       => 'Регистрация мастеров: заказы рядом с домом, свободный график, еженедельные выплаты, рейтинг и отзывы. Города: %cities%.',
-            'default_image'      => '',     // URL картинки по умолчанию для OG
-            'business_name'      => '',     // LocalBusiness name (пусто = blogname)
-            'business_type'      => 'HomeAndConstructionBusiness', // schema.org @type
-            'business_phone'     => '',
-            'business_email'     => '',
-            'business_area'      => '',     // AreaServed, через запятую
-            'noindex_service_pages' => 0,   // резерв: noindex для служебных экранов
+            // ── П0. Общие ──
+            'enabled'               => 1,   // главный выключатель модуля
+            'debug_log'             => 0,   // писать решения хуков в журнал CSC
+
+            // ── П1. Meta title / description ──
+            'meta_enabled'          => 1,
+            'title_template'        => '%title% — %sitename%',
+            'title_max'             => 60,  // обрезка <title> (0 = не обрезать)
+            'desc_max'              => 300, // жёсткий лимит description
+            'calc_title'            => 'Расчёт стоимости услуг и вызов мастера — онлайн-калькулятор',
+            'calc_desc'             => 'Рассчитайте стоимость услуги за 30 секунд: выберите раздел, услуги, укажите адрес и время. Прозрачные цены, %price_from%. Работаем в %cities%. Гарантия на все работы.',
+            'cabinet_title'         => 'Личный кабинет клиента — статусы и история заказов',
+            'cabinet_desc'          => 'Вход по номеру телефона: история заявок, статусы выполнения, повтор заказа и оценка работ мастера.',
+            'master_title'          => 'Стать мастером — подключение к сервису',
+            'master_desc'           => 'Регистрация мастеров: заказы рядом с домом, свободный график, еженедельные выплаты, рейтинг и отзывы. Города: %cities%.',
+
+            // ── П2. Canonical / robots-meta ──
+            'canonical_enabled'     => 1,   // чистый canonical страниц плагина
+            'canonical_force_ssl'   => 0,   // принудительно https в canonical
+            'canonical_trailing_slash' => 1,// единый формат URL: со слэшем на конце
+            'noindex_404'           => 1,   // X-Robots-Tag noindex на страницах 404
+            'noindex_search'        => 1,   // noindex для результатов ?s= (защита от мусорных кластеров)
+            'service_noindex'       => 1,   // noindex,follow для служебных GET-экранов (?csc_master_dashboard=1 и т.п.)
+
+            // ── П3. Open Graph / Twitter Card ──
+            'og_enabled'            => 1,
+            'og_site_name'          => '',  // пусто = bloginfo('name')
+            'og_locale'             => 'ru_RU',
+            'og_type_calc'          => 'website',
+            'og_type_master'        => 'website',
+            'og_type_cabinet'       => 'website',
+            'twitter_enabled'       => 1,
+            'twitter_site'          => '',  // @username аккаунта сайта
+            'default_image'         => '',  // OG-обложка 1200×630
+            'default_image_w'       => 1200,
+            'default_image_h'       => 630,
+
+            // ── П4. JSON-LD микроразметка ──
+            'jsonld_enabled'        => 1,
+            'jsonld_graph'          => 1,   // объединять в @graph (иначе — отдельные блоки)
+            'business_name'         => '',
+            'business_type'         => 'HomeAndConstructionBusiness',
+            'business_phone'        => '',
+            'business_email'        => '',
+            'business_area'         => '',  // AreaServed вручную (пусто = из списка городов)
+            'geo_lat'               => '',
+            'geo_lng'               => '',
+            'opening_hours'         => 'Mo-Su 08:00-22:00',
+            'price_currency'        => 'RUB',
+            'jsonld_localbusiness'  => 1,
+            'jsonld_website'        => 1,   // WebSite + SearchAction (поиск по сайту)
+            'jsonld_service_catalog'=> 1,   // ServiceCatalog с Offer'ами услуг
+            'jsonld_service_max'    => 60,  // лимит Service-узлов (размер блока)
+            'jsonld_breadcrumbs'    => 1,
+            'jsonld_faq'            => 1,
+            'jsonld_faq_master'     => 1,   // FAQ на «Стать мастером»
+            'jsonld_faq_calc'       => 1,   // FAQ на калькуляторе
+            'jsonld_reviews'        => 1,   // AggregateRating из модуля отзывов
+            'jsonld_social'         => 1,   // sameAs (соцсети ниже)
+            'social_facebook'       => '',
+            'social_instagram'      => '',
+            'social_vk'             => '',
+            'social_telegram'       => '',
+            'social_youtube'        => '',
+
+            // ── П5. XML-Sitemap и robots.txt ──
+            'sitemap_enabled'       => 1,
+            'sitemap_path'          => 'csc-sitemap.xml',
+            'sitemap_wp_pages'      => 1,   // страницы с шорткодами плагина
+            'sitemap_sections'      => 1,   // якоря разделов #section-{id}
+            'sitemap_items'         => 0,   // якоря услуг #item-{id} (может раздуть карту)
+            'sitemap_cities'        => 1,   // городские фильтры ?csc_city=slug
+            'sitemap_lastmod'       => 1,
+            'sitemap_changefreq'    => 1,
+            'sitemap_priority'      => 1,
+            'sitemap_max_urls'      => 5000,
+            'sitemap_cache_ttl'     => 300, // сек; кэш XML в трансиенте
+            'robots_sitemap'        => 1,   // строка Sitemap: в robots.txt
+            'robots_disallow_service' => 1, // Disallow для служебных query-параметров
+            'robots_extra_lines'    => '',  // произвольные директивы (по строке на директиву)
+
+            // ── П6. SSR-каталог услуг (индексация контента без JS) ──
+            'ssr_catalog'           => 1,
+            'ssr_headings_level'    => 'h2',
+            'ssr_show_prices'       => 1,
+            'ssr_show_duration'     => 1,
+            'ssr_show_desc'         => 1,   // seo_desc разделов/услуг текстом
+            'ssr_only_available'    => 1,
+            'ssr_hide_noscript'     => 1,   // noscript-скрытие JS-дублей плиток
+
+            // ── П7. Перелинковка ──
+            'cross_links'           => 1,
+            'cross_sections'        => 1,
+            'cross_cities'          => 1,
+            'cross_sections_label'  => 'Популярные категории:',
+            'cross_cities_label'    => 'Мы работаем в городах:',
+            'cross_max_sections'    => 12,
+            'cross_max_cities'      => 12,
+            'cross_position'        => 'footer',  // footer | content_end
+            'cross_nofollow'        => 0,         // rel="nofollow" для городских фильтров
+
+            // ── П8. Core Web Vitals / ассеты ──
+            'cwv_enabled'           => 1,
+            'defer_vendor_scripts'  => 1,   // defer html2canvas
+            'img_lazyloading'       => 1,   // loading="lazy" для изображений
+            'img_alt_fallback'      => 1,   // alt из post_title, если пустой
+
+            // ── П9. Редиректы 301/302 ──
+            'redirects_enabled'     => 1,
+            'redirects_list'        => [],  // [['from'=>'/old/','to'=>'/new/','code'=>301], …]
+
+            // ── П10. Интеграции / верификация ──
+            'compat_mode'           => 'auto', // auto|off|force — поведение рядом с Yoast/RankMath/AIOSEO/SEOPress
+            'gsc_verification'      => '',     // meta-подтверждение Google Search Console
+            'yandex_verification'   => '',     // Яндекс.Вебмастер
+            'bing_verification'     => '',     // Bing Site Explorer
+
+            // ── П11. Внутренний поиск (SearchAction) ──
+            'search_param'          => 'csc_q',
+
+            // ── П12. Токены шаблонов ──
+            'token_price_separator' => 'от ',
+            'token_cities_limit'    => 6,
         ];
     }
 }
@@ -68,6 +173,49 @@ if (!function_exists('csc_seo_enabled')) {
     function csc_seo_enabled($key = 'enabled') {
         $s = csc_seo_get_settings();
         return !empty($s['enabled']) && !empty($s[$key]);
+    }
+}
+
+if (!function_exists('csc_seo_meta_allowed')) {
+    /**
+     * П10 «Интеграции»: совместимость с внешними SEO-плагинами.
+     *  compat_mode = 'off'  — наш модуль meta не мешает никому;
+     *  compat_mode = 'force'— ставим теги всегда (даже при активном Yoast и т.п.);
+     *  compat_mode = 'auto' — если определён конкурент, у которого заполнен title/description
+     *                          страницы — молчим; иначе берём управление на себя.
+     */
+    function csc_seo_meta_allowed() {
+        if (!csc_seo_enabled('meta_enabled')) return false;
+        $mode = csc_seo_get_settings()['compat_mode'] ?? 'auto';
+        if ($mode === 'off') return false;
+        if ($mode === 'force') return true;
+        // auto: проверяем, не закрыт ли пункт другим плагином именно на этой странице
+        if (!csc_seo_external_seo_active()) return true;
+        if (is_singular()) {
+            $post = get_post();
+            if ($post) {
+                $meta = get_post_meta($post->ID, '_yoast_wpseo_metadesc', true);      // Yoast / АIOSEO legacy
+                $rm  = get_post_meta($post->ID, 'rank_math_description', true);         // Rank Math
+                $sp  = get_post_meta($post->ID, '_seopress_titles_desc', true);          // SEOPress
+                if (trim((string)($meta ?: $rm ?: $sp)) !== '') return false;           // конкурент уже всё сделал
+            }
+        }
+        return true; // конкурент молчит на страницах плагина — включаемся
+    }
+}
+
+if (!function_exists('csc_seo_external_seo_active')) {
+    /** Детект активных внешних SEO-плагинов (для админского аудита и compat). */
+    function csc_seo_external_seo_active() {
+        static $detected = null;
+        if ($detected !== null) return $detected;
+        $detected = [];
+        if (defined('WPSEO_VERSION'))                        $detected[] = 'Yoast SEO';
+        if (defined('RANK_MATH_VERSION'))                   $detected[] = 'Rank Math';
+        if (class_exists('AIOSEO\Plugin\Loader'))          $detected[] = 'All in One SEO';
+        if (defined('SEOPRESS_VERSION'))                    $detected[] = 'SEOPress';
+        if (defined('THE_SEO_FRAMEWORK_VERSION'))           $detected[] = 'The SEO Framework';
+        return $detected;
     }
 }
 
@@ -123,6 +271,7 @@ if (!function_exists('csc_seo_cities_list')) {
 if (!function_exists('csc_seo_price_from')) {
     /** «от N ₽» — минимальная цена среди доступных услуг (сильный CTR-фактор сниппета). */
     function csc_seo_price_from() {
+        $s = csc_seo_get_settings();
         $min = 0;
         foreach ((array)csc_get_items() as $item) {
             if (empty($item['is_available'])) continue;
@@ -130,17 +279,25 @@ if (!function_exists('csc_seo_price_from')) {
             if ($p <= 0) continue;
             if ($min === 0 || $p < $min) $min = $p;
         }
-        return $min > 0 ? 'от ' . number_format($min, 0, ',', ' ') . ' ₽' : '';
+        if ($min <= 0) return '';
+        $sep   = (string)($s['token_price_separator'] ?? 'от ');
+        $price = number_format($min, 0, ',', ' ') . ' ₽';
+        return $sep !== '' ? $sep . $price : $price;
     }
 }
 
 if (!function_exists('csc_seo_apply_tokens')) {
     /** Подстановка %sitename%, %cities%, %price_from% в шаблоны meta-полей. */
     function csc_seo_apply_tokens($text) {
+        $s = csc_seo_get_settings();
         $cities = csc_seo_cities_list();
+        $limit = max(1, (int)($s['token_cities_limit'] ?? 6));
+        if (count($cities) > $limit) {
+            $cities = array_merge(array_slice($cities, 0, $limit), ['…']);
+        }
         return str_replace(
-            ['%sitename%', '%cities%', '%price_from%'],
-            [get_bloginfo('name'), implode(', ', $cities), csc_seo_price_from()],
+            ['%sitename%', '%cities%'%, '%price_from%', '%year%', '%tagline%'],
+            [get_bloginfo('name'), implode(', ', $cities), csc_seo_price_from(), gmdate('Y'), get_bloginfo('description')],
             $text
         );
     }
@@ -155,14 +312,17 @@ if (!function_exists('csc_seo_apply_tokens')) {
 add_filter('pre_get_document_title', 'csc_seo_filter_title', 4);
 if (!function_exists('csc_seo_filter_title')) {
     function csc_seo_filter_title($title) {
-        if (!csc_seo_enabled()) return $title;
+        if (!csc_seo_meta_allowed()) return $title;
         $kind = csc_seo_detect_page_kind();
         if (!$kind) return $title;
         $s = csc_seo_get_settings();
         $map = ['calculator' => $s['calc_title'], 'cabinet' => $s['cabinet_title'], 'become_master' => $s['master_title']];
         $custom = trim((string)($map[$kind] ?? ''));
         if ($custom === '') return $title;
-        return csc_seo_apply_tokens(str_replace('%title%', $custom, $s['title_template']));
+        $out = csc_seo_apply_tokens(str_replace('%title%', $custom, $s['title_template']));
+        $max = (int)($s['title_max'] ?? 60);
+        if ($max > 0) $out = mb_substr($out, 0, $max);
+        return $out;
     }
 }
 
@@ -170,7 +330,7 @@ add_filter('document_title_parts', 'csc_seo_title_parts', 4);
 if (!function_exists('csc_seo_title_parts')) {
     function csc_seo_title_parts($parts) {
         // Совместимость: если тема собирает title из частей — подменяем заголовок так же.
-        if (!csc_seo_enabled()) return $parts;
+        if (!csc_seo_meta_allowed()) return $parts;
         $kind = csc_seo_detect_page_kind();
         if (!$kind) return $parts;
         $s = csc_seo_get_settings();
@@ -184,7 +344,7 @@ if (!function_exists('csc_seo_title_parts')) {
 add_action('wp_head', 'csc_seo_meta_tags', 4);
 if (!function_exists('csc_seo_meta_tags')) {
     function csc_seo_meta_tags() {
-        if (!csc_seo_enabled()) return;
+        if (!csc_seo_meta_allowed()) return;
         if (!is_singular()) return;
         $kind = csc_seo_detect_page_kind();
         if (!$kind) return;
@@ -193,20 +353,39 @@ if (!function_exists('csc_seo_meta_tags')) {
         $desc_map = ['calculator' => $s['calc_desc'], 'cabinet' => $s['cabinet_desc'], 'become_master' => $s['master_desc']];
         $desc = csc_seo_apply_tokens(trim((string)($desc_map[$kind] ?? '')));
 
+        $dmax = max(50, (int)($s['desc_max'] ?? 300));
         echo '<!-- CSC SEO -->' . "\n";
         if ($desc !== '') {
-            echo '<meta name="description" content="' . esc_attr(mb_substr($desc, 0, 300)) . '">' . "\n";
+            echo '<meta name="description" content="' . esc_attr(mb_substr($desc, 0, $dmax)) . '">' . "\n";
         }
 
-        // Canonical: чистый permalink страницы вместо URL с query-параметрами плагина
-        if (!empty($s['canonical_query'])) {
+        // Canonical (П2): чистый permalink страницы вместо URL с query-параметрами плагина.
+        if (!empty($s['canonical_enabled'])) {
             $clean = get_permalink();
             if ($clean && strpos($clean, '?') === false) {
+                if (!empty($s['canonical_force_ssl'])) {
+                    $clean = preg_replace('#^http://#', 'https://', $clean);
+                }
+                if (!empty($s['canonical_trailing_slash'])) {
+                    $clean = rtrim($clean, '/') . '/';
+                } else {
+                    $clean = rtrim($clean, '/');
+                }
                 echo '<link rel="canonical" href="' . esc_url($clean) . '">' . "\n";
             }
         }
 
-        // noindex для дублей вида ?order=... / ?csc-sw и пр. оставляем WordPress core.
+        // Meta-подтверждения сервисов вебмастеров (П10).
+        foreach ([
+            'google-site-verification'          => $s['gsc_verification'] ?? '',
+            'yandex-verification'               => $s['yandex_verification'] ?? '',
+            'msvalidate.01'                     => $s['bing_verification'] ?? '',
+        ] as $name => $val) {
+            $val = trim((string)$val);
+            if ($val !== '') {
+                echo '<meta name="' . esc_attr($name) . '" content="' . esc_attr($val) . '">' . "\n";
+            }
+        }
     }
 }
 
@@ -230,22 +409,33 @@ if (!function_exists('csc_seo_open_graph')) {
             $img = esc_url(get_the_post_thumbnail_url(null, 'large'));
         }
 
+        $og_types = ['calculator' => $s['og_type_calc'], 'cabinet' => $s['og_type_cabinet'], 'become_master' => $s['og_type_master']];
         $tags = [
-            'og:type'        => 'website',
-            'og:site_name'   => get_bloginfo('name'),
+            'og:type'        => $og_types[$kind] ?? 'website',
+            'og:site_name'   => ($s['og_site_name'] ?? '') !== '' ? $s['og_site_name'] : get_bloginfo('name'),
             'og:title'       => $title,
             'og:description' => $desc,
             'og:url'         => $url,
-            'og:locale'      => substr(get_locale(), 0, 5) ?: 'ru_RU',
-            'twitter:card'   => $img ? 'summary_large_image' : 'summary',
-            'twitter:title'  => $title,
-            'twitter:description' => $desc,
+            'og:locale'      => !empty($s['og_locale']) ? $s['og_locale'] : (substr(get_locale(), 0, 5) ?: 'ru_RU'),
         ];
-        if ($img) { $tags['og:image'] = $img; $tags['twitter:image'] = $img; }
+        if ($img) {
+            $tags['og:image'] = $img;
+            if (!empty($s['default_image_w'])) $tags['og:image:width']  = (int)$s['default_image_w'];
+            if (!empty($s['default_image_h'])) $tags['og:image:height'] = (int)$s['default_image_h'];
+            $tags['og:image:alt'] = $title;
+        }
+        if (!empty($s['twitter_enabled'])) {
+            $tags['twitter:card'] = $img ? 'summary_large_image' : 'summary';
+            $tags['twitter:title'] = $title;
+            $tags['twitter:description'] = $desc;
+            if ($img) $tags['twitter:image'] = $img;
+            if (!empty($s['twitter_site'])) $tags['twitter:site'] = $s['twitter_site'];
+        }
 
         foreach ($tags as $k => $v) {
             if ($v === '' || $v === null) continue;
-            echo '<meta property="' . esc_attr($k) . '" content="' . esc_attr($v) . '">' . "\n";
+            $prop = strpos($k, 'twitter:') === 0 ? 'name' : 'property';
+            echo '<meta ' . $prop . '="' . esc_attr($k) . '" content="' . esc_attr((string)$v) . '">' . "\n";
         }
     }
 }
@@ -256,93 +446,191 @@ if (!function_exists('csc_seo_open_graph')) {
 
 add_action('wp_head', 'csc_seo_json_ld', 7);
 if (!function_exists('csc_seo_json_ld')) {
+    /**
+     * П4. JSON-LD @graph: LocalBusiness (+geo/hours/rating/social), WebSite+SearchAction,
+     * ServiceCatalog (Offer по каждой услуге), BreadcrumbList, FAQPage.
+     * Каждый тип узла имеет отдельный переключатель в админке («SEO (CSC)» → вкладка «Микроразметка»).
+     */
     function csc_seo_json_ld() {
         if (!csc_seo_enabled('jsonld_enabled')) return;
         $kind = csc_seo_detect_page_kind();
         if (!$kind) return;
 
-        $graph = [];
-        $s = csc_seo_get_settings();
-
-        // --- LocalBusiness (все страницы плагина) ---
+        $s      = csc_seo_get_settings();
         $cities = csc_seo_cities_list();
-        $business = [
-            '@type' => $s['business_type'] ?: 'LocalBusiness',
-            'name'  => $s['business_name'] ?: get_bloginfo('name'),
-            'url'   => home_url('/'),
-        ];
-        if (!empty($s['business_phone'])) $business['telephone'] = $s['business_phone'];
-        if (!empty($s['business_email'])) $business['email'] = $s['business_email'];
-        if ($cities) {
-            $business['areaServed'] = array_map(fn($c) => ['@type' => 'City', 'name' => $c], $cities);
-        }
-        if (!empty($s['default_image'])) $business['image'] = $s['default_image'];
-        $graph[] = $business;
+        $graph  = [];
 
-        if ($kind === 'calculator') {
-            // --- OfferCatalog + Service для каждой услуги ---
-            $sections = (array)csc_get_sections();
-            $items    = (array)csc_get_items();
-            $offers = [];
-            foreach ($items as $item) {
-                if (empty($item['is_available'])) continue;
-                $sec = $sections[$item['section_id'] ?? ''] ?? null;
-                $offers[] = [
-                    '@type'    => 'Service',
-                    'name'     => $item['name'],
-                    'serviceType' => $sec ? $sec['name'] : '',
-                    'description' => csc_seo_item_text($item),
-                    'provider' => ['@type' => 'LocalBusiness', 'name' => $business['name']],
-                    'areaServed' => $cities ?: null,
-                    'offers' => [
-                        '@type'         => 'Offer',
-                        'price'         => (float)$item['price'],
-                        'priceCurrency' => 'RUB',
-                        'availability'  => 'https://schema.org/InStock',
-                    ],
+        // --- LocalBusiness ---
+        if (!empty($s['jsonld_localbusiness'])) {
+            $business = [
+                '@type' => $s['business_type'] ?: 'LocalBusiness',
+                'name'  => $s['business_name'] ?: get_bloginfo('name'),
+                'url'   => home_url('/'),
+            ];
+            if (!empty($s['business_phone'])) $business['telephone'] = $s['business_phone'];
+            if (!empty($s['business_email'])) $business['email'] = $s['business_email'];
+            if (!empty($s['opening_hours'])) {
+                $business['openingHours'] = $s['opening_hours'];
+            }
+            $area_src = trim((string)($s['business_area'] ?? ''));
+            $area = $area_src !== '' ? array_map('trim', explode(',', $area_src)) : $cities;
+            if ($area) {
+                $business['areaServed'] = array_map(fn($c) => ['@type' => 'City', 'name' => $c], $area);
+            }
+            if (!empty($s['geo_lat']) && !empty($s['geo_lng'])) {
+                $business['geo'] = [
+                    '@type'     => 'GeoCoordinates',
+                    'latitude'  => (float)$s['geo_lat'],
+                    'longitude' => (float)$s['geo_lng'],
                 ];
             }
-            $catalog = [
-                '@type'       => 'ServiceCatalog',
-                'name'        => 'Каталог услуг — ' . get_bloginfo('name'),
-                'hasOffer'    => array_values(array_filter($offers)),
-                'url'         => get_permalink(),
+            if (!empty($s['default_image'])) $business['image'] = $s['default_image'];
+            if (!empty($s['jsonld_social'])) {
+                $same = array_values(array_filter([
+                    $s['social_facebook'] ?? '', $s['social_instagram'] ?? '',
+                    $s['social_vk'] ?? '', $s['social_telegram'] ?? '', $s['social_youtube'] ?? '',
+                ]));
+                if ($same) $business['sameAs'] = $same;
+            }
+            // AggregateRating из данных модуля рейтингов мастеров (csc-master-ratings.php)
+            if (!empty($s['jsonld_reviews']) && function_exists('csc_get_master_ratings_data')) {
+                $sum = 0; $cnt = 0;
+                foreach ((array)csc_get_master_ratings_data() as $r) {
+                    if (!empty($r['reviews_count'])) {
+                        $sum += (float)$r['avg'] * (int)$r['reviews_count'];
+                        $cnt += (int)$r['reviews_count'];
+                    }
+                }
+                if ($cnt >= 3) {
+                    $business['aggregateRating'] = [
+                        '@type'       => 'AggregateRating',
+                        'ratingValue' => round($sum / $cnt, 1),
+                        'reviewCount' => $cnt,
+                        'bestRating'  => 5,
+                    ];
+                }
+            }
+            $graph[] = $business;
+        }
+
+        // --- WebSite + SearchAction (поиск по сайту) ---
+        if (!empty($s['jsonld_website']) && $kind === 'calculator') {
+            $calc_url = get_permalink();
+            $ws = [
+                '@type' => 'WebSite',
+                'name'  => get_bloginfo('name'),
+                'url'   => home_url('/'),
             ];
-            $graph[] = $catalog;
+            if ($calc_url) {
+                $param = rawurlencode($s['search_param'] ?: 'csc_q');
+                $ws['potentialAction'] = [[
+                    '@type'       => 'SearchAction',
+                    'target'      => ['@type' => 'EntryPoint', 'urlTemplate' => $calc_url . '?' . $param . '={search_term_string}'],
+                    'query-input' => 'required name=search_term_string',
+                ]];
+            }
+            $graph[] = $ws;
+        }
+
+        if ($kind === 'calculator') {
+            // --- ServiceCatalog с Offer по каждой услуге ---
+            if (!empty($s['jsonld_service_catalog'])) {
+                $sections = (array)csc_get_sections();
+                $items    = (array)csc_get_items();
+                $offers   = [];
+                $cap      = max(1, (int)($s['jsonld_service_max'] ?? 60));
+                foreach ($items as $item) {
+                    if (count($offers) >= $cap) break;
+                    if (!empty($s['ssr_only_available']) && empty($item['is_available'])) continue;
+                    $sec = $sections[$item['section_id'] ?? ''] ?? null;
+                    $offers[] = [
+                        '@type'       => 'Service',
+                        'name'        => $item['name'],
+                        'serviceType' => $sec ? $sec['name'] : '',
+                        'description' => csc_seo_item_text($item),
+                        'provider'    => ['@id' => rtrim(home_url('/'), '/') . '#business'],
+                        'offers'      => [
+                            '@type'         => 'Offer',
+                            'price'         => (float)($item['price'] ?? 0),
+                            'priceCurrency' => $s['price_currency'] ?: 'RUB',
+                            'availability'  => 'https://schema.org/InStock',
+                        ],
+                    ];
+                }
+                if ($offers) {
+                    $graph[] = [
+                        '@type'    => 'ServiceCatalog',
+                        'name'     => 'Каталог услуг — ' . get_bloginfo('name'),
+                        'url'      => get_permalink(),
+                        'hasOffer' => $offers,
+                    ];
+                }
+            }
 
             // --- BreadcrumbList ---
-            $graph[] = [
-                '@type' => 'BreadcrumbList',
-                'itemListElement' => [[
-                    '@type' => 'ListItem', 'position' => 1,
-                    'name' => 'Главная', 'item' => home_url('/'),
-                ], [
-                    '@type' => 'ListItem', 'position' => 2,
-                    'name' => get_the_title(), 'item' => get_permalink(),
-                ]],
-            ];
+            if (!empty($s['jsonld_breadcrumbs'])) {
+                $graph[] = [
+                    '@type' => 'BreadcrumbList',
+                    'itemListElement' => [[
+                        '@type' => 'ListItem', 'position' => 1,
+                        'name' => 'Главная', 'item' => home_url('/'),
+                    ], [
+                        '@type' => 'ListItem', 'position' => 2,
+                        'name' => get_the_title(), 'item' => get_permalink(),
+                    ]],
+                ];
+            }
+
+            // --- FAQ на калькуляторе ---
+            if (!empty($s['jsonld_faq']) && !empty($s['jsonld_faq_calc'])) {
+                $faq = csc_seo_build_faq_nodes('calculator');
+                if ($faq) $graph[] = $faq;
+            }
         }
 
-        if ($kind === 'become_master') {
-            $graph[] = [
-                '@type' => 'FAQPage',
-                'mainEntity' => [
-                    ['@type' => 'Question', 'name' => 'Как стать мастером?',
-                     'acceptedAnswer' => ['@type' => 'Answer', 'text' => 'Заполните анкету на этой странице: город, специализация, радиус выездной зоны. После модерации вы получите доступ в кабинет мастера с входящими заявками.']],
-                    ['@type' => 'Question', 'name' => 'В каких городах вы работаете?',
-                     'acceptedAnswer' => ['@type' => 'Answer', 'text' => 'Текущие города: ' . implode(', ', $cities) . '.']],
-                ],
-            ];
+        if ($kind === 'become_master' && !empty($s['jsonld_faq']) && !empty($s['jsonld_faq_master'])) {
+            $faq = csc_seo_build_faq_nodes('become_master');
+            if ($faq) $graph[] = $faq;
         }
 
-        $out = count($graph) === 1 ? $graph[0] : ['@context' => 'https://schema.org', '@graph' => $graph];
-        if (count($graph) > 1) { /* context уже в @graph-обёртке */ }
-        else { $out = array_merge(['@context' => 'https://schema.org'], $out); }
+        if (!$graph) return;
 
-        echo '<script type="application/ld+json">' . wp_json_encode($out, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . '</script>' . "\n";
+        if (count($graph) > 1 && !empty($s['jsonld_graph'])) {
+            $out = ['@context' => 'https://schema.org', '@graph' => $graph];
+            echo '<script type="application/ld+json">' . wp_json_encode($out, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . '</script>' . "\n";
+            return;
+        }
+        // без @graph — несколько отдельных блоков script (валидный вариант)
+        foreach ($graph as $node) {
+            echo '<script type="application/ld+json">'
+               . wp_json_encode(array_merge(['@context' => 'https://schema.org'], $node), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+               . '</script>' . "\n";
+        }
     }
 }
 
+if (!function_exists('csc_seo_build_faq_nodes')) {
+    /** FAQPage: типовые вопросы по ценам/городам/гарантии; редактируются фильтром csc_seo_faq_nodes. */
+    function csc_seo_build_faq_nodes($kind) {
+        $cities = csc_seo_cities_list();
+        $price  = csc_seo_price_from();
+        $pairs  = [];
+        if ($kind === 'calculator') {
+            $pairs[] = ['Как рассчитывается стоимость услуги?', 'Используйте онлайн-калькулятор на этой странице: выберите раздел и услуги — цена рассчитается мгновенно' . ($price ? '. Минимальный заказ ' . $price : '') . '.'];
+            $pairs[] = ['В каких городах вы работаете?', 'Текущие города обслуживания: ' . implode(', ', $cities) . '.'];
+            $pairs[] = ['Есть ли гарантия на работы?', 'Да, на все выполненные работы предоставляется гарантия. Условия гарантии указаны в заявке.'];
+        } else {
+            $pairs[] = ['Как стать мастером?', 'Заполните анкету на этой странице: город, специализация, радиус выездной зоны. После модерации вы получите доступ в кабинет мастера с входящими заявками.'];
+            $pairs[] = ['В каких городах вы работаете?', 'Текущие города: ' . implode(', ', $cities) . '.'];
+        }
+        $nodes = [];
+        foreach ($pairs as $p) {
+            $nodes[] = ['@type' => 'Question', 'name' => $p[0], 'acceptedAnswer' => ['@type' => 'Answer', 'text' => $p[1]]];
+        }
+        $nodes = apply_filters('csc_seo_faq_nodes', $nodes, $kind);
+        return $nodes ? ['@type' => 'FAQPage', 'mainEntity' => $nodes] : null;
+    }
+}
 // ============================================================
 // 5. XML-SITEMAP ПЛАГИНА: /csc-sitemap.xml
 //    Страницы WP + разделы/услуги (якорями на страницу калькулятора) + города.
@@ -351,7 +639,10 @@ if (!function_exists('csc_seo_json_ld')) {
 add_action('init', 'csc_seo_rewrite_rules', 9);
 if (!function_exists('csc_seo_rewrite_rules')) {
     function csc_seo_rewrite_rules() {
-        add_rewrite_rule('^csc-sitemap\.xml$', 'index.php?csc_sitemap=1', 'top');
+        $s = csc_seo_get_settings();
+        $path = trim((string)($s['sitemap_path'] ?? 'csc-sitemap.xml'), '/');
+        if ($path === '') $path = 'csc-sitemap.xml';
+        add_rewrite_rule('^' . preg_quote($path, '#') . '$', 'index.php?csc_sitemap=1', 'top');
     }
 }
 
@@ -364,73 +655,84 @@ if (!function_exists('csc_seo_query_vars')) {
 }
 
 add_action('template_redirect', 'csc_seo_sitemap_output', 1);
+if (!function_exists('csc_seo_build_sitemap_xml')) {
+    /** Генерация XML-карты (П5): состав URL настраивается по типам в админке. */
+    function csc_seo_build_sitemap_xml() {
+        $s = csc_seo_get_settings();
+        $calc_url   = csc_seo_find_shortcode_page_url('service_calculator');
+        $master_url = csc_seo_find_shortcode_page_url('csc_become_master');
+        $cab_url    = csc_seo_find_shortcode_page_url('csc_personal_cabinet');
+
+        $urls = [];
+        $now  = gmdate('Y-m-d');
+        if (!empty($s['sitemap_wp_pages'])) {
+            foreach (array_filter([$calc_url, $master_url, $cab_url]) as $u) {
+                $urls[] = ['loc' => $u, 'lastmod' => $now, 'changefreq' => 'daily', 'priority' => $u === $calc_url ? '1.0' : '0.7'];
+            }
+        }
+        $max = max(100, (int)($s['sitemap_max_urls'] ?? 5000));
+
+        if ($calc_url && !empty($s['sitemap_sections'])) {
+            foreach ((array)csc_get_sections() as $sid => $sec) {
+                if (count($urls) >= $max) break;
+                $urls[] = ['loc' => $calc_url . '#section-' . $sid, 'lastmod' => $now, 'changefreq' => 'weekly', 'priority' => '0.8'];
+            }
+        }
+        if ($calc_url && !empty($s['sitemap_items'])) {
+            foreach ((array)csc_get_items() as $iid => $item) {
+                if (count($urls) >= $max) break;
+                if (!empty($s['ssr_only_available']) && empty($item['is_available'])) continue;
+                $urls[] = ['loc' => $calc_url . '#item-' . $iid, 'lastmod' => $now, 'changefreq' => 'weekly', 'priority' => '0.6'];
+            }
+        }
+        if ($calc_url && !empty($s['sitemap_cities']) && function_exists('csc_get_cities')) {
+            foreach ((array)csc_get_cities() as $slug => $city) {
+                if (count($urls) >= $max) break;
+                if (!empty($city['active'])) {
+                    $urls[] = ['loc' => add_query_arg('csc_city', $slug, $calc_url), 'lastmod' => $now, 'changefreq' => 'daily', 'priority' => '0.9'];
+                }
+            }
+        }
+
+        $xml = '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
+        $xml .= '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . "\n";
+        foreach ($urls as $u) {
+            $xml .= '  <url><loc>' . esc_html($u['loc']) . '</loc>';
+            if (!empty($s['sitemap_lastmod']))    $xml .= '<lastmod>' . $u['lastmod'] . '</lastmod>';
+            if (!empty($s['sitemap_changefreq'])) $xml .= '<changefreq>' . $u['changefreq'] . '</changefreq>';
+            if (!empty($s['sitemap_priority']))   $xml .= '<priority>' . $u['priority'] . '</priority>';
+            $xml .= "</url>\n";
+        }
+        $xml .= '</urlset>' . "\n";
+        return $xml;
+    }
+}
+
 if (!function_exists('csc_seo_sitemap_output')) {
     function csc_seo_sitemap_output() {
         if (!isset($_GET['csc_sitemap']) && !get_query_var('csc_sitemap')) return;
         if (!csc_seo_enabled('sitemap_enabled')) return;
 
+        $s   = csc_seo_get_settings();
+        $ttl = max(60, (int)($s['sitemap_cache_ttl'] ?? 300));
+        $xml = get_transient('csc_seo_sitemap_xml');
+        if ($xml === false || $xml === '') {
+            $xml = csc_seo_build_sitemap_xml();
+            set_transient('csc_seo_sitemap_xml', $xml, $ttl);
+        }
+
         header('Content-Type: application/xml; charset=UTF-8');
         header('X-Robots-Tag: noindex, follow', true);
-
-        $calc_url = csc_seo_find_shortcode_page_url('service_calculator');
-        $master_url = csc_seo_find_shortcode_page_url('csc_become_master');
-        $cab_url = csc_seo_find_shortcode_page_url('csc_personal_cabinet');
-
-        $urls = [];
-        $now = gmdate('Y-m-d');
-        foreach (array_filter([$calc_url, $master_url, $cab_url]) as $u) {
-            $urls[] = ['loc' => $u, 'priority' => $u === $calc_url ? '1.0' : '0.7', 'changefreq' => 'daily'];
-        }
-
-        // Разделы и услуги — якорями на страницу калькулятора (id секций рендерятся как #section-{id})
-        if ($calc_url) {
-            foreach ((array)csc_get_sections() as $sid => $sec) {
-                $urls[] = ['loc' => $calc_url . '#section-' . $sid, 'priority' => '0.8', 'changefreq' => 'weekly'];
-            }
-        }
-
-        // Города — landing-фильтры (страница калькулятора + ?csc_city=slug)
-        if ($calc_url && function_exists('csc_get_cities')) {
-            foreach ((array)csc_get_cities() as $slug => $city) {
-                if (!empty($city['active'])) {
-                    $urls[] = ['loc' => add_query_arg('csc_city', $slug, $calc_url), 'priority' => '0.9', 'changefreq' => 'daily'];
-                }
-            }
-        }
-
-        echo '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
-        echo '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . "\n";
-        foreach ($urls as $u) {
-            echo "  <url><loc>" . esc_html($u['loc']) . "</loc>"
-               . "<lastmod>{$now}</lastmod>"
-               . "<changefreq>{$u['changefreq']}</changefreq>"
-               . "<priority>{$u['priority']}</priority></url>\n";
-        }
-        echo "</urlset>\n";
+        header('Cache-Control: public, max-age=' . $ttl);
+        echo $xml;
         exit;
-    }
-}
-
-if (!function_exists('csc_seo_find_shortcode_page_url')) {
-    /** Быстрый поиск опубликованной страницы, содержащей шорткод (кэш 12ч). */
-    function csc_seo_find_shortcode_page_url($shortcode) {
-        $key = 'csc_seo_page_' . md5($shortcode);
-        $url = get_transient($key);
-        if ($url !== false) return $url ?: null;
-        global $wpdb;
-        $id = $wpdb->get_var($wpdb->prepare(
-            "SELECT ID FROM {$wpdb->posts} WHERE post_type='page' AND post_status='publish' AND post_content LIKE %s LIMIT 1",
-            '%' . $wpdb->esc_like('[' . $shortcode) . '%'
-        ));
-        $url = $id ? (string)get_permalink((int)$id) : '';
-        set_transient($key, $url, 12 * HOUR_IN_SECONDS);
-        return $url !== '' ? $url : null;
     }
 }
 
 // Сброс кэша карты страниц/сайта при изменении каталога или городов.
 foreach (['update_option_csc_service_sections', 'update_option_csc_service_items', 'update_option_csc_cities'] as $csc_seo_hook) {
     add_action($csc_seo_hook, function () {
+        delete_transient('csc_seo_sitemap_xml');
         delete_transient('csc_seo_page_' . md5('service_calculator'));
         delete_transient('csc_seo_page_' . md5('csc_become_master'));
         delete_transient('csc_seo_page_' . md5('csc_personal_cabinet'));
@@ -454,9 +756,22 @@ if (!function_exists('csc_seo_robots_txt')) {
             $add .= "Sitemap: " . home_url('/csc-sitemap.xml') . "\n";
         }
         // Служебные экраны кабинета мастера и upsale-интерфейса — не для индексов
-        $add .= "Disallow: /*?csc_master_dashboard=1\n";
-        $add .= "Disallow: /*?csc_upsell=1\n";
-        $add .= "Disallow: /*&csc_token=\n";
+        if (!empty($s['robots_disallow_service'])) {
+            $add .= "Disallow: /*?csc_master_dashboard=1\n";
+            $add .= "Disallow: /*?csc_upsell=1\n";
+            $add .= "Disallow: /*&csc_token=\n";
+            $add .= "Disallow: /csc-sw.js\n";
+        }
+        // Пользовательские директивы (админка → «Sitemap и robots»)
+        $extra = trim((string)($s['robots_extra_lines'] ?? ''));
+        if ($extra !== '') {
+            foreach (preg_split('/\R/', $extra) as $line) {
+                $line = trim($line);
+                if ($line !== '' && preg_match('#^(Disallow|Allow|Crawl-delay|Sitemap|User-agent|Host):#i', $line)) {
+                    $add .= $line . "\n";
+                }
+            }
+        }
         return $output . $add;
     }
 }
@@ -465,13 +780,21 @@ if (!function_exists('csc_seo_robots_txt')) {
 add_action('send_headers', 'csc_seo_service_noindex_header');
 if (!function_exists('csc_seo_service_noindex_header')) {
     function csc_seo_service_noindex_header() {
-        if (is_admin()) return;
-        $svc = ['csc_master_dashboard', 'csc_upsell'];
-        foreach ($svc as $k) {
-            if (isset($_GET[$k])) {
-                header('X-Robots-Tag: noindex, nofollow', true);
-                return;
+        if (is_admin() || !csc_seo_enabled()) return;
+        $s = csc_seo_get_settings();
+        if (!empty($s['service_noindex'])) {
+            foreach (['csc_master_dashboard', 'csc_upsell'] as $k) {
+                if (isset($_GET[$k])) {
+                    header('X-Robots-Tag: noindex, nofollow', true);
+                    return;
+                }
             }
+        }
+        if (!empty($s['noindex_404']) && is_404()) {
+            header('X-Robots-Tag: noindex, follow', true);
+        }
+        if (!empty($s['noindex_search']) && is_search()) {
+            header('X-Robots-Tag: noindex, follow', true);
         }
     }
 }
@@ -484,42 +807,72 @@ if (!function_exists('csc_seo_service_noindex_header')) {
 
 add_filter('the_content', 'csc_seo_inject_ssr_catalog', 20);
 if (!function_exists('csc_seo_inject_ssr_catalog')) {
+    /**
+     * П6. Server-side каталог услуг внутри [service_calculator]: контент индексируется
+     * без выполнения JS. Подпункты (заголовки/цены/длительность/описания/noscript) —
+     * отдельные переключатели в админке на вкладке «SSR-каталог».
+     */
     function csc_seo_inject_ssr_catalog($content) {
         if (!csc_seo_enabled('ssr_catalog')) return $content;
         if (is_admin() || !is_main_query() || !is_singular()) return $content;
         if (strpos($content, '[service_calculator]') === false) return $content;
 
+        $s = csc_seo_get_settings();
         $sections = (array)csc_get_sections();
         $items    = (array)csc_get_items();
         if (!$sections) return $content;
 
-        $html = '<noscript><style>#csc-calculator .csc-section-tiles,#csc-calculator .csc-services-section{display:none!important}</style></noscript>';
-        $html .= '<div id="csc-catalog-ssr" class="csc-catalog-ssr" aria-hidden="false">';
-        $html .= '<h2>Наши услуги и цены</h2><ul class="csc-ssr-list">';
+        $lvl  = in_array($s['ssr_headings_level'] ?? 'h2', ['h2','h3','h4'], true) ? $s['ssr_headings_level'] : 'h2';
+        $sub  = $lvl === 'h2' ? 'h3' : ($lvl === 'h3' ? 'h4' : 'h5');
+
+        $html = '';
+        if (!empty($s['ssr_hide_noscript'])) {
+            $html .= '<noscript><style>#csc-calculator .csc-section-tiles,#csc-calculator .csc-services-section{display:none!important}</style></noscript>';
+        }
+        $html .= '<div id="csc-catalog-ssr" class="csc-catalog-ssr">';
+        $html .= "<{$lvl}>Наши услуги и цены</{$lvl}><ul class=\"csc-ssr-list\">";
         foreach ($sections as $sid => $sec) {
             $sec_desc = csc_seo_section_text($sec);
-            $html .= '<li class="csc-ssr-section"><h3 id="section-' . esc_attr($sid) . '">' . esc_html($sec['name']) . '</h3>';
-            if ($sec_desc !== $sec['name']) {
+            $html .= '<li class="csc-ssr-section">' . "<{$sub} id=\"section-" . esc_attr($sid) . '">' . esc_html($sec['name']) . "</{$sub}>";
+            if (!empty($s['ssr_show_desc']) && $sec_desc !== $sec['name']) {
                 $html .= '<p class="csc-ssr-section-desc">' . esc_html($sec_desc) . '</p>';
             }
             $html .= '<ul>';
             $any = false;
             foreach ($items as $iid => $item) {
-                if (empty($item['is_available'])) continue;
+                if (!empty($s['ssr_only_available']) && empty($item['is_available'])) continue;
                 if (($item['section_id'] ?? '') !== $sid) continue;
                 $any = true;
-                $html .= '<li id="item-' . esc_attr($iid) . '">'
-                      . '<span class="csc-ssr-item-name">' . esc_html($item['name']) . '</span> — '
-                      . '<span class="csc-ssr-item-price">' . esc_html(number_format((float)$item['price'], 0, ',', ' ') . ' ₽') . '</span>'
-                      . ', ' . esc_html(sprintf('%d мин', (int)($item['duration'] ?? 0)))
-                      . '</li>';
+                $line = '<li id="item-' . esc_attr($iid) . '">' . esc_html($item['name']);
+                if (!empty($s['ssr_show_prices'])) {
+                    $line .= ' — <span class="csc-ssr-item-price">' . esc_html(number_format((float)$item['price'], 0, ',', ' ') . ' ₽') . '</span>';
+                }
+                if (!empty($s['ssr_show_duration']) && !empty($item['duration'])) {
+                    $line .= ', ' . esc_html(sprintf('%d мин', (int)$item['duration']));
+                }
+                if (!empty($s['ssr_show_desc']) && !empty($item['seo_desc'])) {
+                    $line .= '. ' . esc_html($item['seo_desc']);
+                }
+                $html .= $line . '</li>';
             }
             if (!$any) $html .= '<li>Уточняйте наличие услуг в этом разделе.</li>';
             $html .= '</ul></li>';
         }
         $html .= '</ul></div>';
 
-        // Вставляем SSR-блок сразу после контейнера калькулятора.
+        // Вставка сразу после контейнера калькулятора (если блок найден), иначе — в конец контента.
+        if (!empty($s['ssr_after_shortcode'])) {
+            $pos = strpos($content, 'class="csc-calculator"');
+            if ($pos !== false) {
+                // ищем закрывающий </div> первого уровня контейнера — эвристика: перед последним </div> блока шорткода
+                $tail = substr($content, $pos);
+                $close = strrpos($tail, '</div>');
+                if ($close !== false) {
+                    $insert_at = $pos + $close + strlen('</div>');
+                    return substr($content, 0, $insert_at) . $html . substr($content, $insert_at);
+                }
+            }
+        }
         return $content . $html;
     }
 }
@@ -529,36 +882,68 @@ if (!function_exists('csc_seo_inject_ssr_catalog')) {
 // ============================================================
 
 add_action('wp_footer', 'csc_seo_footer_cross_links', 30);
-if (!function_exists('csc_seo_footer_cross_links')) {
-    function csc_seo_footer_cross_links() {
-        if (!csc_seo_enabled('cross_links')) return;
-        if (csc_seo_detect_page_kind() !== 'calculator') return;
+if (!function_exists('csc_seo_render_cross_links')) {
+    /** П7. HTML перелинковки; вызывается из wp_footer или the_content (position в настройках). */
+    function csc_seo_render_cross_links($echo = true) {
+        if (!csc_seo_enabled('cross_links')) return '';
+        if (csc_seo_detect_page_kind() !== 'calculator') return '';
         $calc = get_permalink();
-        if (!$calc) return;
+        if (!$calc) return '';
 
+        $s = csc_seo_get_settings();
         $sections = (array)csc_get_sections();
-        $cities = function_exists('csc_get_cities') ? (array)csc_get_cities() : [];
-        if (!$sections && !$cities) return;
+        $cities   = function_exists('csc_get_cities') ? (array)csc_get_cities() : [];
+        $show_sec = !empty($s['cross_sections']) && $sections;
+        $show_cty = !empty($s['cross_cities']) && $cities;
+        if (!$show_sec && !$show_cty) return '';
 
-        echo '<nav class="csc-seo-links" aria-label="Дополнительные ссылки" style="max-width:800px;margin:24px auto;padding:0 16px;font-size:13px;color:#64748b;">';
-        if ($sections) {
-            echo '<p><strong>Популярные категории:</strong> ';
+        $html = '<nav class="csc-seo-links" aria-label="Дополнительные ссылки" style="max-width:800px;margin:24px auto;padding:0 16px;font-size:13px;color:#64748b;">';
+        if ($show_sec) {
+            $cap = max(1, (int)($s['cross_max_sections'] ?? 12));
+            $html .= '<p><strong>' . esc_html($s['cross_sections_label'] ?: 'Популярные категории:') . '</strong> ';
             $links = [];
-            foreach ($sections as $sid => $sec) {
+            foreach (array_slice($sections, 0, $cap, true) as $sid => $sec) {
                 $links[] = '<a href="' . esc_url($calc . '#section-' . $sid) . '">' . esc_html($sec['name']) . '</a>';
             }
-            echo implode(', ', $links) . '</p>';
+            $html .= implode(', ', $links) . '</p>';
         }
-        if ($cities) {
-            echo '<p><strong>Мы работаем в городах:</strong> ';
+        if ($show_cty) {
+            $cap = max(1, (int)($s['cross_max_cities'] ?? 12));
+            $html .= '<p><strong>' . esc_html($s['cross_cities_label'] ?: 'Мы работаем в городах:') . '</strong> ';
             $links = [];
+            $i = 0;
+            $rel = !empty($s['cross_nofollow']) ? ' rel="nofollow"' : '';
             foreach ($cities as $slug => $city) {
+                if ($i >= $cap) break;
                 if (empty($city['active'])) continue;
-                $links[] = '<a href="' . esc_url(add_query_arg('csc_city', $slug, $calc)) . '">' . esc_html($city['name']) . '</a>';
+                $i++;
+                $links[] = '<a href="' . esc_url(add_query_arg('csc_city', $slug, $calc)) . '"' . $rel . '>' . esc_html($city['name']) . '</a>';
             }
-            echo implode(', ', $links) . '</p>';
+            $html .= implode(', ', $links) . '</p>';
         }
-        echo '</nav>';
+        $html .= '</nav>';
+
+        if ($echo) echo $html;
+        return $html;
+    }
+}
+if (!function_exists('csc_seo_footer_cross_links')) {
+    function csc_seo_footer_cross_links() {
+        $s = csc_seo_get_settings();
+        if (($s['cross_position'] ?? 'footer') !== 'footer') return;
+        csc_seo_render_cross_links(true);
+    }
+}
+
+// Вариант размещения «конец контента» — тот же блок, но до футера темы.
+add_filter('the_content', 'csc_seo_content_end_cross_links', 30);
+if (!function_exists('csc_seo_content_end_cross_links')) {
+    function csc_seo_content_end_cross_links($content) {
+        if (!csc_seo_enabled('cross_links')) return $content;
+        $s = csc_seo_get_settings();
+        if (($s['cross_position'] ?? 'footer') !== 'content_end') return $content;
+        if (strpos((string)$content, '[service_calculator]') === false) return $content;
+        return $content . csc_seo_render_cross_links(false);
     }
 }
 
@@ -569,7 +954,7 @@ if (!function_exists('csc_seo_footer_cross_links')) {
 add_filter('script_loader_tag', 'csc_seo_defer_vendor_scripts', 10, 3);
 if (!function_exists('csc_seo_defer_vendor_scripts')) {
     function csc_seo_defer_vendor_scripts($tag, $handle, $src) {
-        if (is_admin()) return $tag;
+        if (is_admin() || !csc_seo_enabled('cwv_enabled') || !csc_seo_enabled('defer_vendor_scripts')) return $tag;
         // html2canvas нужен только на шаге подтверждения — не блокирует LCP.
         if (strpos($src, 'assets/vendor/html2canvas/html2canvas.min.js') !== false) {
             if (strpos($tag, 'defer') === false) {
@@ -584,7 +969,7 @@ if (!function_exists('csc_seo_defer_vendor_scripts')) {
 add_filter('wp_get_attachment_image_attributes', 'csc_seo_image_alt_fallback', 10, 3);
 if (!function_exists('csc_seo_image_alt_fallback')) {
     function csc_seo_image_alt_fallback($attr, $attachment, $size) {
-        if (!csc_seo_enabled()) return $attr;
+        if (!csc_seo_enabled('cwv_enabled') || !csc_seo_enabled('img_alt_fallback')) return $attr;
         if (empty($attr['alt']) || trim($attr['alt']) === '') {
             $alt = trim((string)get_post_meta($attachment->ID, '_wp_attachment_image_alt', true));
             if ($alt === '') {
