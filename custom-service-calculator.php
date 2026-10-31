@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Custom Service Calculator
  * Description: Веб-приложение для расчёта и бронирования услуг с плиточным выбором разделов.
- * Version: 9.0.1
+ * Version: 9.1
  * Author: Александр Федотов
  * License: GPLv2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -18,7 +18,8 @@
  * - Крон: маршрутизация, напоминания, автобэкап
  * - Подключение новых модулей: шифрование, напоминания, история, бэкап
  * - Защита директории загрузок
- * - Версия плагина 9.0.1 (Web Push RFC 8291, routing timeouts, админка заявок, SW)
+ * - Версия плагина 9.1 (быстрое меню ⋮: «Стать мастером» / «Личный кабинет»;
+ *   ранее 9.0.1 — Web Push RFC 8291, routing timeouts, админка заявок, SW)
  */
 
 if (!defined('ABSPATH')) exit;
@@ -28,7 +29,7 @@ if (!defined('ABSPATH')) exit;
 // ============================================================
 define('CSC_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('CSC_PLUGIN_URL', plugin_dir_url(__FILE__));
-define('CSC_PLUGIN_VERSION', '9.0.1');
+define('CSC_PLUGIN_VERSION', '9.1');
 define('CSC_DB_VERSION', '2.3'); // 2.3: индексы idx_master_id / idx_current_candidate / idx_date для SQL-выборок заказов (Кэш заказов); 2.2: перенос миграций БД в admin_init — колонки создаются при ОБНОВЛЕНИИ плагина, а не только при активации
 
 // 3.5: Словарь статусов — константы нужны уже в хуке активации (csc_migrate_statuses_to_latin)
@@ -484,6 +485,10 @@ require_once CSC_PLUGIN_DIR . 'includes/csc-notification-triggers.php';
 
 // Web Push уведомления (VAPID)
 require_once CSC_PLUGIN_DIR . 'includes/csc-push.php';
+
+// Быстрое меню плагина (⋮): «Стать мастером» + «Личный кабинет».
+// Подключается до шорткодов-хостов (калькулятор/кабинет вставляют его assets).
+require_once CSC_PLUGIN_DIR . 'includes/csc-quick-menu.php';
 
 
 // Копирование при активации

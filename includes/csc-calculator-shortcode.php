@@ -1565,6 +1565,7 @@ function csc_calculator_shortcode() {
 }
 </style>
 <div id="csc-calculator" data-theme="light">
+<?php if (function_exists('csc_quick_menu_assets')) csc_quick_menu_assets(); ?>
 <button id="csc-theme-toggle" class="csc-theme-toggle" aria-label="Переключить тему">🌙</button>
 <div class="csc-toast" id="csc-toast"></div>
 <div class="csc-loader" id="csc-loader">
@@ -1629,6 +1630,9 @@ document.addEventListener('DOMContentLoaded', function() {
     function applyTheme(theme) {
         calcContainer.setAttribute('data-theme', theme);
         localStorage.setItem('csc_calc_theme', theme);
+        // Быстрое меню (⋮) наследует тему: data-theme на <body> активирует
+        // селектор [data-theme="dark"] в его инлайн-стилях.
+        document.body.setAttribute('data-theme', theme);
         themeBtn.innerHTML = theme === 'dark' ? '☀️' : '🌙';
     }
 

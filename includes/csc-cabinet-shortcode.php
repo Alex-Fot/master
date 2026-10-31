@@ -411,6 +411,7 @@ function csc_personal_cabinet_shortcode() {
 </style>
 
 <div id="csc-cabinet">
+    <?php if (function_exists('csc_quick_menu_assets')) csc_quick_menu_assets(); ?>
     <div class="csc-toast" id="csc-toast"></div>
 
     <!-- Кнопка уведомлений клиента -->
