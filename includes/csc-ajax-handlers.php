@@ -1495,9 +1495,20 @@ if (!function_exists('csc_bulk_update_status_handler')) {
 
         foreach ($order_numbers as $num) {
             if (isset($all_orders[$num])) {
+                // ИСПРАВЛЕНО (корневая причина бага массового обновления): сохранение шло
+                // из УСТАРЕВШЕГО кэшированного снимка всего списка ($all_orders). При persistent
+                // object cache (Redis/Memcached) и TTL 5 мин устаревший объект перезаписывал
+                // свежие данные заказа целиком (status возвращался к старому) — визуально
+                // «ничего не происходит». Перечитываем актуальную строку заказа ПРЯМО из БД
+                // (csc_get_order, минуя кэш списка), берём из неё old_status и мутируем
+                // только нужные поля.
+                $fresh_bulk = function_exists('csc_get_order') ? csc_get_order($num) : null;
+                if (is_array($fresh_bulk)) {
+                    $all_orders[$num] = $fresh_bulk;
+                }
                 $old_status = $all_orders[$num]['status'] ?? CSC_STATUS_PENDING;
                 $all_orders[$num]['status'] = $new_status;
-                
+
                 if ($new_status === CSC_STATUS_CANCELLED) {
                     $all_orders[$num]['routing_status'] = 'cancelled';
                     $all_orders[$num]['cancelled_at'] = current_time('mysql');
@@ -1511,16 +1522,6 @@ if (!function_exists('csc_bulk_update_status_handler')) {
                     }
                 }
 
-                // ИСПРАВЛЕНО (корневая причина бага): сохранение шло из УСТАРЕВШЕГО кэшированного
-                // снимка всего списка ($all_orders). При persistent object cache (Redis/Memcached)
-                // и TTL 5 мин устаревший объект перезаписывал свежие данные заказа целиком
-                // (status возвращался к старому + терялись payment_status/paid_at/files) —
-                // визуально «ничего не происходит». Теперь перечитываем актуальный заказ
-                // и мутируем только нужные поля.
-                $fresh = function_exists('csc_get_order') ? csc_get_order($num) : null;
-                if (is_array($fresh)) {
-                    $all_orders[$num] = $fresh;
-                }
                 // Синхронизация с единичным изменением статуса (admit manual override for routing)
                 if (in_array($new_status, [CSC_STATUS_PROCESSING, CSC_STATUS_COMPLETED], true) && ($all_orders[$num]['routing_status'] ?? '') === 'searching') {
                     $all_orders[$num]['routing_status'] = 'manual_override';
