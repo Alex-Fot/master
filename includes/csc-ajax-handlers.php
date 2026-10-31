@@ -23,6 +23,7 @@ if (!function_exists('csc_get_form_data_handler')) {
             $items_flat[$item_id] = [
                 'section_id' => $item['section_id'],
                 'name' => $item['name'],
+                'seo_desc' => (string)($item['seo_desc'] ?? ''), // [CSC SEO] для title/aria карточек и микроразметки
                 'price' => (float)$item['price'],
                 'duration' => (int)$item['duration'],
                 'is_available' => true

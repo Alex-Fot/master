@@ -93,6 +93,10 @@ if (!function_exists('csc_uninstall_cleanup')) {
             'csc_moderation_settings',
             // Шифрование и безопасность
             'csc_token_encrypted',
+            // SEO-модуль (csc-seo.php)
+            'csc_seo_settings',
+            'csc_seo_desc_map',
+            'csc_seo_rules_ver',
         ];
 
         foreach ($csc_options as $option_name) {

@@ -1,5 +1,12 @@
 === Custom Service Calculator — Changelog ===
 
+== 9.3 ==
+* NEW: промышленный SEO-модуль includes/csc-seo.php — meta title/description (шаблоны с %sitename%/%cities%/%price_from%), Open Graph/Twitter Card, JSON-LD (LocalBusiness + ServiceCatalog/Service/Offer + BreadcrumbList + FAQPage), XML-sitemap /csc-sitemap.xml (страницы шорткодов, якоря разделов, города ?csc_city=), robots.txt (Sitemap + Disallow служебных экранов dashboard/upsell/token), X-Robots-Tag noindex для GET-экранов.
+* NEW: SSR-каталог услуг внутри [service_calculator] (#csc-catalog-ssr, H2/H3 с id-якорями, цены) — контент индексируется без исполнения JS; noscript-фолбэк.
+* NEW: админка «Настройки → SEO (CSC)» с переключателями подмодулей и LocalBusiness-карточкой; колонки «SEO-описание» в «Разделы (CSC)»/«Услуги (CSC)» (хранение csc_seo_desc_map, слияние через фильтры csc_get_sections_result/csc_get_items_result).
+* NEW: footer-перелинковка категорий/городов; defer html2canvas (Core Web Vitals); alt-fallback изображений; canonical для страниц плагина.
+* TWEAK: AJAX csc_get_form_data отдаёт seo_desc; карточки услуг/плитки разделов получают title/role/tabindex; readme Tags расширены; uninstall чистит csc_seo_* опции.
+
 == 9.0.1 ==
 * Web Push (CRITICAL): шифрование payload приведено к канону RFC 8291/8188 — info-строка "WebPush: info\0" + UAPublicKey||ASPublicKey, salt через HKDF-SHA256, padding до record_size; раньше браузеры не могли расшифровать сообщения (нестандартный секрет "WebPush-AESGCM\0"). Roundtrip проверен против Python-эталона http_ece (движок pywebpush).
 * Web Push (HIGH): исправлен вызов openssl_pkey_derive() — лишний 4-й аргумент приводил к TypeError на PHP 8 при первой же отправке push.
@@ -47,3 +54,4 @@
 * E-mail-уведомления и напоминания; крон: маршрутизация, напоминания, автобэкап.
 * Шифрование чувствительных опций (csc-crypto), защита директории загрузок.
 * Корректный uninstall.php: удаление таблиц, опций csc_*, транзиентов и крон-задач.
+

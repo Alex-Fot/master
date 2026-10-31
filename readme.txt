@@ -1,6 +1,6 @@
 === Custom Service Calculator ===
 Contributors: afedotov
-Tags: calculator, booking, orders, services, marketplace
+Tags: calculator, booking, orders, services, marketplace, seo, schema, sitemap, local-business, price-estimator
 Requires at least: 6.0
 Tested up to: 6.8
 Requires PHP: 7.4
@@ -22,6 +22,9 @@ Custom Service Calculator (CSC) — это плагин WordPress для ком�
 * **Маршрутизация заявок** — распределение между мастерами по городам/специализациям, таймауты и резервная очередь.
 * **Платежи** — интеграция платёжных провайдеров (расширяемый интерфейс), вебхуки, проверка статуса оплаты по крону; финансовый учёт (транзакции, ledger, счета).
 * **Админка** — управление разделами, услугами, сотрудниками, заявками, скидками, городами; аналитика; импорт/экспорт; отзывы; бэкапы.
+* **SEO из коробки** — meta title/description с токенами (город, «от … ₽»), Open Graph,
+  JSON-LD (LocalBusiness/Service/Offer/FAQ/Breadcrumbs), XML-карта сайта `/csc-sitemap.xml`,
+  серверный рендер каталога услуг (индексация без JS), SEO-описания разделов и услуг.
 * **Уведомления** — e-mail, Telegram-бот, push (Web Push), напоминания о статусе заявки.
 * **Геокодер** — определение адреса через OpenStreetMap Nominatim (с соблюдением лимитов OSM Usage Policy: единый User-Agent и задержка ≥1 сек между запросами).
 
