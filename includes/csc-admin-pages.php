@@ -456,6 +456,29 @@ function csc_main_settings_page() {
                     <th>ID Чата Админа:</th>
                     <td><input type="text" name="telegram_chat_id" value="<?php echo esc_attr($s['telegram_chat_id'] ?? ''); ?>" class="regular-text"></td>
                 </tr>
+                <?php
+                // ИСПРАВЛЕНО (диагностика «админу ничего не приходило в Telegram»):
+                // статус конфигурации и отправки показываем прямо на странице настроек.
+                $csc_tg_diag_token_ok = !empty($display_token);
+                $csc_tg_diag_chat_ok  = !empty($s['telegram_chat_id']);
+                $csc_tg_diag_last     = get_option('csc_tg_last_send_result', []);
+                ?>
+                <tr>
+                    <th>Статус Telegram:</th>
+                    <td>
+                        <?php if ($csc_tg_diag_token_ok && $csc_tg_diag_chat_ok): ?>
+                            <span style="color:#10b981;font-weight:600;">✅ Токен и chat_id заданы</span>
+                        <?php else: ?>
+                            <span style="color:#d63638;font-weight:600;">⚠️<?php echo $csc_tg_diag_token_ok ? '' : ' токен бота НЕ задан'; ?><?php echo $csc_tg_diag_chat_ok ? '' : ' / ID чата администратора НЕ задан'; ?></span>
+                        <?php endif; ?>
+                        <?php if (!empty($csc_tg_diag_last['at'])): ?>
+                            <p class="description">Последняя отправка: <?php echo esc_html($csc_tg_diag_last['at']); ?> —
+                            <?php echo esc_html($csc_tg_diag_last['status'] ?? '?'); ?>
+                            <?php if (!empty($csc_tg_diag_last['error'])): ?>: <?php echo esc_html($csc_tg_diag_last['error']); ?><?php endif; ?>.</p>
+                        <?php endif; ?>
+                        <p class="description">Уведомления администратору («Новая заявка», «Нет мастеров» и т.д.) отправляются ботом в чат из поля «ID Чата Админа». Убедитесь, что вы написали боту любое сообщение и ID взят оттуда (формат <code>123456789</code> или <code>-1001234567890</code> для групп).</p>
+                    </td>
+                </tr>
             </table>
         </div>
 

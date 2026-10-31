@@ -840,7 +840,13 @@ if (!function_exists('csc_admin_restart_routing')) {
         $all_orders[$order_number]['tg_message_id'] = null;
         $all_orders[$order_number]['routing_started_at'] = time();
         $all_orders[$order_number]['routing_attempts'] = 0;
-        $all_orders[$order_number]['status'] = CSC_STATUS_PENDING;   // возвращаем в «Ожидают» мастеру
+        // ИСПРАВЛЕНО: при перезапуске поиска статус должен отражать активный
+        // поиск ('searching'), а не 'pending'. Раньше здесь выставлялся
+        // CSC_STATUS_PENDING и сразу после этого вызывался
+        // csc_route_order_to_next(), который начинался с проверки
+        // status !== 'searching' и молча выходил (route_skipped) — оффер
+        // первому кандидату никогда не отправлялся, заявки «зависали в ожидает».
+        $all_orders[$order_number]['status'] = CSC_STATUS_SEARCHING;
 
         csc_update_order($order_number, $all_orders[$order_number]);
 
