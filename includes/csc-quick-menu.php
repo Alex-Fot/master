@@ -122,20 +122,13 @@ if (!function_exists('csc_quick_menu_build_urls')) {
 // ============================================================
 if (!function_exists('csc_quick_menu_print_assets')) {
     function csc_quick_menu_print_assets() {
-        static $printed = false;
-        if ($printed) return;
-        $printed = true;
-
-        // [9.1.3] Двойная доставка активов:
-        //  (a) инлайн — прямо в разметку шорткода (работает даже если хуки
-        //      wp_head/wp_footer уже «прошли» или страница отдаётся из кэша);
-        //  (b) через wp_head/wp_footer — на случай, если фильтры контента
-        //      (конструкторы страниц, плагины оптимизации) вырежут <style>/<script>
-        //      из тела страницы. Дубликат идемпотентен: boot защищён флагом
-        //      CSC_QUICK_MENU_BOOTED, повторное добавление кликеров игнорируется.
+        // [9.1.4] Активы всегда доставляются через wp_head/wp_footer (см.
+        // csc_quick_menu_bootstrap()). Инлайн-дубликат внутри буфера шорткода
+        // убран: фильтры контента (Elementor/кэш-плагины) вырезали <style> и
+        // <script> из post_content — на боевой странице CSS отсутствовал
+        // (document.body.innerHTML.includes('csc_quick_menu_css') === false),
+        // а значит кнопка не имела pointer-events и клик «не работал».
         csc_quick_menu_register_hooks();
-        echo csc_quick_menu_css_markup();
-        echo csc_quick_menu_js_markup();
     }
 }
 
@@ -155,13 +148,125 @@ if (!function_exists('csc_quick_menu_print_js_hook')) {
     function csc_quick_menu_print_js_hook() { echo csc_quick_menu_js_markup(); }
 }
 
+// ============================================================
+// 2a. [9.1.4] Глобальная доставка меню — НЕ зависит от исполнения
+//     шорткода. Раньше меню рендерилось только внутри буфера
+//     шорткода ([service_calculator] и т.п.). Если страница отдаётся
+//     из page-кэша / конструктора, который не прогоняет the_content
+//     через шорткод-фильтр, разметка меню отсутствовала в HTML, а JS
+//     (из wp_footer) молчал — «ничего не происходит». Теперь:
+//      - автодетект страниц плагина по ID настроек и meta-флагам;
+//      - меню принудительно вставляется в <body> через wp_footer,
+//        если в отрендеренном HTML его ещё нет (идемпотентно).
+// ============================================================
+if (!function_exists('csc_quick_menu_target_page_ids')) {
+    function csc_quick_menu_target_page_ids() {
+        $ids   = [];
+        $map   = []; // id => section
+        $s     = get_option('csc_main_settings', []);
+        $pairs = [
+            ['calc'    => absint($s['calculator_page_id'] ?? 0)],
+            ['cabinet' => absint(get_option('csc_cabinet_page_id', 0))],
+            ['master'  => absint(get_option('csc_master_reg_page_id', 0)) ?: absint($s['master_page_id'] ?? 0)],
+        ];
+        foreach ($pairs as $p) { foreach ($p as $sec => $id) { if ($id && !isset($map[$id])) { $map[$id] = $sec; $ids[] = $id; } } }
+        $meta_map = [
+            'csc_calc_page_flag'       => 'calculator',
+            'csc_cabinet_page_flag'    => 'cabinet',
+            'csc_master_reg_page_flag' => 'master',
+        ];
+        $q = get_posts([
+            'post_type' => ['page', 'landing-page'], 'posts_per_page' => 20,
+            'meta_query' => [[ 'relation' => 'OR' ] + array_map(function ($k) {
+                return ['key' => $k, 'value' => '1'];
+            }, array_keys($meta_map))],
+            'fields' => 'ids',
+        ]);
+        foreach ($q as $pid) {
+            if (isset($map[$pid])) continue;
+            foreach ($meta_map as $k => $sec) {
+                if (get_post_meta($pid, $k, true) === '1') { $map[$pid] = $sec; break; }
+            }
+            $ids[] = $pid;
+        }
+        return ['ids' => array_values(array_unique($ids)), 'map' => $map];
+    }
+}
+
+if (!function_exists('csc_quick_menu_current_section')) {
+    /** Определяет раздел текущей страницы: data-атрибут > настройки ID > поиск шорткода. */
+    function csc_quick_menu_current_section() {
+        $pid = get_queried_object_id();
+        if (!$pid) return null;
+        $t = csc_quick_menu_target_page_ids();
+        if (isset($t['map'][$pid])) return $t['map'][$pid];
+        // Фолбэк: контент страницы содержит наш шорткод?
+        $content = (string) get_post_field('post_content', $pid);
+        if (has_shortcode($content, 'service_calculator') || strpos($content, '[service_calculator') !== false) return 'calculator';
+        if (has_shortcode($content, 'csc_personal_cabinet') || strpos($content, '[csc_personal_cabinet') !== false) return 'cabinet';
+        if (has_shortcode($content, 'csc_become_master') || strpos($content, '[csc_become_master') !== false) return 'master';
+        return null;
+    }
+}
+
+if (!function_exists('csc_quick_menu_should_render')) {
+    function csc_quick_menu_should_render() {
+        if (is_admin()) return false;
+        // [9.1.4] По умолчанию меню рендерится на ВСЕХ фронтенд-страницах —
+        // раньше оно зависело от исполнения шорткода/автодетекта, и на боевых
+        // страницах (Elementor + кэш) разметка отсутствовала полностью.
+        // Отключить: add_filter('csc_quick_menu_force_all', '__return_false');
+        if (!apply_filters('csc_quick_menu_force_all', true)) {
+            return csc_quick_menu_current_section() !== null;
+        }
+        return true;
+    }
+}
+
+if (!function_exists('csc_quick_menu_footer_markup')) {
+    function csc_quick_menu_footer_markup() {
+        if (!csc_quick_menu_should_render()) return;
+        // Разметка с data-csc-page — для точного определения раздела на клиенте.
+        $section = (string) (csc_quick_menu_current_section() ?: 'calculator');
+        echo '<div class="csc-qm-wrap" data-csc-page="' . esc_attr($section) . '">' . csc_quick_menu_inner_markup($section) . '</div>';
+    }
+}
+
+if (!function_exists('csc_quick_menu_bootstrap')) {
+    function csc_quick_menu_bootstrap() {
+        if (!function_exists('add_action')) return;
+        // Дубль CSS в wp_head идемпотентен: <style id="csc-quick-menu-css"> — браузер
+        // применит второй такой же блок так же, вреда нет. Приоритет 5 — раньше
+        // оптимизаторов, вырезающих вывод из wp_head/wp_footer.
+        add_action('wp_head',   'csc_quick_menu_print_css_hook', 5);
+        add_action('wp_footer', 'csc_quick_menu_print_js_hook', 50);
+        add_action('wp_footer', 'csc_quick_menu_force_markup_hook', 60);
+    }
+}
+if (!function_exists('csc_quick_menu_force_markup_hook')) {
+    /**
+     * [9.1.4] Принудительная вставка меню в конец <body>, если shortcode-рендер
+     * не состоялся (кэш страницы/конструктор). Идемпотентность обеспечивает JS:
+     * дубликаты .csc-qm схлопываются, обработчики навешиваются один раз.
+     */
+    function csc_quick_menu_force_markup_hook() {
+        if (!csc_quick_menu_should_render()) return;
+        global $csc_quick_menu_rendered_by_shortcode;
+        if (!empty($csc_quick_menu_rendered_by_shortcode)) return; // шорткод уже отдал разметку
+        csc_quick_menu_footer_markup();
+    }
+}
+
 if (!function_exists('csc_quick_menu_css_markup')) {
     function csc_quick_menu_css_markup() {
         ob_start();
         ?>
 <style id="csc-quick-menu-css">
 /* ===== Быстрое меню «⋮» — цвета наследуют тему контейнера ===== */
-.csc-qm-wrap{position:absolute;top:14px;left:0;right:0;height:0;z-index:99998;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
+/* [9.1.4] Обёртка — position:fixed: не зависит от position:relative
+   родительского контейнера темы/конструктора (Elementor-секции, flex-контейнеры
+   страницы регистрации и т.п.) — меню гарантированно вверху окна. */
+.csc-qm-wrap{position:fixed;top:14px;left:0;right:0;height:0;z-index:99998;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;pointer-events:none}
 .csc-qm{--qm-bg:rgba(255,255,255,.78);--qm-fg:#1e293b;--qm-br:rgba(15,23,42,.14);--qm-ring:rgba(59,130,246,.35);--qm-accent:#3b82f6;--qm-hover:rgba(59,130,246,.10);position:absolute;left:50%;transform:translateX(-50%);top:0;pointer-events:auto;background:var(--qm-bg);border:1px solid var(--qm-br);border-radius:999px;box-shadow:0 6px 18px rgba(15,23,42,.10);display:flex;align-items:center;height:44px;padding:0 4px;backdrop-filter:blur(12px) saturate(160%);-webkit-backdrop-filter:blur(12px) saturate(160%);transition:box-shadow .25s ease,border-color .25s ease;max-width:min(94vw,520px)}
 .csc-qm.qm-placed{left:0;transform:none}
 [data-theme="dark"] .csc-qm,.csc-qm[data-theme="dark"]{--qm-bg:rgba(15,23,42,.72);--qm-fg:#f1f5f9;--qm-br:rgba(255,255,255,.16);--qm-ring:rgba(96,165,250,.35);--qm-accent:#60a5fa;--qm-hover:rgba(96,165,250,.14);box-shadow:0 6px 18px rgba(0,0,0,.45)}
@@ -253,7 +358,7 @@ if (!function_exists('csc_quick_menu_js_markup')) {
 (function(){
     'use strict';
     var DBG = window.cscQmDbg = window.cscQmDbg || {};
-    DBG.loaded = true; DBG.booted = false; DBG.err = DBG.err || null;
+    DBG.loaded = true; DBG.booted = false; DBG.handlers = DBG.handlers || 0; DBG.err = DBG.err || null;
     try {
     if (window.CSC_QUICK_MENU_BOOTED) return;
     window.CSC_QUICK_MENU_BOOTED = true;
@@ -367,6 +472,20 @@ if (!function_exists('csc_quick_menu_js_markup')) {
         toggle.addEventListener('pointercancel', endDrag);
         window.addEventListener('resize', function(){ place(); });
 
+        /* ---------- [9.1.4] Поправка подсветки по data-csc-page обёртки ----------
+           Если сервер не смог определить раздел (конструктор/пустые настройки ID),
+           inner markup помечен data-section="calculator"; обёртка шорткода несёт
+           точное значение — переклеиваем current-состояние на клиенте. */
+        var wsec = wrap && wrap.getAttribute ? wrap.getAttribute('data-csc-page') : null;
+        if (wsec && qm.getAttribute('data-section') !== wsec) {
+            qm.setAttribute('data-section', wsec);
+            each('.csc-qm-item', function(it){
+                var k = it.getAttribute('data-key');
+                var isCur = (k === 'master' && wsec === 'master') || (k === 'cabinet' && wsec === 'cabinet');
+                if (isCur) it.setAttribute('data-current', '1'); else it.removeAttribute('data-current');
+            });
+        }
+
         /* ---------- логика активного раздела ----------
            Раздел посетителя НЕ активен: его значок заменён НА СЕРВЕРЕ на
            переход к калькулятору (href=калькулятор, data-current="1").
@@ -387,6 +506,20 @@ if (!function_exists('csc_quick_menu_js_markup')) {
     }
 
     function boot(){
+        // [9.1.4] Схлопывание дубликатов: разметка меню может прийти И из
+        // шорткода, И из принудительной вставки wp_footer — оставляем один
+        // экземпляр (последний, footer-ный), остальные удаляем вместе с их
+        // обёртками .csc-qm-wrap.
+        var all = document.querySelectorAll('.csc-qm');
+        if (all.length > 1) {
+            for (var i = 0; i < all.length - 1; i++) {
+                var w = all[i].parentNode;
+                all[i].remove();
+                // если обёртка опустела — убираем и её
+                if (w && w.classList && w.classList.contains('csc-qm-wrap') && !w.querySelector('.csc-qm')) w.remove();
+            }
+            DBG.deduped = (DBG.deduped || 0) + (all.length - 1);
+        }
         each('.csc-qm', initMenu);
         DBG.booted = true;
     }
@@ -432,50 +565,41 @@ if (!function_exists('csc_quick_menu_icons')) {
     }
 }
 
-if (!function_exists('csc_render_quick_menu')) {
-    /**
-     * $section = 'calculator' | 'cabinet' — на каком разделе идёт рендер.
-     * Значок текущего раздела НЕ АКТИВЕН как раздел: он подменён (на сервере)
-     * на переход к странице калькулятора («Рассчитать услугу»).
-     */
-    function csc_render_quick_menu($section = 'calculator') {
-        $urls  = csc_quick_menu_build_urls();
-        // [9.1.3] Подсветка текущего раздела: явный $section + резервная сверка
-        // page_id страниц меню с текущей страницей (has_shortcode не работает для
-        // Gutenberg-блоков — без этой сверки калькулятор считался «не текущим»).
-        if (!empty($urls['page_id'])) {
+// ============================================================
+// 3b. [9.1.4] Внутренняя разметка меню (без обёртки .csc-qm-wrap).
+//     Используется и шорткод-рендером, и принудительной вставкой
+//     в wp_footer. Позиционирование обёртки — fixed (не зависит от
+//     position:relative родительского контейнера темы/конструктора).
+// ============================================================
+if (!function_exists('csc_quick_menu_inner_markup')) {
+    function csc_quick_menu_inner_markup($section = '') {
+        // [9.1.4] Пустая $section = «сервер не определил раздел» → фолбэк
+        // 'calculator'; JS поправит подсветку по data-csc-page обёртки.
+        $guessed = false;
+        if (!is_string($section) || $section === '') { $section = 'calculator'; $guessed = true; }
+        $urls = csc_quick_menu_build_urls();
+        if (!$guessed && !empty($urls['page_id'])) {
             $pid      = (int) $urls['page_id'];
-            $cab_page = absint(get_option('csc_cabinet_page_id', 0));
-            $calc_pid = csc_quick_menu_find_shortcode_page('service_calculator');
-            $mas_pid  = csc_quick_menu_find_shortcode_page('csc_become_master');
-            if ($cab_page && $cab_page === $pid)                $section = 'cabinet';
-            elseif ($mas_pid && $mas_pid === $pid)              $section = 'master';
-            elseif ($calc_pid && $calc_pid === $pid)            $section = 'calculator';
+            $t        = csc_quick_menu_target_page_ids();
+            $sec_byid = $t['map'][$pid] ?? null;
+            if ($sec_byid) {
+                $section = $sec_byid;
+            } else {
+                $cab_page = absint(get_option('csc_cabinet_page_id', 0));
+                $calc_pid = csc_quick_menu_find_shortcode_page('service_calculator');
+                $mas_pid  = csc_quick_menu_find_shortcode_page('csc_become_master');
+                if ($cab_page && $cab_page === $pid)     $section = 'cabinet';
+                elseif ($mas_pid && $mas_pid === $pid)   $section = 'master';
+                elseif ($calc_pid && $calc_pid === $pid) $section = 'calculator';
+            }
         }
-        $items = [];
-
-        // 1) Стать мастером
-        $items[] = [
-            'key'   => 'master',
-            'href'  => $urls['master'],
-            'tip'   => 'Стать мастером',
-            'icon'  => 'master',
-            'cur'   => ($section === 'master'),
+        $items = [
+            ['key' => 'master',  'href' => $urls['master'],  'tip' => 'Стать мастером',  'icon' => 'master',  'cur' => ($section === 'master')],
+            ['key' => 'cabinet', 'href' => $urls['cabinet'], 'tip' => 'Личный кабинет', 'icon' => 'cabinet', 'cur' => ($section === 'cabinet')],
         ];
-        // 2) Личный кабинет
-        $items[] = [
-            'key'   => 'cabinet',
-            'href'  => $urls['cabinet'],
-            'tip'   => 'Личный кабинет',
-            'icon'  => 'cabinet',
-            'cur'   => ($section === 'cabinet'),
-        ];
-
         ob_start();
-        csc_quick_menu_print_assets();
         ?>
-<div class="csc-qm-wrap">
-    <div class="csc-qm csc-qm-side-right" data-page-id="<?php echo (int) $urls['page_id']; ?>" role="navigation" aria-label="Быстрое меню">
+    <div class="csc-qm csc-qm-side-right" data-page-id="<?php echo (int) $urls['page_id']; ?>" data-section="<?php echo esc_attr($section); ?>" role="navigation" aria-label="Быстрое меню">
         <button type="button" class="csc-qm-toggle" aria-label="Быстрое меню" aria-expanded="false" title="Меню (клик — открыть, удержать и тянуть — переместить)">&#8942;</button>
         <div class="csc-qm-items">
             <?php foreach ($items as $it) :
@@ -494,8 +618,24 @@ if (!function_exists('csc_render_quick_menu')) {
             <?php endforeach; ?>
         </div>
     </div>
-</div>
         <?php
         return ob_get_clean();
+    }
+}
+
+if (!function_exists('csc_render_quick_menu')) {
+    /**
+     * $section = 'calculator' | 'cabinet' | 'master' — на каком разделе идёт рендер.
+     * Значок текущего раздела НЕ АКТИВЕН как раздел: он подменён (на сервере)
+     * на переход к странице калькулятора («Рассчитать услугу»).
+     */
+    function csc_render_quick_menu($section = 'calculator') {
+        global $csc_quick_menu_rendered_by_shortcode;
+        $csc_quick_menu_rendered_by_shortcode = true; // footer-фолбэк не нужен
+        csc_quick_menu_print_assets();               // гарантирует регистрацию хуков активов
+        // Разметка — только HTML-часть (стили/JS идут через wp_head/wp_footer).
+        return '<div class="csc-qm-wrap" data-csc-page="' . esc_attr($section) . '">'
+             . csc_quick_menu_inner_markup($section)
+             . '</div>';
     }
 }
