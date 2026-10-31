@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Custom Service Calculator
  * Description: Веб-приложение для расчёта и бронирования услуг с плиточным выбором разделов.
- * Version: 9.0
+ * Version: 9.0.1
  * Author: Александр Федотов
  * License: GPLv2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -18,7 +18,7 @@
  * - Крон: маршрутизация, напоминания, автобэкап
  * - Подключение новых модулей: шифрование, напоминания, история, бэкап
  * - Защита директории загрузок
- * - Версия плагина 9.0
+ * - Версия плагина 9.0.1 (Web Push RFC 8291, routing timeouts, админка заявок, SW)
  */
 
 if (!defined('ABSPATH')) exit;
@@ -28,7 +28,7 @@ if (!defined('ABSPATH')) exit;
 // ============================================================
 define('CSC_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('CSC_PLUGIN_URL', plugin_dir_url(__FILE__));
-define('CSC_PLUGIN_VERSION', '9.0');
+define('CSC_PLUGIN_VERSION', '9.0.1');
 define('CSC_DB_VERSION', '2.3'); // 2.3: индексы idx_master_id / idx_current_candidate / idx_date для SQL-выборок заказов (Кэш заказов); 2.2: перенос миграций БД в admin_init — колонки создаются при ОБНОВЛЕНИИ плагина, а не только при активации
 
 // 3.5: Словарь статусов — константы нужны уже в хуке активации (csc_migrate_statuses_to_latin)
@@ -494,6 +494,31 @@ function csc_activate_service_worker() {
     
     if (file_exists($source) && is_writable(ABSPATH)) {
         copy($source, $destination);
+    }
+}
+
+// Синхронизация корневого файла SW при обновлении плагина и смене CSC_PLUGIN_VERSION.
+// Без этого хука копия в корне остаётся старой (активация не запускается при update),
+// а bump версии сам по себе не переписывает /csc-sw.js — кэш CDN/браузеров не сбрасывается.
+add_action('upgrader_process_complete', 'csc_sync_service_worker_file');
+add_action('admin_init', 'csc_sync_service_worker_file');
+function csc_sync_service_worker_file() {
+    static $done = false;
+    if ($done) return; // один раз за запрос
+    $done = true;
+
+    $source = plugin_dir_path(__FILE__) . 'assets/csc-sw.js';
+    $destination = ABSPATH . 'csc-sw.js';
+    if (!file_exists($source) || !is_writable(dirname($destination))) return;
+
+    $need_copy = true;
+    if (file_exists($destination)) {
+        // сверяем по контрольной сумме — не перезаписываем каждый админ-запрос
+        $need_copy = md5_file($source) !== md5_file($destination);
+    }
+    if ($need_copy) {
+        copy($source, $destination);
+        @touch($destination); // свежая дата модификации — подсказка прокси/CDN
     }
 }
 

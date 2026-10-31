@@ -196,7 +196,7 @@ ksort($single, SORT_NATURAL | SORT_FLAG_CASE);
 $out  = "# Copyright (C) 2026 Custom Service Calculator\n";
 $out .= "# This file is distributed under the GPLv2 or GPLv3.\n";
 $out .= "msgid \"\"\nmsgstr \"\"\n";
-$out .= "\"Project-Id-Version: Custom Service Calculator 9.0\\n\"\n";
+$out .= "\"Project-Id-Version: Custom Service Calculator 9.0.1\\n\"\n";
 $out .= "\"Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/custom-service-calculator\\n\"\n";
 $out .= "\"POT-Creation-Date: " . gmdate('Y-m-d\TH:i:s+00:00') . "\\n\"\n";
 $out .= "\"MIME-Version: 1.0\\n\"\n";

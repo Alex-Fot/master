@@ -1,5 +1,18 @@
 === Custom Service Calculator — Changelog ===
 
+== 9.0.1 ==
+* Web Push (CRITICAL): шифрование payload приведено к канону RFC 8291/8188 — info-строка "WebPush: info\0" + UAPublicKey||ASPublicKey, salt через HKDF-SHA256, padding до record_size; раньше браузеры не могли расшифровать сообщения (нестандартный секрет "WebPush-AESGCM\0"). Roundtrip проверен против Python-эталона http_ece (движок pywebpush).
+* Web Push (HIGH): исправлен вызов openssl_pkey_derive() — лишний 4-й аргумент приводил к TypeError на PHP 8 при первой же отправке push.
+* Routing: csc_check_routing_timeouts() добавлена ветка по routing_started_at для заявок без offer_time; такие зависшие заявки помечаются routing_status='timeout_global' / статусом routing_timeout с очисткой current_candidate вместо вечного «Ожидает».
+* Master dashboard (PHP): из выдачи исключены заказы, где мастер уже в rejected_by, и заказы с истёкшим оффером, где мастер больше не current_candidate.
+* Master dashboard (JS): mapStatus() больше не маппит routing_timeout/no_masters/истёкшие офферы в «waiting»; карточка скрывается при getOfferRemainingSec()==0 и если мастер не текущий кандидат.
+* Master dashboard (security): после успешного входа токены token/open_order стираются из URL (history.replaceState) — повторный клик по тому же push не вызывает 403 на одноразовом токене.
+* Admin «Управление заявками»: фильтры перевёрстаны в группы с подписями (статус/мастер), устранено наложение колонок «Статус» и «Действия» (min-width + flex-wrap), добавлена явная кнопка «🔄 Перезапустить поиск» для pending/searching/no_masters/routing_timeout, PHP-константы в инлайновом JS заменены литеральными строками (раньше ReferenceError ломал обработчик).
+* Cabinet (клиент): клик по push автоматически подставляет телефон (csc_phone из URL) и номер заявки и выполняет вход; параметры очищаются из адресной строки. Убран спам-push «📋 Заявка #N» по каждому заказу при каждой загрузке ЛК.
+* Service Worker: точное сравнение origin+pathname+search вместо client.url.includes(); фолбэк showNotification при openWindow===null; убран renotify (мигание дублей); убран optional-chaining для старых Safari; корневая копия csc-sw.js синхронизирована.
+* Uninstall: в списке чистки cron заменён несуществующий хук на реальный csc_tg_webhook_selfcheck_hourly.
+* Version: CSC_PLUGIN_VERSION 9.0 → 9.0.1 (bump сбрасывает кэш корневого csc-sw.js на CDN).
+
 == 9.0 ==
 * Geocoding (Nominatim/OSM): приведён к единому значению User-Agent (csc_nominatim_user_agent(): версия плагина + контактный e-mail администратора); добавлен централизованный троттлинг csc_nominatim_throttle() с гарантированной задержкой >= 1 секунды между всеми запросами к Nominatim (search и reverse), включая разные точки вызова в рамках одного процесса. Убраны ручные usleep-паузы; сохранена обработка HTTP 429.
 * Security (личные кабинеты): токены доступа клиентов и мастеров хранятся в БД только как SHA-256 хэши (csc_hash_token / csc_verify_token) с ленивой миграцией ранее сохранённых открытых значений при первой сверке.
