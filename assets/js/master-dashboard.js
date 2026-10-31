@@ -94,9 +94,29 @@
         if (s === 'cancelled' || s === 'отменено') return 'cancelled';
         if (s === 'completed' || s === 'выполнено' || s === 'завершено') return 'completed';
         if (s === 'processing' || s === 'в работе') return 'active';
-        if (s === 'pending' || s === 'searching' || s === 'awaiting_payment' || s === 'no_masters' || s === 'routing_timeout'
-            || s === 'ожидает' || s === 'поиск мастера' || s === 'ожидает оплаты' || s === 'нет мастеров') return 'waiting';
+        // ИСПРАВЛЕНО: «routing_timeout» и «no_masters» — это НЕ ожидающие мастера заявки;
+        // раньше они маппились в 'waiting' и зависали во вкладке «Ожидают».
+        if (s === 'routing_timeout' || s === 'no_masters'
+            || s === 'ошибка: время поиска истекло' || s === 'нет мастеров') return 'archived';
+        if (s === 'pending' || s === 'searching' || s === 'awaiting_payment'
+            || s === 'ожидает' || s === 'поиск мастера' || s === 'ожидает оплаты') return 'waiting';
         return 'waiting';
+    }
+
+    // ИСПРАВЛЕНО: единый критерий «заявка видна мастеру как ожидающая».
+    // Просроченные офферы (время вышло, кандидат уже не этот мастер) скрываются —
+    // карточка не должна висеть с плашкой «Время вышло — заявка передана дальше».
+    function isOrderVisible(order) {
+        if (!order) return false;
+        const status = mapStatus(order.status);
+        if (status === 'archived') return false;
+        if (status === 'waiting' && order.offer_time) {
+            const left = getOfferRemainingSec(order);
+            const mid = String(CONFIG.mid || '');
+            const cand = String(order.current_candidate || '');
+            if (left === 0 && cand !== '' && cand !== mid) return false;
+        }
+        return true;
     }
 
     function getStatusLabel(status) {
@@ -699,7 +719,7 @@
             return;
         }
 
-        const filtered = STATE.orders.filter(o => mapStatus(o.status) === STATE.currentTab);
+        const filtered = STATE.orders.filter(o => isOrderVisible(o) && mapStatus(o.status) === STATE.currentTab);
 
         if (filtered.length === 0) {
             if (list) list.setAttribute('hidden', '');
@@ -1014,6 +1034,7 @@
         };
 
         STATE.orders.forEach(o => {
+            if (!isOrderVisible(o)) return; // ИСПРАВЛЕНО: скрытые (просроченные/архивные) заявки не попадают в статистику
             const status = mapStatus(o.status);
             if (counts[status] !== undefined) counts[status]++;
         });
@@ -1058,6 +1079,7 @@
     function updateBadges() {
         const counts = { waiting: 0, active: 0, completed: 0, cancelled: 0 };
         STATE.orders.forEach(o => {
+            if (!isOrderVisible(o)) return; // ИСПРАВЛЕНО: бейджи вкладок не считают скрытые/просроченные заявки
             const status = mapStatus(o.status);
             if (counts[status] !== undefined) counts[status]++;
         });

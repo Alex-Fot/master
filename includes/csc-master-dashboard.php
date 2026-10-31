@@ -894,6 +894,27 @@ if (!function_exists('csc_handle_master_orders')) {
             });
         }
 
+        // ИСПРАВЛЕНО: очистка «зависших» карточек в дашборде мастера.
+        // 1) Заказ master_id=$mid, но мастер уже в rejected_by (переназначен админом
+        //    после отказа/игнора) — больше не должен висеть у него.
+        // 2) Просроченный оффер: мастер был current_candidate, время вышло, и он уже
+        //    НЕ является текущим кандидатом — карточка должна исчезнуть (санкции за
+        //    отказ/игнор начисляются маршрутизатором, не здесь).
+        $routing_timeout = defined('CSC_ROUTING_TIMEOUT') ? intval(CSC_ROUTING_TIMEOUT) : 180;
+        $my_orders = array_filter($my_orders, function ($o) use ($mid, $routing_timeout) {
+            $rejected_by = (array)($o['rejected_by'] ?? []);
+            if (($o['master_id'] ?? '') === $mid && in_array($mid, $rejected_by, true)) {
+                return false;
+            }
+            $is_expired_offer = ($o['current_candidate'] ?? '') !== $mid
+                && !empty($o['offer_time'])
+                && (time() - (int)$o['offer_time']) >= $routing_timeout;
+            if ($is_expired_offer) {
+                return false;
+            }
+            return true;
+        });
+
         // Сортировка: ожидание → в работе → выполнено → отменено, затем по дате
         uasort($my_orders, function($a, $b) {
             $status_order = [

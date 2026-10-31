@@ -729,7 +729,34 @@ if (!function_exists('csc_check_routing_timeouts')) {
             if (($order['routing_status'] ?? '') !== 'searching') continue;
 
             $offer_time = (int)($order['offer_time'] ?? 0);
-            if ($offer_time <= 0) continue;
+
+            // ИСПРАВЛЕНО: заявки в поиске БЕЗ активного оффера (offer_time пуст/сброшен,
+            // current_candidate очищен) раньше никогда не помечались как просроченные —
+            // они зависали в статусе «ожидает» навсегда. Теперь для них проверяется
+            // общий таймер поиска routing_started_at.
+            if ($offer_time <= 0 || empty($order['current_candidate'])) {
+                $routing_started = (int)($order['routing_started_at'] ?? 0);
+                if ($routing_started > 0 && ($now - $routing_started) >= CSC_ROUTING_GLOBAL_TIMEOUT) {
+                    $all_orders[$order_number]['routing_status']   = 'timeout_global';
+                    $all_orders[$order_number]['status']           = CSC_STATUS_ROUTING_TIMEOUT;
+                    $all_orders[$order_number]['current_candidate'] = null;
+                    $all_orders[$order_number]['offer_time']        = null;
+                    csc_update_order($order_number, $all_orders[$order_number]);
+                    $updated = true;
+
+                    csc_routing_log($order_number, 'routing_global_timeout', ['reason' => 'cron_no_offer']);
+                    if (function_exists('csc_backup_order_on_routing_failure')) {
+                        csc_backup_order_on_routing_failure($order_number, $order, 'global_timeout');
+                    }
+                    $masters  = csc_get_masters_cached();
+                    $rejected = (array)($order['rejected_by'] ?? []);
+                    if (function_exists('csc_notify_admin_no_masters')) {
+                        csc_notify_admin_no_masters($order_number, $order, $rejected, $masters);
+                    }
+                    csc_log_notification($order_number, 'admin', 'admin', 'web', '⚠️ Таймаут маршрутизации', 'Поиск мастера превысил общий лимит (заявка зависла без оффера).', ['status' => 'failed', 'reason' => 'global_timeout_no_offer']);
+                }
+                continue;
+            }
 
             if ($now - $offer_time >= CSC_ROUTING_TIMEOUT) {
                 $tg_token = function_exists('csc_get_telegram_token')
