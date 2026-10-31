@@ -89,7 +89,6 @@ if (!function_exists('csc_seo_get_defaults')) {
             'jsonld_faq_master'     => 1,   // FAQ на «Стать мастером»
             'jsonld_faq_calc'       => 1,   // FAQ на калькуляторе
             'jsonld_reviews'        => 1,   // AggregateRating из модуля отзывов
-            'jsonld_howto'          => 1,   // HowTo: шаги онлайн-расчёта (rich-результат)
             'jsonld_social'         => 1,   // sameAs (соцсети ниже)
             'social_facebook'       => '',
             'social_instagram'      => '',
@@ -388,17 +387,17 @@ if (!function_exists('csc_seo_meta_tags')) {
         $desc = csc_seo_apply_tokens(trim((string)($desc_map[$kind] ?? '')));
 
         $dmax = max(50, (int)($s['desc_max'] ?? 300));
+        echo '<!-- CSC SEO -->' . "
+";
         if ($desc !== '') {
-            echo '<meta name="description" content="' . esc_attr(mb_substr($desc, 0, $dmax)) . '">' . "\n";
+            echo '<meta name="description" content="' . esc_attr(mb_substr($desc, 0, $dmax)) . '">' . "
+";
             csc_seo_log('description выведен: ' . $kind . ' (' . mb_strlen(mb_substr($desc, 0, $dmax)) . ' симв.)');
         } else {
             csc_seo_log('description пропущен: пусто для ' . $kind);
         }
 
-        // Canonical (П2): чистый permalink страницы вместо URL с query-параметрами плагинов.
-        // Собственный canonical всегда имеет приоритет: удаляем стандартный вывод WP
-        // и подавляем canonical конкурентных SEO-плагинами (иначе в <head> два canonical —
-        // краулер выбирает произвольный).
+        // Canonical (П2): чистый permalink страницы вместо URL с query-параметрами плагина.
         if (!empty($s['canonical_enabled'])) {
             $clean = get_permalink();
             if ($clean && strpos($clean, '?') === false) {
@@ -410,12 +409,8 @@ if (!function_exists('csc_seo_meta_tags')) {
                 } else {
                     $clean = rtrim($clean, '/');
                 }
-                remove_action('wp_head', 'rel_canonical');
-                add_filter('wpseo_canonical', '__return_empty_string', 99);      // Yoast
-                add_filter('rank_math_frontend_canonical_url', '__return_empty_string', 99); // Rank Math
-                add_filter('aioseo_canonical_url', '__return_empty_string', 99); // AIOSEO
-                add_filter('seopress.canonical', '__return_empty_array', 99);    // SEOPress
-                echo '<link rel="canonical" href="' . esc_url($clean) . '">' . "\n";
+                echo '<link rel="canonical" href="' . esc_url($clean) . '">' . "
+";
                 csc_seo_log('canonical: ' . $clean);
             }
         }
@@ -556,24 +551,6 @@ if (!function_exists('csc_seo_json_ld')) {
                 }
             }
             $graph[] = $business;
-        }
-
-        // --- HowTo: шаги онлайн-расчёта стоимости (rich-результат «Как сделать») ---
-        if (!empty($s['jsonld_howto']) && $kind === 'calculator') {
-            $perma = get_permalink();
-            $graph[] = [
-                '@type' => 'HowTo',
-                'name'  => 'Как рассчитать стоимость услуги онлайн',
-                'url'   => $perma ?: home_url('/'),
-                'description' => 'Пошаговый расчёт цены услуги в калькуляторе ' . get_bloginfo('name') . ': без звонков и ожидания мастера.',
-                'totalTime'   => 'PT1M',
-                'step'        => [
-                    ['@type' => 'HowToStep', 'name' => 'Выберите раздел услуг',      'text' => 'Откройте категорию: сантехника, электрика, сборка мебели и другие.'],
-                    ['@type' => 'HowToStep', 'name' => 'Отметьте нужные работы',     'text' => 'Добавьте позиции из каталога — сумма пересчитывается мгновенно.'],
-                    ['@type' => 'HowToStep', 'name' => 'Укажите адрес и время',      'text' => 'Введите адрес объекта и удобную дату приезда мастера.'],
-                    ['@type' => 'HowToStep', 'name' => 'Подтвердите заявку',         'text' => 'Проверьте итог расчёта и отправьте заявку — цена зафиксирована.'],
-                ],
-            ];
         }
 
         // --- WebSite + SearchAction (поиск по сайту) ---
@@ -1235,7 +1212,6 @@ if (!function_exists('csc_seo_admin_fields_schema')) {
                     ['k' => 'opening_hours', 't' => 'text', 'l' => 'openingHours (формата schema.org)', 'ph' => 'Mo-Su 08:00-22:00'],
                     ['k' => 'price_currency', 't' => 'text', 'l' => 'Валюта Offer\'ов (ISO-4217)', 'ph' => 'RUB'],
                     ['k' => 'jsonld_reviews', 't' => 'checkbox', 'l' => 'aggregateRating из данных рейтингов мастеров (при ≥3 отзывах)'],
-                    ['k' => 'jsonld_howto', 't' => 'checkbox', 'l' => 'Узел HowTo «Как рассчитать стоимость онлайн» (4 шага калькулятора)'],
                     ['k' => 'jsonld_social', 't' => 'checkbox', 'l' => 'sameAs (соцсети ниже)'],
                 ],
                 'WebSite / ServiceCatalog / Breadcrumb / FAQ' => [
@@ -1507,53 +1483,10 @@ if (!function_exists('csc_seo_admin_page')) {
 
         $s    = csc_seo_get_settings();
         $tabs = csc_seo_admin_fields_schema();
-
-        // ── Действия администратора (все с nonce и manage_options) ──
-        $action_notice = '';
-        if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['csc_seo_action']) && check_admin_referer('csc_seo_save_action')) {
-            if (!current_user_can('manage_options')) return;
-            $act = sanitize_key(wp_unslash($_POST['csc_seo_action']));
-            if ($act === 'reset') {
-                delete_option('csc_seo_settings');
-                $action_notice = '<div class="notice notice-warning is-dismissible"><p>Настройки SEO-модуля сброшены к значениям по умолчанию.</p></div>';
-            } elseif ($act === 'export_json') {
-                echo '<div class="notice notice-info"><p><b>Экспорт настроек (JSON)</b> — скопируйте в буфер:</p></div>';
-                echo '<textarea class="large-text code" rows="14" readonly onclick="this.select()">' . esc_textarea((string)wp_json_encode(csc_seo_get_settings(), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)) . '</textarea>';
-            } elseif ($act === 'import_json') {
-                $raw = isset($_POST['csc_seo_import']) ? trim((string)wp_unslash($_POST['csc_seo_import'])) : '';
-                $data = json_decode($raw, true);
-                if (is_array($data)) {
-                    $defaults = csc_seo_get_defaults();
-                    $clean = [];
-                    foreach ($data as $k => $v) {
-                        if (!array_key_exists($k, $defaults)) continue; // только известные ключи схемы
-                        $type = 'text';
-                        foreach ($tabs as $t) { foreach ($t['sections'] as $fs) { foreach ($fs as $f) { if (($f['k'] ?? '') === $k) $type = $f['t']; } } }
-                        $clean[$k] = csc_seo_sanitize_field($type, $k, $v, $defaults[$k]);
-                    }
-                    update_option('csc_seo_settings', array_merge($defaults, $clean), false);
-                    delete_transient('csc_seo_sitemap_xml');
-                    do_action('csc_seo_flush');
-                    $action_notice = '<div class="notice notice-success is-dismissible"><p>Импортировано настроек: ' . count($clean) . '.</p></div>';
-                } else {
-                    $action_notice = '<div class="notice notice-error is-dismissible"><p>Импорт отменён: некорректный JSON.</p></div>';
-                }
-            } elseif ($act === 'ping_engines') {
-                $sm = home_url('/' . trim((string)$s['sitemap_path'], '/'));
-                $r1 = wp_remote_get('https://www.google.com/sitemaps/ping?sitemap=' . rawurlencode($sm), ['timeout' => 8]);
-                $r2 = wp_remote_get('https://yandex.ru/webmaster/sitemap?sitemap=' . rawurlencode($sm), ['timeout' => 8]);
-                $ok1 = !is_wp_error($r1) && (int)wp_remote_retrieve_response_code($r1) === 200;
-                $ok2 = !is_wp_error($r2) && (int)wp_remote_retrieve_response_code($r2) === 200;
-                csc_seo_log('Ping: google=' . ($ok1 ? 'ok' : 'fail') . ' yandex=' . ($ok2 ? 'ok' : 'fail'));
-                $action_notice = '<div class="notice notice-' . (($ok1 || $ok2) ? 'success' : 'warning') . ' is-dismissible"><p>Пинг поисковых систем: Google — <b>' . ($ok1 ? 'OK' : 'нет ответа (нормально, GSC сам переобходит)') . '</b>, Яндекс — <b>' . ($ok2 ? 'OK' : 'нет ответа (загрузите карту в Вебмастере)') . '</b>.</p></div>';
-            }
-        }
-
         $active = isset($_GET['tab']) && isset($tabs[sanitize_key($_GET['tab'])]) ? sanitize_key($_GET['tab']) : 'general';
         ?>
         <div class="wrap csc-seo-admin">
             <h1>🔎 SEO калькулятора услуг</h1>
-            <?php echo $action_notice; /* внутренние HTML уведомлений модуля */ ?>
             <?php if ($saved): ?>
                 <div class="notice notice-success is-dismissible"><p>SEO-настройки сохранены.
                     <a href="<?php echo esc_url(home_url('/' . trim((string)$s['sitemap_path'], '/'))); ?>" target="_blank">Открыть sitemap</a> ·
@@ -1595,23 +1528,6 @@ if (!function_exists('csc_seo_admin_page')) {
                     </table>
                 <?php endforeach; ?>
                 <?php submit_button('Сохранить SEO-настройки', 'primary', 'save_seo'); ?>
-            </form>
-
-            <hr>
-            <h2>Действия с настройками модуля</h2>
-            <p>Экспорт/импорт полезен при переносе сайта, клонировании конфигурации на другой домен и для бэкапа SEO-конфига.</p>
-            <form method="post" style="margin-bottom:14px;">
-                <?php wp_nonce_field('csc_seo_save_action'); ?>
-                <button type="submit" name="csc_seo_action" value="export_json" class="button">⬆️ Экспорт (JSON)</button>
-                <button type="submit" name="csc_seo_action" value="ping_engines" class="button">📡 Пинг Google / Яндекс (sitemap)</button>
-                <button type="submit" name="csc_seo_action" value="reset" class="button button-link-delete"
-                        onclick="return confirm('Сбросить ВСЕ настройки SEO-модуля к значениям по умолчанию?')">♻️ Сброс к дефолту</button>
-            </form>
-            <form method="post">
-                <?php wp_nonce_field('csc_seo_save_action'); ?>
-                <p><label for="csc_seo_import"><b>Импорт настроек</b> — вставьте JSON из экспорта (неизвестные ключи отбрасываются, значения санитизируются по схеме):</label></p>
-                <textarea id="csc_seo_import" name="csc_seo_import" class="large-text code" rows="6" placeholder='{"title_template":"%title% — %sitename%","ssr_catalog":1}'></textarea>
-                <button type="submit" name="csc_seo_action" value="import_json" class="button button-primary">⬇️ Импорт JSON</button>
             </form>
 
             <hr>
@@ -1690,12 +1606,7 @@ add_action('admin_init', 'csc_seo_capture_seo_desc', 1);
 if (!function_exists('csc_seo_capture_seo_desc')) {
     function csc_seo_capture_seo_desc() {
         if (empty($_POST['save_sections']) && empty($_POST['save_items'])) return;
-        if (!current_user_can('manage_options')) return;
-        // Нончевики существующих форм. Держим обе проверки в переменных: вызов
-        // check_admin_referer() дважды привёл бы к ложному «Invalid token» на второй форме.
-        $nonce_sections = isset($_POST['_wpnonce']) ? wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_wpnonce'])), 'csc_save_sections_action') : false;
-        $nonce_items    = isset($_POST['_wpnonce']) ? wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_wpnonce'])), 'csc_save_items_action')    : false;
-        if (!$nonce_sections && !$nonce_items) return;
+        if (!check_admin_referer('csc_save_sections_action') && !check_admin_referer('csc_save_items_action')) return;
         // Перехватываем присланные seo_desc и храним отдельным map'ом (не ломаем существующие обработчики,
         // которые пересобирают массивы section/item без поля seo_desc).
         $map = get_option('csc_seo_desc_map', []);
