@@ -4,7 +4,7 @@ Tags: calculator, booking, orders, services, marketplace
 Requires at least: 6.0
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 9.0.1
+Stable tag: 9.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -73,6 +73,9 @@ OpenStreetMap Nominatim (геокодинг, лимит 1 запрос/сек), 
 `uninstall.php` удаляет все таблицы, опции (`csc_*`), транзиенты и крон-задачи плагина. Для сохранения данных сделайте бэкап заранее («Настройки → Импорт/Экспорт»).
 
 == Changelog ==
+
+= 9.1 =
+* Быстрое меню «⋮» на страницах плагина (калькулятор / ЛК / регистрация мастера): раскрытие контура влево-вправо, значки «Стать мастером» и «Личный кабинет» с подсказками, тема-адаптивные стили, drag по горизонтали с сохранением позиции в localStorage. Текущий раздел неактивен — его значок заменён переходом на калькулятор.
 
 = 9.0.1 =
 * Web Push: шифрование payload приведено к канону RFC 8291/8188 (info-строка "WebPush: info\0" + ключи клиента/сервера, salt через HKDF, padding до record_size) — проверено roundtrip-тестом против Python-эталона (http_ece/pywebpush); исправлен вызов openssl_pkey_derive() (fatal на PHP 8).

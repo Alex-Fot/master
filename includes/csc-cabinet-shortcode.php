@@ -59,6 +59,8 @@ function csc_personal_cabinet_shortcode() {
     padding: 16px;
     max-width: 800px;
     margin: 0 auto;
+    /* якорь для абсолютного быстрого меню (csc-quick-menu) */
+    position: relative;
 }
 .csc-toast {
     position: fixed;

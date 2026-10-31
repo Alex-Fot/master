@@ -244,6 +244,8 @@ if (!function_exists('csc_render_become_master_form')) {
                 padding: 40px 20px !important;
                 font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif !important;
                 display: flex !important;
+                /* position:relative — якорь для абсолютного быстрого меню (csc-quick-menu) */
+                position: relative !important;
                 align-items: flex-start !important;
                 justify-content: center !important;
                 box-sizing: border-box !important;
