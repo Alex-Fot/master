@@ -118,11 +118,20 @@ if (!function_exists('csc_quick_menu_print_assets')) {
         static $printed = false;
         if ($printed) return;
         $printed = true;
+
+        // [9.1.2] Диагностика: window.cscQmDbg фиксирует загрузку скрипта и факт boot'а.
+        // Если на странице cscQmDbg.booted=false — JS до меню не дошёл (конфликт/обрезка).
         ?>
 <style id="csc-quick-menu-css">
 /* ===== Быстрое меню «⋮» — цвета наследуют тему контейнера ===== */
-.csc-qm-wrap{position:absolute;top:14px;left:0;right:0;z-index:99998;display:flex;pointer-events:none;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
-.csc-qm{--qm-bg:rgba(255,255,255,.78);--qm-fg:#1e293b;--qm-br:rgba(15,23,42,.14);--qm-ring:rgba(59,130,246,.35);--qm-accent:#3b82f6;--qm-hover:rgba(59,130,246,.10);position:relative;pointer-events:auto;background:var(--qm-bg);border:1px solid var(--qm-br);border-radius:999px;box-shadow:0 6px 18px rgba(15,23,42,.10);display:flex;align-items:center;height:44px;padding:0 4px;backdrop-filter:blur(12px) saturate(160%);-webkit-backdrop-filter:blur(12px) saturate(160%);transition:box-shadow .25s ease,border-color .25s ease;max-width:min(94vw,520px)}
+/* [9.1.2] display:flex убран: без него обёртка — normal-flow блок нулевой высоты,
+   absolute-плашка в нём становилась «призраком» (0×0), клики по ⋮ не попадали
+   в кнопку → «ничего не происходит», drag невозможен. .csc-qm позиционируется
+   абсолютно сам; pointer-events:none на обёртке больше не нужен. */
+.csc-qm-wrap{position:absolute;top:14px;left:0;right:0;z-index:99998;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
+.csc-qm{--qm-bg:rgba(255,255,255,.78);--qm-fg:#1e293b;--qm-br:rgba(15,23,42,.14);--qm-ring:rgba(59,130,246,.35);--qm-accent:#3b82f6;--qm-hover:rgba(59,130,246,.10);position:absolute;left:50%;transform:translateX(-50%);top:0;pointer-events:auto;background:var(--qm-bg);border:1px solid var(--qm-br);border-radius:999px;box-shadow:0 6px 18px rgba(15,23,42,.10);display:flex;align-items:center;height:44px;padding:0 4px;backdrop-filter:blur(12px) saturate(160%);-webkit-backdrop-filter:blur(12px) saturate(160%);transition:box-shadow .25s ease,border-color .25s ease;max-width:min(94vw,520px)}
+/* [9.1.2] после place()/drag JS переводит в left+translate:none — transform больше не мешает */
+.csc-qm.qm-placed{left:0;transform:none}
 [data-theme="dark"] .csc-qm,.csc-qm[data-theme="dark"]{--qm-bg:rgba(15,23,42,.72);--qm-fg:#f1f5f9;--qm-br:rgba(255,255,255,.16);--qm-ring:rgba(96,165,250,.35);--qm-accent:#60a5fa;--qm-hover:rgba(96,165,250,.14);box-shadow:0 6px 18px rgba(0,0,0,.45)}
 .csc-qm.open{border-color:var(--qm-accent);box-shadow:0 0 0 var(--qm-ring),0 8px 24px rgba(15,23,42,.16)}
 .csc-qm-toggle{flex:0 0 auto;width:40px;height:40px;border-radius:50%;border:none;background:transparent;color:var(--qm-fg);font-size:20px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;touch-action:none;user-select:none;-webkit-user-select:none;outline:none;transition:background .2s ease,transform .2s ease}
@@ -146,6 +155,8 @@ if (!function_exists('csc_quick_menu_print_assets')) {
 <script id="csc-quick-menu-js">
 (function(){
     'use strict';
+    window.cscQmDbg = { loaded: true, booted: false, err: null }; // [9.1.2] диагностика boot'а
+    try {
     if (window.CSC_QUICK_MENU_BOOTED) return;
     window.CSC_QUICK_MENU_BOOTED = true;
 
@@ -154,6 +165,10 @@ if (!function_exists('csc_quick_menu_print_assets')) {
     var MOVE_TOL = 6;                    // px, ниже которых клик не считается перемещением
 
     function each(sel, fn){ Array.prototype.forEach.call(document.querySelectorAll(sel), fn); }
+
+    // [9.1.2] place() задаёт qm.style.left в пикселях; без снятия transform из CSS
+    // сдвиг translateX(-50%) ломал бы hit-test и расчёт позиции — плашка «уезжала».
+    function markPlaced(qm){ qm.classList.add('qm-placed'); }
 
     each('.csc-qm', function(qm){
         var wrap   = qm.parentNode;                       // .csc-qm-wrap
@@ -171,6 +186,7 @@ if (!function_exists('csc_quick_menu_print_assets')) {
             var left = Math.round(vw * pct / 100 - w / 2);
             left = Math.max(4, Math.min(left, vw - w - 4));
             qm.style.position = 'absolute';
+            markPlaced(qm);                               // [9.1.2] гасим CSS translateX(-50%)
             qm.style.left = left + 'px';
             qm.style.right = 'auto';
             updateSide(left + w / 2, vw);
@@ -205,6 +221,7 @@ if (!function_exists('csc_quick_menu_print_assets')) {
             // ВАЖНО: здесь НЕ вызываем preventDefault — иначе браузер не
             // генерирует click и раскрытие меню «не работает». Отмена
             // скролла/выделения делается через CSS touch-action:none на кнопке.
+            if (e.pointerType === 'mouse' && e.button !== 0) return; // drag только ЛКМ
             var left0 = parseFloat(qm.style.left);
             if (isNaN(left0)) left0 = qm.offsetLeft;      // фиксируем до первого move
             drag = { x0: e.clientX, left0: left0, moved: false, active: false, pointerId: e.pointerId,
@@ -223,6 +240,7 @@ if (!function_exists('csc_quick_menu_print_assets')) {
             var vw = Math.max(document.documentElement.clientWidth, 320);
             var w  = qm.offsetWidth || 52;
             var left = Math.max(4, Math.min(drag.left0 + dx, vw - w - 4));
+            markPlaced(qm);                               // [9.1.2] translateX(-50%) погашен
             qm.style.left = left + 'px';
             updateSide(left + w / 2, vw);
         });
@@ -265,6 +283,13 @@ if (!function_exists('csc_quick_menu_print_assets')) {
 
         place();
     });
+
+    window.cscQmDbg.booted = true;                        // [9.1.2] boot завершён успешно
+    } catch (err) {
+        // [9.1.2] не глушим ошибку молча: фиксируем в диагностике и console
+        try { window.cscQmDbg.err = String(err && err.stack || err); } catch (_) {}
+        if (window.console && console.warn) console.warn('[csc-quick-menu] boot error:', err);
+    }
 })();
 </script>
         <?php
@@ -320,7 +345,7 @@ if (!function_exists('csc_render_quick_menu')) {
         ?>
 <div class="csc-qm-wrap">
     <div class="csc-qm csc-qm-side-right" data-page-id="<?php echo (int) $urls['page_id']; ?>" role="navigation" aria-label="Быстрое меню">
-        <button type="button" class="csc-qm-toggle" aria-label="Быстрое меню" aria-expanded="false" title="Меню">&#8942;</button>
+        <button type="button" class="csc-qm-toggle" aria-label="Быстрое меню" aria-expanded="false" title="Меню (клик — открыть, удержать и тянуть — переместить)">&#8942;</button>
         <div class="csc-qm-items">
             <?php foreach ($items as $it) :
                 // Текущий раздел: значок подменяется на переход к калькулятору
