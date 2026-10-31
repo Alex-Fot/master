@@ -18,8 +18,7 @@
  * - Крон: маршрутизация, напоминания, автобэкап
  * - Подключение новых модулей: шифрование, напоминания, история, бэкап
  * - Защита директории загрузок
- * - Версия плагина 9.1 (быстрое меню ⋮: «Стать мастером» / «Личный кабинет»;
- *   ранее 9.0.1 — Web Push RFC 8291, routing timeouts, админка заявок, SW)
+ * - Версия плагина 9.0.1 (Web Push RFC 8291, routing timeouts, админка заявок, SW)
  */
 
 if (!defined('ABSPATH')) exit;
@@ -442,6 +441,7 @@ require_once CSC_PLUGIN_DIR . 'includes/csc-logger.php';
 require_once CSC_PLUGIN_DIR . 'includes/csc-js-i18n.php';
 
 require_once CSC_PLUGIN_DIR . 'includes/csc-core-functions.php';
+require_once CSC_PLUGIN_DIR . 'includes/csc-quick-menu.php'; // быстрое меню «⋮» (калькулятор + ЛК)
 require_once CSC_PLUGIN_DIR . 'includes/csc-admin-pages.php';
 require_once CSC_PLUGIN_DIR . 'includes/csc-calculator-shortcode.php';
 require_once CSC_PLUGIN_DIR . 'includes/csc-cabinet-shortcode.php';
@@ -485,10 +485,6 @@ require_once CSC_PLUGIN_DIR . 'includes/csc-notification-triggers.php';
 
 // Web Push уведомления (VAPID)
 require_once CSC_PLUGIN_DIR . 'includes/csc-push.php';
-
-// Быстрое меню плагина (⋮): «Стать мастером» + «Личный кабинет».
-// Подключается до шорткодов-хостов (калькулятор/кабинет вставляют его assets).
-require_once CSC_PLUGIN_DIR . 'includes/csc-quick-menu.php';
 
 
 // Копирование при активации

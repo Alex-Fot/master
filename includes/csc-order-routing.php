@@ -874,9 +874,9 @@ if (!function_exists('csc_admin_restart_routing')) {
         // csc_route_order_to_next(), который начинался с проверки
         // status !== 'searching' и молча выходил (route_skipped) — оффер
         // первому кандидату никогда не отправлялся, заявки «зависали в ожидает».
-        $order_data['status'] = CSC_STATUS_SEARCHING;
+        $all_orders[$order_number]['status'] = CSC_STATUS_SEARCHING;
 
-        csc_update_order($order_number, $order_data);
+        csc_update_order($order_number, $all_orders[$order_number]);
 
         if (function_exists('csc_cache_delete_orders')) {
             csc_cache_delete_orders();

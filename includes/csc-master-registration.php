@@ -239,6 +239,7 @@ if (!function_exists('csc_render_become_master_form')) {
         // wp_head уже отработал, поэтому add_action бесполезен
         echo '<style id="csc-registration-inline-styles">
             .csc-registration-page {
+                position: relative; /* опора для absolute-обёртки быстрого меню «⋮» (.csc-qm-wrap) */
                 min-height: 100vh !important;
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
                 padding: 40px 20px !important;
@@ -835,7 +836,8 @@ if (!function_exists('csc_render_become_master_form')) {
         </style>';
         ?>
         <div class="csc-registration-page">
-            <?php if (function_exists('csc_quick_menu_assets')) csc_quick_menu_assets(); ?>
+        <?php // Быстрое меню «⋮»: раздел «Стать мастером» неактивен, значок заменён на переход к калькулятору.
+              if (function_exists('csc_render_quick_menu')) echo csc_render_quick_menu('master'); ?>
             <div class="csc-registration-container">
                 <div class="csc-registration-header">
                     <h1 class="csc-registration-title">Стать мастером</h1>

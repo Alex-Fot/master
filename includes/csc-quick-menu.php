@@ -1,521 +1,345 @@
 <?php
+/**
+ * БЫСТРОЕ МЕНЮ «⋮» (csc-quick-menu) — версия 9.1
+ * ============================================================
+ * Компактная плашка с тремя точками вверху страниц плагина
+ * (главная страница калькулятора + личный кабинет).
+ *
+ * Поведение:
+ *  - клик по «⋮» растягивает контур ВЛЕВО или ВПРАВО (в зависимости от
+ *    того, где стоит плашка относительно центра экрана — чтобы не вылезать
+ *    за край) и показывает два значка:
+ *      1) «человечек с гаечным ключом» — Стать мастером (title при наведении),
+ *      2) «человечек»                  — Личный кабинет (title при наведении);
+ *  - РАЗДЕЛ, НА КОТОРОМ НАХОДИТСЯ ПОСЕТИТЕЛЬ, НЕ АКТИВЕН: его значок
+ *    заменяется значком перехода на страницу КАЛЬКУЛЯТОРА («🧮 Рассчитать услугу»);
+ *  - стили полностью наследуют переменные темы контейнера
+ *    ([data-theme="dark"] / светлая тема страницы);
+ *  - при УДЕРЖАНИИ значка «⋮» (pointerdown > 300ms) плашку можно перемещать
+ *    по горизонтали на всю ширину экрана; позиция сохраняется в localStorage
+ *    и восстанавливается при повторном входе.
+ *
+ * Хуки/фильтры:
+ *  - csc_quick_menu_urls($urls) — переопределение ссылок меню извне.
+ */
+
 if (!defined('ABSPATH')) exit;
 
 // ============================================================
-// Быстрое меню плагина (⋮) — «три точки» в контуре на страницах
-// калькулятора и личного кабинета.
-//
-// Поведение:
-//  - клик по ⋮ раздвигает контур влево или вправо (сторона зависит от
-//    положения кнопки: правее центра экрана — растёт влево, левее — вправо)
-//    и показывает два значка:
-//      1) «мастер с гаечным ключом» → Стать мастером (подсказка при наведении)
-//      2) «человечек»               → Личный кабинет (подсказка при наведении)
-//  - стили берут CSS-переменные темы страницы (--csc-card/--csc-text/
-//    --csc-border/--csc-primary), тёмная тема наследуется автоматически;
-//  - удержание кнопки (pointer drag) перемещает её по горизонтали вдоль
-//    верхней кромки страницы; позиция сохраняется в localStorage и
-//    восстанавливается при повторном входе.
+// 1. Построитель ссылок меню (единственный источник правды для
+//    PHP-разметки и JS-конфига — ссылки не расходятся).
 // ============================================================
+if (!function_exists('csc_quick_menu_build_urls')) {
+    function csc_quick_menu_build_urls() {
+        $current_id = get_queried_object_id();
 
-if (!function_exists('csc_quick_menu_find_shortcode_page')) {
-    /**
-     * Поиск опубликованной страницы по шорткоду (кэшируется в транзиенте).
-     */
-    function csc_quick_menu_find_shortcode_page($shortcode_tag) {
-        $cache_key = '_csc_qm_page_' . $shortcode_tag;
-        $cached    = get_transient($cache_key);
-        if (is_string($cached) && $cached !== '') {
-            $p = get_post(absint($cached));
-            if ($p && $p->post_status === 'publish') {
-                return get_permalink($p);
+        // Страница калькулятора: текущая, если на ней рендерится [service_calculator],
+        // иначе — первая опубликованная страница с шорткодом.
+        $calc_url = '';
+        if ($current_id && has_shortcode((string) get_post_field('post_content', $current_id), 'service_calculator')) {
+            $calc_url = get_permalink($current_id);
+        } else {
+            $found = get_posts([
+                'post_type' => 'any', 'posts_per_page' => 1, 'orderby' => 'ID', 'order' => 'ASC',
+                'meta_key'  => 'csc_calc_page_flag', 'meta_value' => '1',
+            ]);
+            if (!$found) {
+                $found = get_posts([
+                    'post_type' => 'any', 'posts_per_page' => 1, 's' => '[service_calculator]',
+                    'exclude' => array_filter([$current_id]),
+                ]);
             }
+            $calc_url = $found ? get_permalink($found[0]->ID) : home_url('/');
         }
-        $pages = get_pages(['post_status' => 'publish', 'numberposts' => -1]);
-        foreach ($pages as $p) {
-            if (has_shortcode((string) $p->post_content, $shortcode_tag)) {
-                set_transient($cache_key, $p->ID, HOUR_IN_SECONDS);
-                return get_permalink($p);
+
+        // Страница личного кабинета: настройка csc_cabinet_page_id (используется
+        // и в csc_build_push_click_url), затем поиск страницы с шорткодом.
+        $cab_url  = '';
+        $cab_page = absint(get_option('csc_cabinet_page_id', 0));
+        if ($cab_page && get_permalink($cab_page)) {
+            $cab_url = get_permalink($cab_page);
+        } else {
+            $found = get_posts([
+                'post_type' => 'page', 'posts_per_page' => 1,
+                'meta_key'  => 'csc_cabinet_page_flag', 'meta_value' => '1',
+            ]);
+            if (!$found) {
+                $found = get_posts([
+                    'post_type' => 'page', 'posts_per_page' => 1, 's' => '[csc_personal_cabinet]',
+                    'exclude'   => array_filter([$current_id]),
+                ]);
             }
+            $cab_url = $found ? get_permalink($found[0]->ID) : '';
+        }
+        if (!$cab_url) $cab_url = home_url('/'); // нет страницы ЛК — ссылка на главную
+
+        // Форма «стать мастером»: страница с [csc_become_master] или админ-страница.
+        $master_url = '';
+        if ($current_id && has_shortcode((string) get_post_field('post_content', $current_id), 'csc_become_master')) {
+            $master_url = get_permalink($current_id);
+        } else {
+            $found = get_posts([
+                'post_type' => 'any', 'posts_per_page' => 1,
+                'meta_key'  => 'csc_master_reg_page_flag', 'meta_value' => '1',
+            ]);
+            if (!$found) {
+                $found = get_posts([
+                    'post_type' => 'any', 'posts_per_page' => 1, 's' => '[csc_become_master]',
+                    'exclude'   => array_filter([$current_id]),
+                ]);
+            }
+            $master_url = $found ? get_permalink($found[0]->ID) : '';
+        }
+        if (!$master_url) {
+            $master_url = add_query_arg('csc_action', 'become_master', home_url('/'));
+        }
+
+        $urls = [
+            'calc'   => $calc_url ?: home_url('/'),
+            'cabinet'=> $cab_url,
+            'master' => $master_url,
+            // Текущий раздел определяется по page_id (надёжнее строкового сравнения URL:
+            // без www/http-vs-https/слэша на конце permalink может «не совпасть»).
+            'page_id'=> (int) $current_id,
+        ];
+        return apply_filters('csc_quick_menu_urls', $urls);
+    }
+}
+
+// ============================================================
+// 2. Печать CSS+JS (один раз на страницу, даже если меню
+//    рендерится несколько раз). Инлайн-вывод гарантирует, что
+//    активы попадают на страницу независимо от очереди
+//    wp_enqueue_* конкретной темы (шорткод может исполняться
+//    после wp_head уже отрендеренного буфера).
+// ============================================================
+if (!function_exists('csc_quick_menu_print_assets')) {
+    function csc_quick_menu_print_assets() {
+        static $printed = false;
+        if ($printed) return;
+        $printed = true;
+        ?>
+<style id="csc-quick-menu-css">
+/* ===== Быстрое меню «⋮» — цвета наследуют тему контейнера ===== */
+.csc-qm-wrap{position:absolute;top:14px;left:0;right:0;z-index:99998;display:flex;pointer-events:none;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
+.csc-qm{--qm-bg:rgba(255,255,255,.78);--qm-fg:#1e293b;--qm-br:rgba(15,23,42,.14);--qm-ring:rgba(59,130,246,.35);--qm-accent:#3b82f6;--qm-hover:rgba(59,130,246,.10);position:relative;pointer-events:auto;background:var(--qm-bg);border:1px solid var(--qm-br);border-radius:999px;box-shadow:0 6px 18px rgba(15,23,42,.10);display:flex;align-items:center;height:44px;padding:0 4px;backdrop-filter:blur(12px) saturate(160%);-webkit-backdrop-filter:blur(12px) saturate(160%);transition:box-shadow .25s ease,border-color .25s ease;max-width:min(94vw,520px)}
+[data-theme="dark"] .csc-qm,.csc-qm[data-theme="dark"]{--qm-bg:rgba(15,23,42,.72);--qm-fg:#f1f5f9;--qm-br:rgba(255,255,255,.16);--qm-ring:rgba(96,165,250,.35);--qm-accent:#60a5fa;--qm-hover:rgba(96,165,250,.14);box-shadow:0 6px 18px rgba(0,0,0,.45)}
+.csc-qm.open{border-color:var(--qm-accent);box-shadow:0 0 0 var(--qm-ring),0 8px 24px rgba(15,23,42,.16)}
+.csc-qm-toggle{flex:0 0 auto;width:40px;height:40px;border-radius:50%;border:none;background:transparent;color:var(--qm-fg);font-size:20px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;touch-action:none;user-select:none;-webkit-user-select:none;outline:none;transition:background .2s ease,transform .2s ease}
+.csc-qm-toggle:hover{background:var(--qm-hover)}
+.csc-qm-toggle:focus-visible{box-shadow:0 0 0 3px var(--qm-ring)}
+.csc-qm.dragging{cursor:grabbing}
+.csc-qm.dragging .csc-qm-toggle{cursor:grabbing}
+.csc-qm-items{display:flex;align-items:center;overflow:hidden;max-width:0;opacity:0;transition:max-width .35s cubic-bezier(.22,.9,.35,1),opacity .3s ease}
+.csc-qm.open .csc-qm-items{max-width:220px;opacity:1}
+.csc-qm-side-left .csc-qm-items{order:-1;padding-left:6px}
+.csc-qm-side-right .csc-qm-items{padding-right:6px}
+.csc-qm-item{flex:0 0 auto;width:38px;height:38px;margin:0 2px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--qm-fg);text-decoration:none;position:relative;transition:background .2s ease,color .2s ease}
+.csc-qm-item:hover{background:var(--qm-hover);color:var(--qm-accent)}
+.csc-qm-item.current{pointer-events:auto}
+.csc-qm-item svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+/* tooltip при наведении */
+.csc-qm-item::after{content:attr(data-tip);position:absolute;top:calc(100% + 8px);left:50%;transform:translateX(-50%) scale(.95);background:var(--qm-fg);color:var(--qm-bg);font-size:12px;line-height:1;padding:6px 9px;border-radius:8px;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .15s ease,transform .15s ease}
+.csc-qm-item:hover::after,.csc-qm-item:focus-visible::after{opacity:.95;transform:translateX(-50%) scale(1)}
+@media (prefers-reduced-motion:reduce){.csc-qm,.csc-qm-items,.csc-qm-item,.csc-qm-item::after{transition:none!important}}
+</style>
+<script id="csc-quick-menu-js">
+(function(){
+    'use strict';
+    if (window.CSC_QUICK_MENU_BOOTED) return;
+    window.CSC_QUICK_MENU_BOOTED = true;
+
+    var LS_POS  = 'csc_qm_pos_pct';      // горизонтальная позиция (процент от ширины окна)
+    var HOLD_MS = 300;                   // порог «удержания» для начала перетаскивания
+    var MOVE_TOL = 6;                    // px, ниже которых клик не считается перемещением
+
+    function each(sel, fn){ Array.prototype.forEach.call(document.querySelectorAll(sel), fn); }
+
+    each('.csc-qm', function(qm){
+        var wrap   = qm.parentNode;                       // .csc-qm-wrap
+        var toggle = qm.querySelector('.csc-qm-toggle');
+        var items  = qm.querySelector('.csc-qm-items');
+        if (!toggle || !items) return;
+
+        /* ---------- восстановление сохранённой позиции ---------- */
+        function place(){
+            var vw = Math.max(document.documentElement.clientWidth, 320);
+            var pct = parseFloat(localStorage.getItem(LS_POS) || '');
+            if (isNaN(pct)) pct = 50;                     // по умолчанию — центр
+            pct = Math.min(97, Math.max(3, pct));
+            var w = qm.offsetWidth || 52;
+            var left = Math.round(vw * pct / 100 - w / 2);
+            left = Math.max(4, Math.min(left, vw - w - 4));
+            qm.style.position = 'absolute';
+            qm.style.left = left + 'px';
+            qm.style.right = 'auto';
+            updateSide(left + w / 2, vw);
+        }
+        /* сторона раскрытия: правая половина экрана → тянемся ВЛЕВО и наоборот */
+        function updateSide(centerX, vw){
+            vw = vw || Math.max(document.documentElement.clientWidth, 320);
+            var openLeft = centerX > vw / 2;
+            qm.classList.toggle('csc-qm-side-left', openLeft);
+            qm.classList.toggle('csc-qm-side-right', !openLeft);
+        }
+
+        /* ---------- раскрытие/сворачивание ---------- */
+        function setOpen(open){
+            qm.classList.toggle('open', open);
+            toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        }
+        toggle.addEventListener('click', function(e){
+            if (qm.dataset.justDragged === '1') { e.preventDefault(); delete qm.dataset.justDragged; return; }
+            setOpen(!qm.classList.contains('open'));
+        });
+        document.addEventListener('click', function(e){
+            if (!qm.contains(e.target)) setOpen(false);
+        }, true);
+        document.addEventListener('keydown', function(e){
+            if (e.key === 'Escape') setOpen(false);
+        });
+
+        /* ---------- удержание ⇒ перетаскивание по горизонтали ---------- */
+        var drag = null;
+        toggle.addEventListener('pointerdown', function(e){
+            // ВАЖНО: здесь НЕ вызываем preventDefault — иначе браузер не
+            // генерирует click и раскрытие меню «не работает». Отмена
+            // скролла/выделения делается через CSS touch-action:none на кнопке.
+            var left0 = parseFloat(qm.style.left);
+            if (isNaN(left0)) left0 = qm.offsetLeft;      // фиксируем до первого move
+            drag = { x0: e.clientX, left0: left0, moved: false, active: false, pointerId: e.pointerId,
+                     hold: setTimeout(function(){
+                if (drag) { drag.active = true; qm.classList.add('dragging'); setOpen(true); try{ toggle.setPointerCapture(e.pointerId); }catch(_){} }
+            }, HOLD_MS) };
+        });
+        toggle.addEventListener('pointermove', function(e){
+            if (!drag) return;
+            var dx = e.clientX - drag.x0;
+            if (!drag.active) {
+                if (Math.abs(dx) > MOVE_TOL) { clearTimeout(drag.hold); drag = null; } // короткий свайп ≠ перетаскивание
+                return;
+            }
+            drag.moved = true;
+            var vw = Math.max(document.documentElement.clientWidth, 320);
+            var w  = qm.offsetWidth || 52;
+            var left = Math.max(4, Math.min(drag.left0 + dx, vw - w - 4));
+            qm.style.left = left + 'px';
+            updateSide(left + w / 2, vw);
+        });
+        function endDrag(){
+            if (!drag) return;
+            clearTimeout(drag.hold);
+            if (drag.active) {
+                var vw = Math.max(document.documentElement.clientWidth, 320);
+                var w  = qm.offsetWidth || 52;
+                var center = (parseFloat(qm.style.left) || qm.offsetLeft) + w / 2;
+                localStorage.setItem(LS_POS, String(Math.round(Math.min(97, Math.max(3, center * 100 / vw)))));
+                if (drag.moved) qm.dataset.justDragged = '1';
+                qm.classList.remove('dragging');
+            }
+            drag = null;
+        }
+        toggle.addEventListener('pointerup', endDrag);
+        toggle.addEventListener('pointercancel', endDrag);
+        window.addEventListener('resize', function(){ place(); });
+
+        /* ---------- логика активного раздела ----------
+           Раздел, на котором находится посетитель, НЕ активен: его значок
+           заменён на переход к странице калькулятора. Подмена выполнена
+           уже НА СЕРВЕРЕ (PHP): current-элемент приходит с href=калькулятор,
+           data-current="1", иконкой-калькулятором и data-tip="Рассчитать услугу".
+           Здесь — только accessibility-атрибуты и защита от перехода
+           по ссылке на текущую страницу (без перезагрузки). */
+        each('.csc-qm-item', function(it){
+            if (it.getAttribute('data-current') !== '1') return;
+            it.classList.add('current');
+            it.setAttribute('aria-disabled', 'false'); // ссылка рабочая — ведёт на калькулятор
+            it.addEventListener('click', function(e){
+                var u;
+                try { u = new URL(it.getAttribute('href') || '', location.origin); } catch (_) { return; }
+                if (u.pathname.replace(/\/+$/, '') === location.pathname.replace(/\/+$/, '')) {
+                    e.preventDefault(); // уже на этой странице — не перезагружать
+                }
+            });
+        });
+
+        place();
+    });
+})();
+</script>
+        <?php
+    }
+}
+
+// ============================================================
+// 3. SVG-иконки и рендер разметки.
+// ============================================================
+if (!function_exists('csc_quick_menu_icons')) {
+    function csc_quick_menu_icons($name) {
+        switch ($name) {
+            case 'master': // человечек с гаечным ключом
+                return '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9.5" cy="6.5" r="3.2"/><path d="M4.5 20v-1.6c0-2.4 2.2-4.2 5-4.2 1.2 0 2.3.3 3.2.9"/><path d="M16.7 13.9l3.1-3.1a1.9 1.9 0 0 1 2.6 2.6l-3.1 3.1-1.3-.4-.4-1.3z"/><path d="M17.6 16.1l2.3 2.3"/></svg>';
+            case 'cabinet': // человечек
+                return '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="7.5" r="3.6"/><path d="M5 20.5c0-3.4 3.1-5.6 7-5.6s7 2.2 7 5.6"/></svg>';
+            case 'calc': // калькулятор (замена неактивного значка)
+                return '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2.5"/><line x1="8" y1="7" x2="16" y2="7"/><circle cx="9" cy="12" r=".6"/><circle cx="12" cy="12" r=".6"/><circle cx="15" cy="12" r=".6"/><circle cx="9" cy="16" r=".6"/><circle cx="12" cy="16" r=".6"/><circle cx="15" cy="16" r=".6"/></svg>';
         }
         return '';
     }
 }
 
-if (!function_exists('csc_quick_menu_current_section')) {
+if (!function_exists('csc_render_quick_menu')) {
     /**
-     * Раздел, на котором находится посетитель: 'calculator' | 'cabinet' |
-     * 'master' | '' — определяется по ID текущей страницы/поста и её шорткодам
-     * (плюс фолбэк по id контейнеров, если рендер идёт не через page_id).
+     * $section = 'calculator' | 'cabinet' — на каком разделе идёт рендер.
+     * Значок текущего раздела НЕ АКТИВЕН как раздел: он подменён (на сервере)
+     * на переход к странице калькулятора («Рассчитать услугу»).
      */
-    function csc_quick_menu_current_section() {
-        static $cached = null;
-        if ($cached !== null) {
-            return $cached;
-        }
-        $cached  = '';
-        $content = '';
-        $qid     = get_queried_object_id();
-        if ($qid) {
-            $content = (string) get_post_field('post_content', $qid);
-        }
-        if (has_shortcode($content, 'service_calculator')) {
-            $cached = 'calculator';
-        } elseif (has_shortcode($content, 'csc_personal_cabinet')) {
-            $cached = 'cabinet';
-        } elseif (has_shortcode($content, 'csc_become_master')) {
-            $cached = 'master';
-        } else {
-            // Фолбэк: прямой вызов билдера shortcode без контекста запроса.
-            $id = is_singular() ? (int) get_the_ID() : 0;
-            if ($id) {
-                $c2 = (string) get_post_field('post_content', $id);
-                if (has_shortcode($c2, 'service_calculator'))         $cached = 'calculator';
-                elseif (has_shortcode($c2, 'csc_personal_cabinet'))   $cached = 'cabinet';
-                elseif (has_shortcode($c2, 'csc_become_master'))      $cached = 'master';
-            }
-        }
-        return $cached;
-    }
-}
+    function csc_render_quick_menu($section = 'calculator') {
+        $urls  = csc_quick_menu_build_urls();
+        $items = [];
 
-if (!function_exists('csc_quick_menu_urls')) {
-    /**
-     * URL пунктов меню: страница с шорткодом [csc_become_master] и страница ЛК.
-     */
-    function csc_quick_menu_urls() {
-        // Мастер: страница с [csc_become_master] → главная (фолбэк).
-        $master_url = csc_quick_menu_find_shortcode_page('csc_become_master');
-        $master_url = $master_url ? esc_url($master_url) : esc_url(home_url('/'));
-
-        // Кабинет: опция csc_cabinet_page_id (используется и в push deep-link)
-        // → страница с [csc_personal_cabinet] → главная (фолбэк).
-        $cab_id  = absint(get_option('csc_cabinet_page_id', 0));
-        $cab_url = ($cab_id && get_permalink($cab_id)) ? esc_url(get_permalink($cab_id)) : '';
-        if (!$cab_url) {
-            $found   = csc_quick_menu_find_shortcode_page('csc_personal_cabinet');
-            $cab_url = $found ? esc_url($found) : esc_url(home_url('/'));
-        }
-
-        // Калькулятор: страница с [service_calculator] → главная (фолбэк).
-        $calc_url = csc_quick_menu_find_shortcode_page('service_calculator');
-        $calc_url = $calc_url ? esc_url($calc_url) : esc_url(home_url('/'));
-
-        return [
-            'master'  => $master_url,
-            'cabinet' => $cab_url,
-            'calc'    => $calc_url,
-            'section' => csc_quick_menu_current_section(),
-            'labels'  => [
-                'menu'    => __('Меню', 'csc'),
-                'master'  => __('Стать мастером', 'csc'),
-                'cabinet' => __('Личный кабинет', 'csc'),
-                'calc'    => __('Рассчитать услугу', 'csc'),
-            ],
+        // 1) Стать мастером
+        $items[] = [
+            'key'   => 'master',
+            'href'  => $urls['master'],
+            'tip'   => 'Стать мастером',
+            'icon'  => 'master',
+            'cur'   => ($section === 'master'),
         ];
-    }
-}
+        // 2) Личный кабинет
+        $items[] = [
+            'key'   => 'cabinet',
+            'href'  => $urls['cabinet'],
+            'tip'   => 'Личный кабинет',
+            'icon'  => 'cabinet',
+            'cur'   => ($section === 'cabinet'),
+        ];
 
-if (!function_exists('csc_quick_menu_assets')) {
-    /**
-     * Инлайн-CSS + JS быстрого меню. Выводится один раз за страницу
-     * (статический флаг), независимо от того, сколько хост-шорткодов его запросили.
-     */
-    function csc_quick_menu_assets() {
-        static $printed = false;
-        if ($printed) {
-            return;
-        }
-        $printed = true;
-
-        $cfg = csc_quick_menu_urls();
+        ob_start();
+        csc_quick_menu_print_assets();
         ?>
-<style id="csc-quick-menu-css">
-/* ===== Быстрое меню плагина (.csc-qm) ===== */
-/* Все цвета — через переменные темы страницы; fallback-значения — константы
-   light-темы, чтобы меню выглядело корректно и вне калькулятора/кабинета. */
-.csc-qm {
-    position: fixed;
-    top: 14px;
-    z-index: 99998;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 5px 7px;
-    border-radius: 999px;
-    border: 1px solid var(--csc-border, rgba(255,255,255,0.6));
-    background: var(--csc-card, rgba(255,255,255,0.5));
-    box-shadow: var(--csc-shadow, 0 4px 12px rgba(0,0,0,0.1));
-    color: var(--csc-text, #1e293b);
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-    user-select: none;
-    -webkit-user-select: none;
-    touch-action: manipulation; /* жесты рисует сам обработчик pointer-drag */
-}
-@supports ((backdrop-filter: blur(10px)) or (-webkit-backdrop-filter: blur(10px))) {
-    .csc-qm { backdrop-filter: blur(15px) saturate(180%); -webkit-backdrop-filter: blur(15px) saturate(180%); }
-}
-/* Тёмная тема. Источник переменных — ближайший предок с data-theme="dark":
-   у калькулятора это #csc-calculator, у кабинета/страницы — body. Значения
-   соответствуют dark-палитре обоих шорткодов. */
-[data-theme="dark"] .csc-qm,
-.csc-qm[data-theme="dark"] {
-    --csc-card: rgba(30,41,59,0.72);
-    --csc-text: #f1f5f9;
-    --csc-border: rgba(255,255,255,0.14);
-    --csc-shadow: 0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.15);
-    --csc-ctl-ring: rgba(59,130,246,0.28);
-}
-[data-theme="dark"] .csc-qm .csc-qm-tip,
-.csc-qm[data-theme="dark"] .csc-qm-tip {
-    background: #f1f5f9;
-    color: #0f172a;
-}
-.csc-qm-button {
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    border: 1px solid var(--csc-border, rgba(255,255,255,0.6));
-    background: transparent;
-    color: inherit;
-    font-size: 20px;
-    line-height: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    padding: 0;
-    outline: none;
-    flex: 0 0 auto;
-    transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
-}
-.csc-qm-button:hover { transform: scale(1.08); border-color: var(--csc-primary, #3b82f6); }
-.csc-qm-button:focus-visible { box-shadow: 0 0 0 3px var(--csc-ctl-ring, rgba(59,130,246,0.18)); }
-.csc-qm-grip { font-size: 18px; }
-/* Пункты: скрыты в свёрнутом контуре, растягиваются вместе с ним */
-.csc-qm-item {
-    width: 0;
-    height: 40px;
-    overflow: hidden;
-    border-radius: 50%;
-    border: 1px solid transparent;
-    background: transparent;
-    color: inherit;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    padding: 0;
-    opacity: 0;
-    flex: 0 0 auto;
-    text-decoration: none;
-    white-space: nowrap;
-    transition: width 0.28s ease, opacity 0.22s ease, border-color 0.2s ease, background 0.2s ease;
-}
-.csc-qm.open .csc-qm-item {
-    width: 40px;
-    opacity: 1;
-    border-color: var(--csc-border, rgba(255,255,255,0.6));
-}
-.csc-qm-item:hover { border-color: var(--csc-primary, #3b82f6); background: var(--csc-ctl-ring, rgba(59,130,246,0.18)); }
-.csc-qm-item svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: 0 0 auto; }
-/* Подсказка при наведении */
-.csc-qm-tip {
-    position: absolute;
-    top: calc(100% + 8px);
-    left: 50%;
-    transform: translateX(-50%) scale(0.95);
-    background: var(--csc-text, #1e293b);
-    color: var(--csc-card, #fff);
-    font-size: 12px;
-    line-height: 1.2;
-    padding: 5px 10px;
-    border-radius: 8px;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 0.15s ease, transform 0.15s ease;
-}
-.csc-qm-item { position: relative; }
-.csc-qm-item:hover .csc-qm-tip,
-.csc-qm-item:focus-visible .csc-qm-tip { opacity: 0.95; transform: translateX(-50%) scale(1); }
-/* Состояние перетаскивания */
-.csc-qm.dragging { border-color: var(--csc-primary, #3b82f6); opacity: 0.95; cursor: ew-resize; }
-.csc-qm.dragging .csc-qm-item { transition: none; }
-/* Неактивный (текущий) раздел: значок подменён на переход к калькулятору */
-.csc-qm-item.current { opacity: 0.55; }
-.csc-qm-item.current:hover { opacity: 1; }
-@media (max-width: 768px) {
-    .csc-qm { top: 10px; padding: 4px 6px; }
-    .csc-qm-button, .csc-qm.open .csc-qm-item { width: 34px; height: 34px; }
-    .csc-qm-item { height: 34px; }
-    .csc-qm-button { font-size: 17px; }
-    .csc-qm-item svg { width: 19px; height: 19px; }
-}
-@media (prefers-reduced-motion: reduce) {
-    .csc-qm, .csc-qm * { transition-duration: 0.01ms !important; }
-}
-</style>
-<script id="csc-quick-menu-js">
-(function () {
-    'use strict';
-    if (window.cscQuickMenu) return; // один инстанс на страницу
-
-    var CFG = <?php echo wp_json_encode($cfg); ?>;
-    var LS_KEY = 'csc_qm_pos_x';   // горизонтальная позиция (px от левого края)
-    var EDGE_GAP = 12;             // минимальный отступ от краёв экрана
-    var HOLD_MS = 350;             // удержание = начало перетаскивания
-    var MOVE_TOL = 6;              // px, после которых движение считается drag, а не click
-
-    // Значок 1: человечек с гаечным ключом («Стать мастером»)
-    var ICON_MASTER = '<svg viewBox="0 0 24 24" aria-hidden="true">' +
-        '<circle cx="9.5" cy="7" r="3.2"/>' +
-        '<path d="M3.8 19.5c0-3.4 2.6-5.6 5.7-5.6s5.7 2.2 5.7 5.6"/>' +
-        '<path d="M18.9 10.6l-1.5 1.5-.9-.9-1.2.3-.3 1.2.9.9-1.5 1.5 1.7 1.7 1.5-1.5.9.9 1.2-.3.3-1.2-.9-.9 1.5-1.5z"/>' +
-        '</svg>';
-    // Значок 2: человечек («Личный кабинет»)
-    var ICON_PERSON = '<svg viewBox="0 0 24 24" aria-hidden="true">' +
-        '<circle cx="12" cy="7.5" r="3.6"/>' +
-        '<path d="M5 20c0-3.8 3.1-6.2 7-6.2s7 2.4 7 6.2"/>' +
-        '</svg>';
-
-    function clamp(x, el) {
-        var maxX = Math.max(EDGE_GAP, window.innerWidth - el.offsetWidth - EDGE_GAP);
-        return Math.min(Math.max(x, EDGE_GAP), maxX);
-    }
-
-    function restorePosition(el) {
-        var raw = null;
-        try { raw = localStorage.getItem(LS_KEY); } catch (e) {}
-        var x = raw === null ? null : parseFloat(raw);
-        if (x === null || isNaN(x)) {
-            // по умолчанию — справа вверху (рядом с кнопкой темы)
-            el.style.left = 'auto';
-            el.style.right = EDGE_GAP + 'px';
-            return;
-        }
-        el.style.left = clamp(x, el) + 'px';
-        el.style.right = 'auto';
-    }
-
-    function savePosition(el) {
-        try { localStorage.setItem(LS_KEY, String(Math.round(el.getBoundingClientRect().left))); } catch (e) {}
-    }
-
-    // Значок 3: калькулятор — подмена неактивного (текущего) раздела
-    var ICON_CALC = '<svg viewBox="0 0 24 24" aria-hidden="true">' +
-        '<rect x="5" y="3" width="14" height="18" rx="2.5"/>' +
-        '<line x1="8" y1="7" x2="16" y2="7"/>' +
-        '<circle cx="9" cy="12" r=".6"/><circle cx="12" cy="12" r=".6"/><circle cx="15" cy="12" r=".6"/>' +
-        '<circle cx="9" cy="16" r=".6"/><circle cx="12" cy="16" r=".6"/><circle cx="15" cy="16" r=".6"/>' +
-        '</svg>';
-
-    function escAttr(s) {
-        return String(s == null ? '' : s)
-            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
-
-    // Пункт меню. Если ключ совпадает с текущим разделом (CFG.section),
-    // раздел НЕ активен: его значок подменён на переход к калькулятору.
-    function itemHTML(key, href, label, icon) {
-        var cur   = CFG.section && CFG.section === key;
-        var khref = cur ? (CFG.calc || '/') : href;
-        var klbl  = cur ? CFG.labels.calc : label;
-        var kicon = cur ? ICON_CALC : icon;
-        return '<a class="csc-qm-item csc-qm-' + key + (cur ? ' current' : '') + '"' +
-            ' href="' + escAttr(khref) + '"' +
-            ' aria-label="' + escAttr(klbl) + '"' +
-            (cur ? ' data-current="1"' : '') + '>' +
-            kicon + '<span class="csc-qm-tip">' + escAttr(klbl) + '</span></a>';
-    }
-
-    function samePath(href) {
-        try {
-            var u = new URL(href, location.origin);
-            return u.pathname.replace(/\/+$/, '') === location.pathname.replace(/\/+$/, '');
-        } catch (e) { return false; }
-    }
-
-    function build() {
-        if (document.querySelector('.csc-qm')) return;
-        if (!document.body) return;
-
-        // На странице ЛК меню появляется только после авторизации: до входа
-        // оно перекрывало бы форму, а пункт «Личный кабинет» был бы циклической
-        // ссылкой. Ждём класс .logged-in (навешивается в renderOrders).
-        // Исключение: если текущий раздел сам «cabinet», ссылка на него всё
-        // равно никуда не ведёт — меню можно монтировать сразу.
-        var cabinet = document.getElementById('csc-cabinet');
-        if (cabinet && !cabinet.classList.contains('logged-in') && CFG.section !== 'cabinet') {
-            var mo = new MutationObserver(function () {
-                if (cabinet.classList.contains('logged-in')) {
-                    mo.disconnect();
-                    build();
-                }
-            });
-            mo.observe(cabinet, { attributes: true, attributeFilter: ['class'] });
-            return;
-        }
-
-        var el = document.createElement('div');
-        el.className = 'csc-qm';
-        el.setAttribute('role', 'toolbar');
-        el.setAttribute('aria-label', CFG.labels.menu);
-
-        // Тёмная тема: калькулятор держит data-theme на контейнере, а меню —
-        // fixed и живёт в <body>. Копируем активную тему на сам элемент и
-        // слушаем её изменения (переключатель темы, системная тема).
-        function themeSource() {
-            var c = document.getElementById('csc-calculator');
-            if (c && c.getAttribute('data-theme')) return c.getAttribute('data-theme');
-            if (document.body.getAttribute('data-theme')) return document.body.getAttribute('data-theme');
-            try {
-                var saved = localStorage.getItem('csc_calc_theme');
-                if (saved) return saved;
-            } catch (e) {}
-            if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
-            return 'light';
-        }
-        function syncTheme() {
-            var t = themeSource();
-            if (t === 'dark') el.setAttribute('data-theme', 'dark');
-            else el.removeAttribute('data-theme');
-        }
-        syncTheme();
-        new MutationObserver(syncTheme).observe(document.body, { attributes: true, attributeFilter: ['data-theme'] });
-        var calcEl = document.getElementById('csc-calculator');
-        if (calcEl) new MutationObserver(syncTheme).observe(calcEl, { attributes: true, attributeFilter: ['data-theme'] });
-        if (window.matchMedia) {
-            var mq = window.matchMedia('(prefers-color-scheme: dark)');
-            if (mq.addEventListener) mq.addEventListener('change', syncTheme);
-            else if (mq.addListener) mq.addListener(syncTheme);
-        }
-
-        el.innerHTML =
-            '<button type="button" class="csc-qm-button csc-qm-toggle" aria-expanded="false" aria-haspopup="true" title="' + escAttr(CFG.labels.menu) + '">' +
-                '<span class="csc-qm-grip" aria-hidden="true">&#8942;</span>' +
-            '</button>' +
-            itemHTML('master',  CFG.master,  CFG.labels.master,  ICON_MASTER) +
-            itemHTML('cabinet', CFG.cabinet, CFG.labels.cabinet, ICON_PERSON);
-        document.body.appendChild(el);
-
-        restorePosition(el);
-
-        var toggle = el.querySelector('.csc-qm-toggle');
-
-        // ---- раскрытие/сворачивание: контур растягивается в свободную сторону ----
-        function setOpen(open) {
-            var rect = el.getBoundingClientRect();
-            var centerX = rect.left + rect.width / 2;
-            // Кнопка в правой половине экрана — растём влево (row-reverse),
-            // в левой — вправо (row).
-            el.style.flexDirection = (open && centerX > window.innerWidth / 2)
-                ? 'row-reverse' : 'row';
-            el.classList.toggle('open', open);
-            toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-        }
-        toggle.addEventListener('click', function () {
-            setOpen(!el.classList.contains('open'));
-        });
-        // Клик вне меню закрываем на pointerdown: после навигации по <a>
-        // событие click может не дойти, а pointerdown гарантированно
-        // предшествует любому клику/тапу.
-        document.addEventListener('pointerdown', function (ev) {
-            if (el.classList.contains('open') && !el.contains(ev.target)) setOpen(false);
-        });
-        document.addEventListener('keydown', function (ev) {
-            if (ev.key === 'Escape' && el.classList.contains('open')) setOpen(false);
-        });
-
-        // Защита от «мёртвых» ссылок: если пункт ведёт на текущую страницу
-        // (фолбэк home_url() или совпадение разделов) — не перезагружать её.
-        Array.prototype.forEach.call(el.querySelectorAll('.csc-qm-item'), function (a) {
-            a.addEventListener('click', function (ev) {
-                if (!ev.metaKey && !ev.ctrlKey && !ev.shiftKey && samePath(a.getAttribute('href'))) {
-                    ev.preventDefault();
-                    setOpen(false);
-                }
-            });
-        });
-
-        // ---- удержание = перетаскивание по горизонтали ----
-        var pid = null, startX = 0, startLeft = 0, holdTimer = null, moved = false;
-
-        function beginDrag() {
-            moved = true;
-            el.classList.add('dragging');
-            setOpen(false);
-            try { toggle.setPointerCapture(pid); } catch (e) {}
-        }
-
-        toggle.addEventListener('pointerdown', function (ev) {
-            if (ev.button !== undefined && ev.button !== 0) return;
-            pid = ev.pointerId;
-            startX = ev.clientX;
-            startLeft = el.getBoundingClientRect().left;
-            moved = false;
-            // preventDefault делаем ТОЛЬКО когда drag реально начался —
-            // иначе браузер не сгенерирует «клик» и кнопка перестанет открывать меню.
-            holdTimer = setTimeout(beginDrag, HOLD_MS);
-        });
-
-        toggle.addEventListener('pointermove', function (ev) {
-            if (pid === null || ev.pointerId !== pid) return;
-            var dx = ev.clientX - startX;
-            if (!moved && Math.abs(dx) > MOVE_TOL) {
-                clearTimeout(holdTimer);
-                beginDrag();
-            }
-            if (moved) {
-                ev.preventDefault(); // глулим скролл/выделение на touch-устройствах
-                el.style.left = clamp(startLeft + dx, el) + 'px';
-                el.style.right = 'auto';
-            }
-        });
-
-        function endDrag(ev) {
-            if (pid === null || (ev && ev.pointerId !== pid)) return;
-            clearTimeout(holdTimer);
-            if (moved) {
-                savePosition(el);
-                // подавляем «клик», родившийся из перетаскивания
-                var kill = function (ce) { ce.stopPropagation(); ce.preventDefault(); };
-                toggle.addEventListener('click', kill, { capture: true, once: true });
-                el.classList.remove('dragging');
-            }
-            pid = null;
-            moved = false;
-        }
-        toggle.addEventListener('pointerup', endDrag);
-        toggle.addEventListener('pointercancel', endDrag);
-
-        // ---- пересчёт позиции при изменении размера окна ----
-        var rzT = null;
-        window.addEventListener('resize', function () {
-            clearTimeout(rzT);
-            rzT = setTimeout(function () {
-                var x = el.getBoundingClientRect().left;
-                el.style.left = clamp(x, el) + 'px';
-                el.style.right = 'auto';
-                savePosition(el);
-            }, 150);
-        });
-    }
-
-    window.cscQuickMenu = { mount: build };
-
-    function boot() { build(); }
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', boot);
-        // Резервный запуск: если страница рендерится в буфер и вставляется
-        // в DOM после DOMContentLoaded (некоторые конструкторы/темы),
-        // дожидаемся полной загрузки.
-        window.addEventListener('load', boot);
-    } else {
-        boot();
-    }
-})();
-</script>
+<div class="csc-qm-wrap">
+    <div class="csc-qm csc-qm-side-right" data-page-id="<?php echo (int) $urls['page_id']; ?>" role="navigation" aria-label="Быстрое меню">
+        <button type="button" class="csc-qm-toggle" aria-label="Быстрое меню" aria-expanded="false" title="Меню">&#8942;</button>
+        <div class="csc-qm-items">
+            <?php foreach ($items as $it) :
+                // Текущий раздел: значок подменяется на переход к калькулятору
+                $href = $it['cur'] ? $urls['calc'] : $it['href'];
+                $tip  = $it['cur'] ? 'Рассчитать услугу' : $it['tip'];
+                $icon = $it['cur'] ? 'calc' : $it['icon'];
+            ?>
+            <a class="csc-qm-item<?php echo $it['cur'] ? ' current' : ''; ?>"
+               href="<?php echo esc_url($href); ?>"
+               data-key="<?php echo esc_attr($it['key']); ?>"
+               <?php echo $it['cur'] ? 'data-current="1" ' : ''; ?>data-tip="<?php echo esc_attr($tip); ?>"
+               title="<?php echo esc_attr($tip); ?>">
+                <?php echo csc_quick_menu_icons($icon); ?>
+            </a>
+            <?php endforeach; ?>
+        </div>
+    </div>
+</div>
         <?php
+        return ob_get_clean();
     }
 }

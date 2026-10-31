@@ -53,6 +53,7 @@ function csc_personal_cabinet_shortcode() {
     --csc-border: #334155;
 }
 #csc-cabinet {
+    position: relative; /* опора для absolute-обёртки быстрого меню «⋮» (.csc-qm-wrap) */
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     background: var(--csc-bg);
     color: var(--csc-text);
@@ -411,8 +412,9 @@ function csc_personal_cabinet_shortcode() {
 </style>
 
 <div id="csc-cabinet">
-    <?php if (function_exists('csc_quick_menu_assets')) csc_quick_menu_assets(); ?>
     <div class="csc-toast" id="csc-toast"></div>
+
+    <?php if (function_exists('csc_render_quick_menu')) echo csc_render_quick_menu('cabinet'); ?>
 
     <!-- Кнопка уведомлений клиента -->
     <button type="button" class="csc-notifications-client-btn" id="csc-client-notif-btn" title="Уведомления">
