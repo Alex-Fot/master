@@ -856,25 +856,24 @@ if (!function_exists('csc_admin_restart_routing')) {
         if (!is_array($order_data)) {
             return false;
         }
-        $all_orders[$order_number] = $order_data;
 
-        $order_data['routing_status'] = 'searching';
-        $order_data['routing_circle'] = 1;   // новый круг всегда с 1
-        $order_data['rejected_by'] = [];
-        $order_data['current_candidate'] = null;
-        $order_data['offer_time'] = null;
-        $order_data['tg_message_id'] = null;
-        $order_data['routing_started_at'] = time();
-        $order_data['routing_attempts'] = 0;
+        $all_orders[$order_number]['routing_status'] = 'searching';
+        $all_orders[$order_number]['routing_circle'] = 1;   // новый круг всегда с 1
+        $all_orders[$order_number]['rejected_by'] = [];
+        $all_orders[$order_number]['current_candidate'] = null;
+        $all_orders[$order_number]['offer_time'] = null;
+        $all_orders[$order_number]['tg_message_id'] = null;
+        $all_orders[$order_number]['routing_started_at'] = time();
+        $all_orders[$order_number]['routing_attempts'] = 0;
         // ИСПРАВЛЕНО: при перезапуске поиска статус должен отражать активный
         // поиск ('searching'), а не 'pending'. Раньше здесь выставлялся
         // CSC_STATUS_PENDING и сразу после этого вызывался
         // csc_route_order_to_next(), который начинался с проверки
         // status !== 'searching' и молча выходил (route_skipped) — оффер
         // первому кандидату никогда не отправлялся, заявки «зависали в ожидает».
-        $order_data['status'] = CSC_STATUS_SEARCHING;
+        $all_orders[$order_number]['status'] = CSC_STATUS_SEARCHING;
 
-        csc_update_order($order_number, $order_data);
+        csc_update_order($order_number, $all_orders[$order_number]);
 
         if (function_exists('csc_cache_delete_orders')) {
             csc_cache_delete_orders();
