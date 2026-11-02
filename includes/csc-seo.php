@@ -1034,20 +1034,28 @@ if (!function_exists('csc_seo_geo_canonical_compat')) {
 }
 
 // Гео-SSR: H1 и вводный текст (индексный уникальный контент на город) + перелинковка город↔город.
-add_action('wp_footer', 'csc_seo_geo_landing_content', 5);
+// Рендерится ДО каталога через the_content (фильтр), а не в footer: корректная иерархия заголовков
+// (H1 города → H2 разделов каталога) и индексируемость контента без JS.
+add_filter('the_content', 'csc_seo_geo_landing_content', 5);
 if (!function_exists('csc_seo_geo_landing_content')) {
-    function csc_seo_geo_landing_content() {
+    function csc_seo_geo_landing_content($content) {
+        // Только главный цикл, только страница калькулятора, только по ЧПУ-гео-URL.
+        if (!is_main_query() || !is_singular() || is_admin()) return $content;
         $s = csc_seo_get_settings();
-        if (empty($s['geo_pages_enabled']) || empty($s['ssr_catalog'])) return;
-        $city = csc_seo_geo_current_city();
-        $data = $city ? csc_seo_geo_city_data($city) : [];
-        if (!$data) return;
+        if (empty($s['geo_pages_enabled'])) return $content;
+        $city = function_exists('csc_seo_geo_current_city') ? csc_seo_geo_current_city() : '';
+        // Вводимый контент генерируется только для ЧПУ-режима (?csc_city= рендерит обычный калькулятор).
+        $is_chpu = (string)get_query_var('csc_geo_city') !== '';
+        if (!$is_chpu || !$city) return $content;
+        if (!empty($GLOBALS['csc_geo_landing_done'])) return $content; // анти-рекурсия
+        $data = csc_seo_geo_city_data($city);
+        if (!$data) return $content;
         $h1    = wp_strip_all_tags(csc_seo_apply_tokens(apply_filters('csc_seo_meta_text', (string)($s['geo_h1_tpl'] ?? 'Услуги в %city%'))));
         $intro = trim((string)($s['geo_intro_tpl'] ?? ''));
-        echo '<div id="csc-geo-landing" style="max-width:900px;margin:0 auto;padding:8px 16px">';
-        echo '<h1 class="screen-reader-text">' . esc_html($h1) . '</h1>';
+        $html  = '<div id="csc-geo-landing" style="max-width:900px;margin:0 auto;padding:8px 16px">';
+        $html .= '<h1 class="screen-reader-text">' . esc_html($h1) . '</h1>';
         if ($intro !== '') {
-            echo '<p>' . esc_html(csc_seo_apply_tokens(apply_filters('csc_seo_meta_text', $intro))) . '</p>';
+            $html .= '<p>' . esc_html(csc_seo_apply_tokens(apply_filters('csc_seo_meta_text', $intro))) . '</p>';
         }
         if (!empty($s['geo_crosslinks']) && function_exists('csc_get_cities')) {
             $max   = max(1, (int)($s['geo_cross_max'] ?? 12));
@@ -1059,11 +1067,13 @@ if (!function_exists('csc_seo_geo_landing_content')) {
                 if ($u) $links[] = '<a href="' . esc_url($u) . '">' . esc_html($c['name'] ?? $slug) . '</a>';
             }
             if ($links) {
-                echo '<nav aria-label="Города"><p><strong>' . esc_html($s['cross_cities_label'] ?? 'Мы работаем также в городах:') . '</strong> '
-                   . implode(', ', $links) . '</p></nav>';
+                $html .= '<nav aria-label="Города"><p><strong>' . esc_html($s['cross_cities_label'] ?? 'Мы работаем также в городах:') . '</strong> '
+                       . implode(', ', $links) . '</p></nav>';
             }
         }
-        echo '</div>';
+        $html .= '</div>';
+        $GLOBALS['csc_geo_landing_done'] = true; // анти-рекурсия (если контент матчится повторно)
+        return $html . $content;
     }
 }
 
