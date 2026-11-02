@@ -77,6 +77,14 @@ OpenStreetMap Nominatim (геокодинг, лимит 1 запрос/сек), 
 
 == Changelog ==
 
+= 9.3 =
+* SEO: промышленный SEO-модуль (includes/csc-seo.php) — meta title/description с токенами (%sitename%, %price_from%, %cities%), Open Graph / Twitter Card, canonical, JSON-LD @graph (LocalBusiness/Service/Offer/FAQPage/BreadcrumbList), XML-sitemap (единая и сегментированная >5000 URL + индексная карта), robots.txt с X-Robots-Tag для служебных экранов.
+* SEO: SSR-каталог услуг (#csc-catalog-ssr) — разделы H2 с якорями, услуги H3 с ценами индексируются без JS; footer-перелинковка категорий и городов; defer тяжёлых скриптов (html2canvas); alt-fallback изображений.
+* SEO: админ-модуль «SEO (CSC)» — 12+ вкладок, декларативная схема настроек (~100 параметров, каждый оптимизационный пункт управляется отдельно), экспорт/импорт конфигурации, сброс к дефолтам, виджет диагностики (П14: покрытие каталога, режим карты, статус гео-страниц).
+* SEO: автопинг поисковых систем (Google indexings API / Яндекс ping) по cron с логированием (П13).
+* SEO П15 Гео-страницы: городские лендинги /uslugi-{city}/ (rewrite по активным городам, авто-flush правил при сохранении), уникальные Title/Description/H1/intro-текст с токеном %city%, canonical self или query (переключатель), перелинковка город↔город, ЧПУ-URL в sitemap, опциональный 301 ?csc_city= → ЧПУ. Всё выключено по умолчанию (обратная совместимость).
+* Интеграция: фолбэк не дублировать мета при активном Yoast/RankMath; фильтры csc_get_sections_result / csc_get_items_result; AJAX отдаёт seo_desc карточек; очистка csc_seo_* опций в uninstall.php.
+
 = 9.0.1 =
 * Web Push: шифрование payload приведено к канону RFC 8291/8188 (info-строка "WebPush: info\0" + ключи клиента/сервера, salt через HKDF, padding до record_size) — проверено roundtrip-тестом против Python-эталона (http_ece/pywebpush); исправлен вызов openssl_pkey_derive() (fatal на PHP 8).
 * Routing: csc_check_routing_timeouts() обрабатывает зависшие заявки без offer_time по routing_started_at; просроченные офферы больше не «вися» в статусе «Ожидает».

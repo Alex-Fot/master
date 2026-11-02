@@ -6,6 +6,9 @@
 * NEW: админка «Настройки → SEO (CSC)» с переключателями подмодулей и LocalBusiness-карточкой; колонки «SEO-описание» в «Разделы (CSC)»/«Услуги (CSC)» (хранение csc_seo_desc_map, слияние через фильтры csc_get_sections_result/csc_get_items_result).
 * NEW: footer-перелинковка категорий/городов; defer html2canvas (Core Web Vitals); alt-fallback изображений; canonical для страниц плагина.
 * TWEAK: AJAX csc_get_form_data отдаёт seo_desc; карточки услуг/плитки разделов получают title/role/tabindex; readme Tags расширены; uninstall чистит csc_seo_* опции.
+* NEW (П13): автопинг поисковых систем (Google Indexing API / Яндекс ping) по cron-расписанию с логированием и ручным запуском из админки.
+* NEW (П14): виджет диагностики в «SEO (CSC)» — покрытие каталога seo_desc, режим XML-карты (единая / сегментированная >5000 URL + индексная карта {path}-index.xml), статус гео-страниц; экспорт/импорт/сброс конфигурации SEO.
+* NEW (П15): городские landing-страницы /uslugi-{city}/ — rewrite по активным городам с авто-flush правил при сохранении настроек; уникальные Title/Description/H1/intro-текст с токеном %city%; canonical self (или консервативно на ?csc_city= — переключатель); SSR H1+вводный текст+перелинковка город↔город (лимит настраиваемый); ЧПУ-гео-URL в sitemap вместо query-фильтров; JSON-LD Service.areaServed по городу; опциональный 301 ?csc_city=slug → /uslugi-slug/ (сохранение utm). Отдельная вкладка «🌍 Гео-страницы» в схеме настроек. Всё выключено по умолчанию (обратная совместимость).
 
 == 9.0.1 ==
 * Web Push (CRITICAL): шифрование payload приведено к канону RFC 8291/8188 — info-строка "WebPush: info\0" + UAPublicKey||ASPublicKey, salt через HKDF-SHA256, padding до record_size; раньше браузеры не могли расшифровать сообщения (нестандартный секрет "WebPush-AESGCM\0"). Roundtrip проверен против Python-эталона http_ece (движок pywebpush).
