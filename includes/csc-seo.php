@@ -721,6 +721,15 @@ if (!function_exists('csc_seo_json_ld')) {
 
         if (!$graph) return;
 
+        // Расширяемые точки: фильтры узлов (П17 городской рейтинг и сторонние интеграции).
+        $type_map = ['LocalBusiness' => 'business', 'WebSite' => 'website', 'BreadcrumbList' => 'breadcrumbs', 'FAQPage' => 'faq'];
+        foreach ($graph as $i => $node) {
+            $t = $type_map[(string)($node['@type'] ?? '')] ?? strtolower((string)($node['@type'] ?? ''));
+            $graph[$i] = apply_filters('csc_seo_jsonld_node', $node, $t, $s);
+        }
+        $graph = array_values(array_filter($graph));
+        if (!$graph) return;
+
         if (count($graph) > 1 && !empty($s['jsonld_graph'])) {
             $out = ['@context' => 'https://schema.org', '@graph' => $graph];
             echo '<script type="application/ld+json">' . wp_json_encode($out, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . '</script>' . "\n";
@@ -1234,6 +1243,65 @@ if (!function_exists('csc_seo_geo_intro_text')) {
                 }
         }
         return (string)($s['geo_intro_tpl'] ?? '');
+    }
+}
+
+// ============================================================
+// П17. AggregateRating × город — источник оценок: модуль отзывов (csc-master-ratings)
+// + заказы с полем city. Кэш 5 мин (transient).
+// ============================================================
+if (!function_exists('csc_seo_city_rating')) {
+    /**
+     * Рейтинг по городу: средневзвешенный по всем отзывам заказов, у которых city == slug.
+     * @return array|null ['ratingValue'=>float,'reviewCount'=>int] или null если отзывов < min
+     */
+    function csc_seo_city_rating($city_slug) {
+        $s   = csc_seo_get_settings();
+        $min = max(1, (int)($s['jsonld_rating_min'] ?? 3));
+        if (empty($s['jsonld_rating_city'])) return null;
+        $cache_key = 'csc_seo_city_rating_' . md5((string)$city_slug);
+        $cached = get_transient($cache_key);
+        if (is_array($cached)) {
+            return $cached ? $cached : null;
+        }
+        $sum = 0; $cnt = 0;
+        if (function_exists('csc_get_all_orders')) {
+            foreach ((array)csc_get_all_orders() as $order) {
+                $oc = sanitize_title((string)($order['city'] ?? ''));
+                if ($oc !== $city_slug) continue;
+                $r = (int)($order['review']['rating'] ?? 0);
+                if ($r >= 1 && $r <= 5) { $sum += $r; $cnt++; }
+            }
+        }
+        $res = null;
+        if ($cnt >= $min) {
+            $res = ['ratingValue' => round($sum / $cnt, 1), 'reviewCount' => $cnt];
+        }
+        // transient не хранит null → кэшируем пустой массив как маркер «нет рейтинга»
+        set_transient($cache_key, is_array($res) ? $res : [], 5 * MINUTE_IN_SECONDS);
+        return $res;
+    }
+}
+
+// Встраивание городской AggregateRating в JSON-LD @graph (узел LocalBusiness).
+add_filter('csc_seo_jsonld_node', 'csc_seo_jsonld_city_rating', 10, 3);
+if (!function_exists('csc_seo_jsonld_city_rating')) {
+    function csc_seo_jsonld_city_rating($node, $type, $s) {
+        if ($type !== 'business') return $node;
+        if (empty($s['jsonld_rating_city']) || empty($s['geo_pages_enabled'])) return $node;
+        $city = function_exists('csc_seo_geo_current_city') ? csc_seo_geo_current_city() : '';
+        if (!$city || !function_exists('csc_seo_geo_city_data') || !($gd = csc_seo_geo_city_data($city))) return $node;
+        if (!function_exists('csc_seo_city_rating')) return $node;
+        $cr = csc_seo_city_rating($gd['slug']);
+        if (!$cr) return $node;
+        // Городской рейтинг приоритетнее общего (консистентно с видимым бейджем на странице)
+        $node['aggregateRating'] = [
+            '@type'       => 'AggregateRating',
+            'ratingValue' => $cr['ratingValue'],
+            'reviewCount' => $cr['reviewCount'],
+            'bestRating'  => 5,
+        ];
+        return $node;
     }
 }
 
@@ -2256,6 +2324,37 @@ if (!function_exists('csc_seo_admin_fields_schema')) {
                 ],
             ],
         ];
+
+        $tabs['p16'] = [
+            'title' => '🤖 AI-intro (П16)',
+            'desc'  => 'Уникальные вводные тексты на каждый город: локальные варианты через <code>|||</code> (без API) + опциональная генерация через OpenAI-совместимый endpoint по wp-cron. Ротация — детерминированная по дате (свежесть контента).',
+            'sections' => [
+                'Включение' => [
+                    ['k' => 'ai_intro_enabled', 't' => 'checkbox', 'l' => 'AI-intro включён (использовать кэш-варианты вместо geo_intro_tpl)',
+                     'd' => 'Требует включённых «Гео-страниц» (П15). Fallback при пустом кэше — шаблон <code>geo_intro_tpl</code>.'],
+                    ['k' => 'ai_intro_rotate', 't' => 'checkbox', 'l' => 'Ротация вариантов по дате (для краулера страница постепенно обновляется)'),
+                    ['k' => 'ai_intro_auto', 't' => 'checkbox', 'l' => 'Фоновая генерация по wp-cron (раз в сутки, лимит городов за прогон ниже)'],
+                    ['k' => 'ai_intro_max_cities', 't' => 'number', 'l' => 'Макс. городов за cron-прогон (экономия квоты API)', 'min' => 1, 'max' => 200],
+                ],
+                'Локальные варианты (без API)' => [
+                    ['k' => 'ai_intro_local_variants', 't' => 'textarea', 'l' => 'Варианты intro через <code>|||</code>, токены <code>%city%</code>, <code>%price_from%</code>, <code>%sitename%</code>', 'rows' => 4],
+                ],
+                'API (OpenAI-совместимый chat/completions)' => [
+                    ['k' => 'ai_intro_api_url', 't' => 'text', 'l' => 'Endpoint URL', 'ph' => 'https://api.openai.com/v1/chat/completions', 'cls' => 'large-text code'],
+                    ['k' => 'ai_intro_api_key', 't' => 'text', 'l' => 'API-ключ', 'd' => 'Хранится в настройках плагина; запросы только server-side (wp_remote_post).'],
+                    ['k' => 'ai_intro_model', 't' => 'text', 'l' => 'Модель', 'ph' => 'gpt-4o-mini'],
+                    ['k' => 'ai_intro_lang', 't' => 'text', 'l' => 'Язык генерации', 'ph' => 'ru'],
+                    ['k' => 'ai_intro_words', 't' => 'number', 'l' => 'Целевая длина текста (слов)', 'min' => 20, 'max' => 120],
+                ],
+            ],
+        ];
+
+        // П17: поля городской AggregateRating — в существующую вкладку микроразметки
+        if (isset($tabs['jsonld']['sections']['Рейтинги и отзывы'])) {
+            $tabs['jsonld']['sections']['Рейтинги и отзывы'][] = ['k' => 'jsonld_rating_city', 't' => 'checkbox', 'l' => 'AggregateRating × город (П17): рейтинг из отзывов заказов города, перекрывает общий на гео-страницах'];
+            $tabs['jsonld']['sections']['Рейтинги и отзывы'][] = ['k' => 'jsonld_rating_min', 't' => 'number', 'l' => 'Мин. отзывов в городе для показа рейтинга', 'min' => 1, 'max' => 100];
+        }
+        $tabs['geo']['sections']['Перелинковка город↔город'][] = ['k' => 'rating_badge_geo', 't' => 'checkbox', 'l' => 'Видимый бейдж «★ рейтинг (N отзывов)» на гео-странице (микроразметка соответствует JSON-LD)'];
 
         return apply_filters('csc_seo_admin_fields_schema', $tabs);
     }
