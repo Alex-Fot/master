@@ -178,6 +178,8 @@ if (!function_exists('csc_seo_get_defaults')) {
             'geo_canonical_self'    => 1,   // canonical гео-страницы указывает на саму себя (ЧПУ)
             'geo_redirect_query'    => 0,   // 301 ?csc_city=slug → /uslugi-slug/ (вкл. после переиндексации)
             'geo_slug_prefer'       => 'cyr', // канон ЧПУ: 'cyr' = /uslugi-москва/, 'lat' = /uslugi-moskva/ (транслит)
+=======
+>>>>>>> g/main
         ];
     }
 }
@@ -760,7 +762,10 @@ if (!function_exists('csc_seo_query_vars')) {
     function csc_seo_query_vars($vars) {
         $vars[] = 'csc_sitemap';
         $vars[] = 'csc_sitemap_index';
+<<<<<<< HEAD
         $vars[] = 'csc_geo_city';
+=======
+>>>>>>> g/main
         return $vars;
     }
 }
@@ -1250,6 +1255,7 @@ if (!function_exists('csc_seo_collect_sitemap_urls')) {
             }
         }
         if ($calc_url && !empty($s['sitemap_cities']) && function_exists('csc_get_cities')) {
+<<<<<<< HEAD
             $geo_on = !empty($s['geo_pages_enabled']);
             foreach ((array)csc_get_cities() as $slug => $city) {
                 if (!empty($city['active'])) {
@@ -1258,6 +1264,10 @@ if (!function_exists('csc_seo_collect_sitemap_urls')) {
                         $gu = csc_seo_geo_url($slug);
                         if ($gu) { $urls[] = ['loc' => $gu, 'lastmod' => $now, 'changefreq' => 'daily', 'priority' => '0.9']; continue; }
                     }
+=======
+            foreach ((array)csc_get_cities() as $slug => $city) {
+                if (!empty($city['active'])) {
+>>>>>>> g/main
                     $urls[] = ['loc' => add_query_arg('csc_city', $slug, $calc_url), 'lastmod' => $now, 'changefreq' => 'daily', 'priority' => '0.9'];
                 }
             }
@@ -2253,6 +2263,7 @@ if (!function_exists('csc_seo_admin_page')) {
                 } else {
                     echo '<p style="color:#2ea23e"><b>✅ Замечаний нет — каталог оптимизирован.</b></p>';
                 }
+<<<<<<< HEAD
                 // П14-диагностика: режим XML-карты (единая/сегментация) и адрес индексной карты.
                 $split_mode = !empty($s['sitemap_split']) ? 'сегментированная' : 'единая';
                 $city_cnt   = function_exists('csc_get_cities') ? count(array_filter((array)csc_get_cities(), function ($c) { return !empty($c['active']); })) : 0;
@@ -2285,6 +2296,9 @@ if (!function_exists('csc_seo_admin_page')) {
                     echo '<p class="description">🌍 Гео-страницы (П15) — выключены. Вкладка «Гео-страницы».</p>';
                 }
                 echo '<p><a class=\"button button-small\" href=\"' . esc_url(add_query_arg(['page' => 'csc_seo_admin', 'tab' => 'meta'])) . '\">Перейти к meta-настройкам</a></p>';
+=======
+                echo '<p><a class="button button-small" href="' . esc_url(add_query_arg(['page' => 'csc_seo_admin', 'tab' => 'meta'])) . '">Перейти к meta-настройкам</a></p>';
+>>>>>>> g/main
                 echo '</div>';
             }
             ?>
