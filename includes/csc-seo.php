@@ -1134,9 +1134,14 @@ if (!function_exists('csc_seo_ai_api_call')) {
                 'temperature' => 0.8,
             ]),
         ]);
-        if (is_wp_error($resp)) { csc_seo_log('AI intro: ошибка HTTP — ' . $resp->get_error_message()); return ''; }
+        if (is_wp_error($resp)) { csc_seo_log('AI intro: ошибка HTTP — ' . $resp->get_error_message()); $GLOBALS['csc_seo_ai_quota_hit'] = true; return ''; }
         $code = (int)wp_remote_retrieve_response_code($resp);
-        if ($code < 200 || $code >= 300) { cscseolog('AI intro: HTTP ' . $code); return ''; }
+        if ($code < 200 || $code >= 300) {
+            csc_seo_log('AI intro: HTTP ' . $code);
+            // 401/403/429 = неверный ключ или исчерпана квота — дальнейшие запросы в этом прогоне бессмысленны.
+            if ($code === 401 || $code === 403 || $code === 429) $GLOBALS['csc_seo_ai_quota_hit'] = true;
+            return '';
+        }
         $j = json_decode((string)wp_remote_retrieve_body($resp), true);
         return trim((string)($j['choices'][0]['message']['content'] ?? ''));
     }
@@ -2551,6 +2556,34 @@ if (!function_exists('csc_seo_admin_page')) {
                 $text = csc_seo_do_ping(true);
                 $s['ping_last_result'] = $text; // обновляем локальную копию для рендера readonly-поля
                 $action_notice = '<div class="notice notice-success is-dismissible"><p>Пинг поисковых систем: <b>' . esc_html($text) . '</b>.</p></div>';
+            } elseif ($act === 'ai_gen_now' || $act === 'ai_regen_all') {
+                // П16: ручная генерация intro-вариантов (без API — локальные генераторы работают всегда).
+                if (!check_admin_referer('csc_seo_save_action')) return;
+                $force  = ($act === 'ai_regen_all');
+                $cities = function_exists('csc_get_cities') ? (array)csc_get_cities() : [];
+                $made = 0; $skipped = 0;
+                foreach ($cities as $slug => $c) {
+                    if (empty($c['active'])) continue;
+                    if (!empty($GLOBALS['csc_seo_ai_quota_hit'])) break; // стоп при серии HTTP-ошибок (защита от таймаута)
+                    $n = csc_seo_ai_generate_city((string)$slug, $force);
+                    if ($n > 0) $made++; else $skipped++;
+                }
+                $GLOBALS['csc_seo_ai_quota_hit'] = false;
+                $s = csc_seo_get_settings(true); // перечитать кэш после записи ai_intro_cache/log
+                $action_notice = '<div class="notice notice-' . ($made ? 'success' : 'warning') . ' is-dismissible"><p>🤖 AI-intro (П16): сгенерировано вариантов для <b>' . (int)$made . '</b> городов'
+                    . ($skipped ? ', пропущено: <b>' . (int)$skipped . '</b>' : '')
+                    . ' · источник: <b>' . (trim((string)($s['ai_intro_api_url'] ?? '')) !== '' ? 'API + локальные' : 'локальные') . '</b>.</p></div>';
+            } elseif ($act === 'ai_clear_cache') {
+                // П16: полный сброс кэша вариантов (следующая генерация начнётся с чистого листа).
+                if (!check_admin_referer('csc_seo_save_action')) return;
+                $cur = get_option('csc_seo_settings', []);
+                if (is_array($cur)) {
+                    $cur['ai_intro_cache'] = [];
+                    $cur['ai_intro_log']   = gmdate('Y-m-d H:i') . ' UTC: кэш вариантов очищен вручную.' . "\n";
+                    update_option('csc_seo_settings', $cur, false);
+                }
+                $s = csc_seo_get_settings(true);
+                $action_notice = '<div class="notice notice-success is-dismissible"><p>Кэш AI-intro очищен.</p></div>';
             }
         }
 
@@ -2620,6 +2653,18 @@ if (!function_exists('csc_seo_admin_page')) {
                     echo '<p>🤖 AI-intro (П16): <b>' . (int)$ai_cnt . '</b> городов в кэше вариантов'
                         . (trim((string)($s['ai_intro_api_url'] ?? '')) !== '' ? ' · API подключён' : ' · только локальные генераторы')
                         . (empty($s['ai_intro_auto']) ? ' · cron-прогон <b>выкл</b>' : ' · cron-прогон включён') . '.</p>';
+                    // Кнопки ручного управления генерацией (POST-форма с nonce; обработчик — выше, csc_seo_action).
+                    $ai_form = function ($a, $label, $style = '') {
+                        echo '<form method="post" style="display:inline-block;margin:0 4px 4px 0">'
+                            . wp_nonce_field('csc_seo_save_action', '_wpnonce', false, false)
+                            . '<input type="hidden" name="csc_seo_action" value="' . esc_attr($a) . '">'
+                            . '<button type="submit" class="button button-small"' . ($style ? ' style="' . esc_attr($style) . '"' : '') . '>' . $label . '</button></form>';
+                    };
+                    echo '<p style="margin:4px 0">';
+                    $ai_form('ai_gen_now', '🤖 Сгенерировать intro (новые города)');
+                    $ai_form('ai_regen_all', '♻ Перегенерировать все');
+                    $ai_form('ai_clear_cache', '🗑 Очистить кэш вариантов', 'color:#b32d2e');
+                    echo '</p>';
                     if (!empty($s['ai_intro_log'])) {
                         echo '<details><summary>Журнал генерации (последние записи)</summary><pre style="max-height:180px;overflow:auto">'
                             . esc_html((string)$s['ai_intro_log']) . '</pre></details>';
