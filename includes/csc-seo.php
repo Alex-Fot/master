@@ -1178,7 +1178,9 @@ if (!function_exists('csc_seo_ai_generate_city')) {
         $variants = array_values(array_unique(array_slice($variants, 0, 10)));
         $cache[$slug] = ['variants' => $variants, 'generated' => current_time('mysql')];
         $stored['ai_intro_cache'] = $cache;
-        $stored['ai_intro_log']   = gmdate('Y-m-d H:i') . ' UTC: сгенерировано вариантов для ' . $slug . ': ' . count($variants) . " — " . "\n" . (string)($stored['ai_intro_log'] ?? '');
+        // Логируем источник генерации (для диагностики в виджете П14).
+        $src = trim((string)($s['ai_intro_api_url'] ?? '')) !== '' ? 'API + локальные' : 'локальные';
+        $stored['ai_intro_log']   = gmdate('Y-m-d H:i') . ' UTC: сгенерировано вариантов для ' . $slug . ': ' . count($variants) . ' (' . $src . ')' . "\n" . (string)($stored['ai_intro_log'] ?? '');
         $stored['ai_intro_log']   = mb_substr((string)$stored['ai_intro_log'], 0, 4000);
         update_option('csc_seo_settings', $stored, false);
         csc_seo_get_settings(true);
@@ -2608,6 +2610,27 @@ if (!function_exists('csc_seo_admin_page')) {
                     }
                 } else {
                     echo '<p class="description">🌍 Гео-страницы (П15) — выключены. Вкладка «Гео-страницы».</p>';
+                }
+                // П16/П17: диагностика AI-intro кэша и городских рейтингов.
+                $ai_cnt = 0;
+                if (!empty($s['ai_intro_enabled']) && is_array($s['ai_intro_cache'] ?? null)) {
+                    foreach ((array)$s['ai_intro_cache'] as $cv) {
+                        if (!empty($cv['variants'])) $ai_cnt++;
+                    }
+                    echo '<p>🤖 AI-intro (П16): <b>' . (int)$ai_cnt . '</b> городов в кэше вариантов'
+                        . (trim((string)($s['ai_intro_api_url'] ?? '')) !== '' ? ' · API подключён' : ' · только локальные генераторы')
+                        . (empty($s['ai_intro_auto']) ? ' · cron-прогон <b>выкл</b>' : ' · cron-прогон включён') . '.</p>';
+                    if (!empty($s['ai_intro_log'])) {
+                        echo '<details><summary>Журнал генерации (последние записи)</summary><pre style="max-height:180px;overflow:auto">'
+                            . esc_html((string)$s['ai_intro_log']) . '</pre></details>';
+                    }
+                } elseif (!empty($s['geo_pages_enabled'])) {
+                    echo '<p class="description">🤖 AI-intro (П16) — выключен; используется единый шаблон geo_intro_tpl. Вкладка «AI-intro».</p>';
+                }
+                if (!empty($s['jsonld_rating_city']) && !empty($s['geo_pages_enabled'])) {
+                    echo '<p>⭐ AggregateRating × город (П17): включён, мин. отзывов — <b>' . (int)($s['jsonld_rating_min'] ?? 3) . '</b>'
+                        . (function_exists('csc_get_all_orders') ? '' : ' · <span style="color:#d63638">источник csc_get_all_orders() не найден — рейтинг не будет рассчитан</span>')
+                        . '.</p>';
                 }
                 echo '<p><a class="button button-small" href="' . esc_url(add_query_arg(['page' => 'csc_seo_admin', 'tab' => 'meta'])) . '">Перейти к meta-настройкам</a></p>';
                 echo '</div>';
