@@ -1074,6 +1074,169 @@ if (!function_exists('csc_seo_geo_canonical_compat')) {
     }
 }
 
+// ============================================================
+// П16. AI-intro: уникальные вводные тексты на каждый город.
+// Источники вариантов: локальный шаблонный генератор (без внешних зависимостей),
+// пользовательские варианты (|||-разделитель), опционально OpenAI-совместимый API.
+// Кэш — в csc_seo_settings['ai_intro_cache']; ротация — детерминированная по дате.
+// ============================================================
+
+/** Локальный генератор N вариантов intro для города (без API, ru). */
+if (!function_exists('csc_seo_ai_local_variants')) {
+    function csc_seo_ai_local_variants(array $data, array $s) {
+        $city   = $data['name'] ?: 'в вашем городе';
+        $price  = trim((string)csc_seo_price_from());
+        $cross  = [];
+        if (function_exists('csc_get_cities')) {
+            foreach ((array)csc_get_cities() as $cs => $c) {
+                if ($cs === $data['slug'] || empty($c['active'])) continue;
+                $cross[] = $c['name'] ?? '';
+                if (count($cross) >= 3) break;
+            }
+        }
+        $near   = $cross ? ' nearby (' . implode(', ', $cross) . ')' : '';
+        $pr     = $price !== '' ? ' ' . $price : '';
+        return [
+            sprintf('Мастера в %s: ремонт, установка и монтаж с выездом сегодня. Онлайн-калькулятор рассчитает точную стоимость%s — оплата после выполнения работ.', $city, $pr),
+            sprintf('Ищете мастера в %s? Выберите раздел и услугу в калькуляторе — цена видна сразу, без скрытых доплат%s. Работаем по договору с гарантией.', $city, $pr),
+            sprintf('Выездной сервис в %s%s: сантехника, электрика, сборка мебели и бытовая техника. Рассчитайте цену за минуту — мастер приедет в удобное время%s.', $city, $near, $pr),
+            sprintf('В %s обслуживаем квартиры, офисы и магазины. Прозрачный расчёт онлайн%s, проверенные мастера с отзывами, гарантия на все виды работ.', $city, $pr),
+            sprintf('Сервис «муж на час» и профессиональный ремонт в %s: вызов мастера сегодня, фиксированная смета до начала работ%s, аккуратность и ответственность по договору.', $city, $pr),
+        ];
+    }
+}
+
+/** Запрос к OpenAI-совместимому chat/completions endpoint. Возвращает текст или ''. */
+if (!function_exists('csc_seo_ai_api_call')) {
+    function csc_seo_ai_api_call($prompt, array $s) {
+        $url = trim((string)($s['ai_intro_api_url'] ?? ''));
+        $key = trim((string)($s['ai_intro_api_key'] ?? ''));
+        if ($url === '' || $key === '') return '';
+        $resp = wp_remote_post($url, [
+            'timeout' => 25,
+            'headers' => ['Content-Type' => 'application/json', 'Authorization' => 'Bearer ' . $key],
+            'body'    => wp_json_encode([
+                'model'       => $s['ai_intro_model'] ?: 'gpt-4o-mini',
+                'messages'    => [
+                    ['role' => 'system', 'content' => 'Ты SEO-копирайтер сервисной компании. Пиши по-русски, без ссылок, HTML и эмодзи. Один абзац.'],
+                    ['role' => 'user',   'content' => $prompt],
+                ],
+                'max_tokens'  => 180,
+                'temperature' => 0.8,
+            ]),
+        ]);
+        if (is_wp_error($resp)) { csc_seo_log('AI intro: ошибка HTTP — ' . $resp->get_error_message()); return ''; }
+        $code = (int)wp_remote_retrieve_response_code($resp);
+        if ($code < 200 || $code >= 300) { cscseolog('AI intro: HTTP ' . $code); return ''; }
+        $j = json_decode((string)wp_remote_retrieve_body($resp), true);
+        return trim((string)($j['choices'][0]['message']['content'] ?? ''));
+    }
+}
+
+/** Сгенерировать/обновить кэш вариантов intro для одного города. */
+if (!function_exists('csc_seo_ai_generate_city')) {
+    function csc_seo_ai_generate_city($slug, $force = false) {
+        $s      = csc_seo_get_settings();
+        $stored = get_option('csc_seo_settings', []);
+        if (!is_array($stored)) $stored = [];
+        $cache  = isset($stored['ai_intro_cache']) && is_array($stored['ai_intro_cache']) ? $stored['ai_intro_cache'] : [];
+        if (!$force && isset($cache[$slug]) && !empty($cache[$slug]['variants'])) {
+            return count($cache[$slug]['variants']);
+        }
+        if (!function_exists('csc_seo_geo_city_data')) return 0;
+        $data = csc_seo_geo_city_data($slug);
+        if (!$data) return 0;
+        $variants = [];
+        // 1) Пользовательские варианты из админки (через |||).
+        foreach (explode('|||', (string)($s['ai_intro_local_variants'] ?? '')) as $v) {
+            $v = trim($v);
+            if ($v !== '') $variants[] = str_replace('%city%', $data['name'], $v);
+        }
+        // 2) Локальный шаблонный генератор.
+        foreach (csc_seo_ai_local_variants($data, $s) as $v) $variants[] = $v;
+        // 3) Внешний API (если настроен) — добавляет 2 свежих варианта.
+        if (!empty($s['ai_intro_enabled']) && trim((string)($s['ai_intro_api_url'] ?? '')) !== '') {
+            $price = (string)csc_seo_price_from();
+            $words = max(20, (int)($s['ai_intro_words'] ?? 45));
+            for ($i = 0; $i < 2; $i++) {
+                $txt = csc_seo_ai_api_call(sprintf(
+                    'Напиши %d слов: вводный абзац для страницы услуг мастеров в городе %s. Цена от %s. Без повторов предыдущих вариантов.',
+                    $words, $data['name'], $price ?: 'уточняется'
+                ), $s);
+                if ($txt !== '') $variants[] = wp_strip_all_tags($txt);
+            }
+        }
+        $variants = array_values(array_unique(array_slice($variants, 0, 10)));
+        $cache[$slug] = ['variants' => $variants, 'generated' => current_time('mysql')];
+        $stored['ai_intro_cache'] = $cache;
+        $stored['ai_intro_log']   = gmdate('Y-m-d H:i') . ' UTC: сгенерировано вариантов для ' . $slug . ': ' . count($variants) . " — " . "\n" . (string)($stored['ai_intro_log'] ?? '');
+        $stored['ai_intro_log']   = mb_substr((string)$stored['ai_intro_log'], 0, 4000);
+        update_option('csc_seo_settings', $stored, false);
+        csc_seo_get_settings(true);
+        return count($variants);
+    }
+}
+
+/** Cron-прогон: генерация intro для городов без кэша (лимит ai_intro_max_cities). */
+if (!function_exists('csc_seo_ai_intro_run')) {
+    function csc_seo_ai_intro_run() {
+        $s = csc_seo_get_settings();
+        if (empty($s['enabled']) || empty($s['geo_pages_enabled']) || empty($s['ai_intro_enabled']) || empty($s['ai_intro_auto'])) return;
+        if (!function_exists('csc_get_cities')) return;
+        $limit = max(1, (int)($s['ai_intro_max_cities'] ?? 20));
+        $done  = 0;
+        foreach ((array)csc_get_cities() as $slug => $c) {
+            if ($done >= $limit) break;
+            if (empty($c['active'])) continue;
+            $slug = (string)$slug;
+            $cache = is_array($s['ai_intro_cache'] ?? null) ? $s['ai_intro_cache'] : [];
+            if (isset($cache[$slug]) && !empty($cache[$slug]['variants'])) continue;
+            if (csc_seo_ai_generate_city($slug) > 0) $done++;
+        }
+        if ($done) csc_seo_log('AI intro cron: обработано городов: ' . $done);
+    }
+}
+add_action('csc_seo_ai_intro_daily', 'csc_seo_ai_intro_run');
+
+/** Планировщик события генерации (по настройкам). */
+add_action('init', 'csc_seo_schedule_ai_intro', 12);
+if (!function_exists('csc_seo_schedule_ai_intro')) {
+    function csc_seo_schedule_ai_intro() {
+        $s = csc_seo_get_settings();
+        $on = !empty($s['enabled']) && !empty($s['geo_pages_enabled']) && !empty($s['ai_intro_enabled']) && !empty($s['ai_intro_auto']);
+        if (!$on) {
+            while (($ts = wp_get_schedule('csc_seo_ai_intro_daily')) !== false) {
+                wp_unschedule_event($ts, 'csc_seo_ai_intro_daily');
+                if (!wp_next_scheduled('csc_seo_ai_intro_daily')) break;
+            }
+            return;
+        }
+        if (!wp_next_scheduled('csc_seo_ai_intro_daily')) {
+            wp_schedule_event(time() + MINUTE_IN_SECONDS * 10, 'daily', 'csc_seo_ai_intro_daily');
+        }
+    }
+}
+
+/** Получить intro-текст для города: кэш-варианты (ротация) → geo_intro_tpl. */
+if (!function_exists('csc_seo_geo_intro_text')) {
+    function csc_seo_geo_intro_text(array $data, array $s) {
+        $cache = isset($s['ai_intro_cache']) && is_array($s['ai_intro_cache']) ? $s['ai_intro_cache'] : [];
+        $slug  = (string)($data['slug'] ?? '');
+        if (!empty($s['ai_intro_enabled']) && !empty($cache[$slug]['variants'])) {
+            $vars = array_values(array_filter((array)$cache[$slug]['variants'], 'is_string'));
+            if ($vars) {
+                if (!empty($s['ai_intro_rotate'])) {
+                    $idx = (int)gmdate('z') % count($vars);          // ротация по дням года
+                } else {
+                    $idx = (crc32($slug) % count($vars));            // стабильный вариант на город
+                }
+                return $vars[$idx];
+                }
+        }
+        return (string)($s['geo_intro_tpl'] ?? '');
+    }
+}
+
 // Гео-SSR: H1 и вводный текст (индексный уникальный контент на город) + перелинковка город↔город.
 // Рендерится ДО каталога через the_content (фильтр), а не в footer: корректная иерархия заголовков
 // (H1 города → H2 разделов каталога) и индексируемость контента без JS.
