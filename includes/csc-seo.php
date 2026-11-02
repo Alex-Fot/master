@@ -721,6 +721,15 @@ if (!function_exists('csc_seo_json_ld')) {
 
         if (!$graph) return;
 
+        // Расширяемые точки: фильтры узлов (П17 городской рейтинг и сторонние интеграции).
+        $type_map = ['LocalBusiness' => 'business', 'WebSite' => 'website', 'BreadcrumbList' => 'breadcrumbs', 'FAQPage' => 'faq'];
+        foreach ($graph as $i => $node) {
+            $t = $type_map[(string)($node['@type'] ?? '')] ?? strtolower((string)($node['@type'] ?? ''));
+            $graph[$i] = apply_filters('csc_seo_jsonld_node', $node, $t, $s);
+        }
+        $graph = array_values(array_filter($graph));
+        if (!$graph) return;
+
         if (count($graph) > 1 && !empty($s['jsonld_graph'])) {
             $out = ['@context' => 'https://schema.org', '@graph' => $graph];
             echo '<script type="application/ld+json">' . wp_json_encode($out, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . '</script>' . "\n";
@@ -1071,6 +1080,230 @@ if (!function_exists('csc_seo_geo_slug_canonicalize')) {
 if (!function_exists('csc_seo_geo_canonical_compat')) {
     function csc_seo_geo_canonical_compat($url) {
         return csc_seo_geo_canonical($url);
+    }
+}
+
+// ============================================================
+// П16. AI-intro: уникальные вводные тексты на каждый город.
+// Источники вариантов: локальный шаблонный генератор (без внешних зависимостей),
+// пользовательские варианты (|||-разделитель), опционально OpenAI-совместимый API.
+// Кэш — в csc_seo_settings['ai_intro_cache']; ротация — детерминированная по дате.
+// ============================================================
+
+/** Локальный генератор N вариантов intro для города (без API, ru). */
+if (!function_exists('csc_seo_ai_local_variants')) {
+    function csc_seo_ai_local_variants(array $data, array $s) {
+        $city   = $data['name'] ?: 'в вашем городе';
+        $price  = trim((string)csc_seo_price_from());
+        $cross  = [];
+        if (function_exists('csc_get_cities')) {
+            foreach ((array)csc_get_cities() as $cs => $c) {
+                if ($cs === $data['slug'] || empty($c['active'])) continue;
+                $cross[] = $c['name'] ?? '';
+                if (count($cross) >= 3) break;
+            }
+        }
+        $near   = $cross ? ' nearby (' . implode(', ', $cross) . ')' : '';
+        $pr     = $price !== '' ? ' ' . $price : '';
+        return [
+            sprintf('Мастера в %s: ремонт, установка и монтаж с выездом сегодня. Онлайн-калькулятор рассчитает точную стоимость%s — оплата после выполнения работ.', $city, $pr),
+            sprintf('Ищете мастера в %s? Выберите раздел и услугу в калькуляторе — цена видна сразу, без скрытых доплат%s. Работаем по договору с гарантией.', $city, $pr),
+            sprintf('Выездной сервис в %s%s: сантехника, электрика, сборка мебели и бытовая техника. Рассчитайте цену за минуту — мастер приедет в удобное время%s.', $city, $near, $pr),
+            sprintf('В %s обслуживаем квартиры, офисы и магазины. Прозрачный расчёт онлайн%s, проверенные мастера с отзывами, гарантия на все виды работ.', $city, $pr),
+            sprintf('Сервис «муж на час» и профессиональный ремонт в %s: вызов мастера сегодня, фиксированная смета до начала работ%s, аккуратность и ответственность по договору.', $city, $pr),
+        ];
+    }
+}
+
+/** Запрос к OpenAI-совместимому chat/completions endpoint. Возвращает текст или ''. */
+if (!function_exists('csc_seo_ai_api_call')) {
+    function csc_seo_ai_api_call($prompt, array $s) {
+        $url = trim((string)($s['ai_intro_api_url'] ?? ''));
+        $key = trim((string)($s['ai_intro_api_key'] ?? ''));
+        if ($url === '' || $key === '') return '';
+        $resp = wp_remote_post($url, [
+            'timeout' => 25,
+            'headers' => ['Content-Type' => 'application/json', 'Authorization' => 'Bearer ' . $key],
+            'body'    => wp_json_encode([
+                'model'       => $s['ai_intro_model'] ?: 'gpt-4o-mini',
+                'messages'    => [
+                    ['role' => 'system', 'content' => 'Ты SEO-копирайтер сервисной компании. Пиши по-русски, без ссылок, HTML и эмодзи. Один абзац.'],
+                    ['role' => 'user',   'content' => $prompt],
+                ],
+                'max_tokens'  => 180,
+                'temperature' => 0.8,
+            ]),
+        ]);
+        if (is_wp_error($resp)) { csc_seo_log('AI intro: ошибка HTTP — ' . $resp->get_error_message()); return ''; }
+        $code = (int)wp_remote_retrieve_response_code($resp);
+        if ($code < 200 || $code >= 300) { cscseolog('AI intro: HTTP ' . $code); return ''; }
+        $j = json_decode((string)wp_remote_retrieve_body($resp), true);
+        return trim((string)($j['choices'][0]['message']['content'] ?? ''));
+    }
+}
+
+/** Сгенерировать/обновить кэш вариантов intro для одного города. */
+if (!function_exists('csc_seo_ai_generate_city')) {
+    function csc_seo_ai_generate_city($slug, $force = false) {
+        $s      = csc_seo_get_settings();
+        $stored = get_option('csc_seo_settings', []);
+        if (!is_array($stored)) $stored = [];
+        $cache  = isset($stored['ai_intro_cache']) && is_array($stored['ai_intro_cache']) ? $stored['ai_intro_cache'] : [];
+        if (!$force && isset($cache[$slug]) && !empty($cache[$slug]['variants'])) {
+            return count($cache[$slug]['variants']);
+        }
+        if (!function_exists('csc_seo_geo_city_data')) return 0;
+        $data = csc_seo_geo_city_data($slug);
+        if (!$data) return 0;
+        $variants = [];
+        // 1) Пользовательские варианты из админки (через |||).
+        foreach (explode('|||', (string)($s['ai_intro_local_variants'] ?? '')) as $v) {
+            $v = trim($v);
+            if ($v !== '') $variants[] = str_replace('%city%', $data['name'], $v);
+        }
+        // 2) Локальный шаблонный генератор.
+        foreach (csc_seo_ai_local_variants($data, $s) as $v) $variants[] = $v;
+        // 3) Внешний API (если настроен) — добавляет 2 свежих варианта.
+        if (!empty($s['ai_intro_enabled']) && trim((string)($s['ai_intro_api_url'] ?? '')) !== '') {
+            $price = (string)csc_seo_price_from();
+            $words = max(20, (int)($s['ai_intro_words'] ?? 45));
+            for ($i = 0; $i < 2; $i++) {
+                $txt = csc_seo_ai_api_call(sprintf(
+                    'Напиши %d слов: вводный абзац для страницы услуг мастеров в городе %s. Цена от %s. Без повторов предыдущих вариантов.',
+                    $words, $data['name'], $price ?: 'уточняется'
+                ), $s);
+                if ($txt !== '') $variants[] = wp_strip_all_tags($txt);
+            }
+        }
+        $variants = array_values(array_unique(array_slice($variants, 0, 10)));
+        $cache[$slug] = ['variants' => $variants, 'generated' => current_time('mysql')];
+        $stored['ai_intro_cache'] = $cache;
+        // Логируем источник генерации (для диагностики в виджете П14).
+        $src = trim((string)($s['ai_intro_api_url'] ?? '')) !== '' ? 'API + локальные' : 'локальные';
+        $stored['ai_intro_log']   = gmdate('Y-m-d H:i') . ' UTC: сгенерировано вариантов для ' . $slug . ': ' . count($variants) . ' (' . $src . ')' . "\n" . (string)($stored['ai_intro_log'] ?? '');
+        $stored['ai_intro_log']   = mb_substr((string)$stored['ai_intro_log'], 0, 4000);
+        update_option('csc_seo_settings', $stored, false);
+        csc_seo_get_settings(true);
+        return count($variants);
+    }
+}
+
+/** Cron-прогон: генерация intro для городов без кэша (лимит ai_intro_max_cities). */
+if (!function_exists('csc_seo_ai_intro_run')) {
+    function csc_seo_ai_intro_run() {
+        $s = csc_seo_get_settings();
+        if (empty($s['enabled']) || empty($s['geo_pages_enabled']) || empty($s['ai_intro_enabled']) || empty($s['ai_intro_auto'])) return;
+        if (!function_exists('csc_get_cities')) return;
+        $limit = max(1, (int)($s['ai_intro_max_cities'] ?? 20));
+        $done  = 0;
+        foreach ((array)csc_get_cities() as $slug => $c) {
+            if ($done >= $limit) break;
+            if (empty($c['active'])) continue;
+            $slug = (string)$slug;
+            $cache = is_array($s['ai_intro_cache'] ?? null) ? $s['ai_intro_cache'] : [];
+            if (isset($cache[$slug]) && !empty($cache[$slug]['variants'])) continue;
+            if (csc_seo_ai_generate_city($slug) > 0) $done++;
+        }
+        if ($done) csc_seo_log('AI intro cron: обработано городов: ' . $done);
+    }
+}
+add_action('csc_seo_ai_intro_daily', 'csc_seo_ai_intro_run');
+
+/** Планировщик события генерации (по настройкам). */
+add_action('init', 'csc_seo_schedule_ai_intro', 12);
+if (!function_exists('csc_seo_schedule_ai_intro')) {
+    function csc_seo_schedule_ai_intro() {
+        $s = csc_seo_get_settings();
+        $on = !empty($s['enabled']) && !empty($s['geo_pages_enabled']) && !empty($s['ai_intro_enabled']) && !empty($s['ai_intro_auto']);
+        if (!$on) {
+            while (($ts = wp_get_schedule('csc_seo_ai_intro_daily')) !== false) {
+                wp_unschedule_event($ts, 'csc_seo_ai_intro_daily');
+                if (!wp_next_scheduled('csc_seo_ai_intro_daily')) break;
+            }
+            return;
+        }
+        if (!wp_next_scheduled('csc_seo_ai_intro_daily')) {
+            wp_schedule_event(time() + MINUTE_IN_SECONDS * 10, 'daily', 'csc_seo_ai_intro_daily');
+        }
+    }
+}
+
+/** Получить intro-текст для города: кэш-варианты (ротация) → geo_intro_tpl. */
+if (!function_exists('csc_seo_geo_intro_text')) {
+    function csc_seo_geo_intro_text(array $data, array $s) {
+        $cache = isset($s['ai_intro_cache']) && is_array($s['ai_intro_cache']) ? $s['ai_intro_cache'] : [];
+        $slug  = (string)($data['slug'] ?? '');
+        if (!empty($s['ai_intro_enabled']) && !empty($cache[$slug]['variants'])) {
+            $vars = array_values(array_filter((array)$cache[$slug]['variants'], 'is_string'));
+            if ($vars) {
+                if (!empty($s['ai_intro_rotate'])) {
+                    $idx = (int)gmdate('z') % count($vars);          // ротация по дням года
+                } else {
+                    $idx = (crc32($slug) % count($vars));            // стабильный вариант на город
+                }
+                return $vars[$idx];
+                }
+        }
+        return (string)($s['geo_intro_tpl'] ?? '');
+    }
+}
+
+// ============================================================
+// П17. AggregateRating × город — источник оценок: модуль отзывов (csc-master-ratings)
+// + заказы с полем city. Кэш 5 мин (transient).
+// ============================================================
+if (!function_exists('csc_seo_city_rating')) {
+    /**
+     * Рейтинг по городу: средневзвешенный по всем отзывам заказов, у которых city == slug.
+     * @return array|null ['ratingValue'=>float,'reviewCount'=>int] или null если отзывов < min
+     */
+    function csc_seo_city_rating($city_slug) {
+        $s   = csc_seo_get_settings();
+        $min = max(1, (int)($s['jsonld_rating_min'] ?? 3));
+        if (empty($s['jsonld_rating_city'])) return null;
+        $cache_key = 'csc_seo_city_rating_' . md5((string)$city_slug);
+        $cached = get_transient($cache_key);
+        if (is_array($cached)) {
+            return $cached ? $cached : null;
+        }
+        $sum = 0; $cnt = 0;
+        if (function_exists('csc_get_all_orders')) {
+            foreach ((array)csc_get_all_orders() as $order) {
+                $oc = sanitize_title((string)($order['city'] ?? ''));
+                if ($oc !== $city_slug) continue;
+                $r = (int)($order['review']['rating'] ?? 0);
+                if ($r >= 1 && $r <= 5) { $sum += $r; $cnt++; }
+            }
+        }
+        $res = null;
+        if ($cnt >= $min) {
+            $res = ['ratingValue' => round($sum / $cnt, 1), 'reviewCount' => $cnt];
+        }
+        // transient не хранит null → кэшируем пустой массив как маркер «нет рейтинга»
+        set_transient($cache_key, is_array($res) ? $res : [], 5 * MINUTE_IN_SECONDS);
+        return $res;
+    }
+}
+
+// Встраивание городской AggregateRating в JSON-LD @graph (узел LocalBusiness).
+add_filter('csc_seo_jsonld_node', 'csc_seo_jsonld_city_rating', 10, 3);
+if (!function_exists('csc_seo_jsonld_city_rating')) {
+    function csc_seo_jsonld_city_rating($node, $type, $s) {
+        if ($type !== 'business') return $node;
+        if (empty($s['jsonld_rating_city']) || empty($s['geo_pages_enabled'])) return $node;
+        $city = function_exists('csc_seo_geo_current_city') ? csc_seo_geo_current_city() : '';
+        if (!$city || !function_exists('csc_seo_geo_city_data') || !($gd = csc_seo_geo_city_data($city))) return $node;
+        if (!function_exists('csc_seo_city_rating')) return $node;
+        $cr = csc_seo_city_rating($gd['slug']);
+        if (!$cr) return $node;
+        // Городской рейтинг приоритетнее общего (консистентно с видимым бейджем на странице)
+        $node['aggregateRating'] = [
+            '@type'       => 'AggregateRating',
+            'ratingValue' => $cr['ratingValue'],
+            'reviewCount' => $cr['reviewCount'],
+            'bestRating'  => 5,
+        ];
+        return $node;
     }
 }
 
@@ -1958,7 +2191,7 @@ if (!function_exists('csc_seo_admin_fields_schema')) {
                     ['k' => 'sitemap_changefreq', 't' => 'checkbox', 'l' => 'Элемент changefreq'],
                     ['k' => 'sitemap_priority', 't' => 'checkbox', 'l' => 'Элемент priority'],
                     ['k' => 'sitemap_max_urls', 't' => 'number', 'l' => 'Лимит URL в карте', 'min' => 100, 'max' => 50000],
-                    ['k' => 'sitemap_split', 't' => 'checkbox', 'l' => 'Сегментация (index-sitemap): при превышении лимита <code>' . 'основной URL отдаёт &lt;sitemapindex&gt;, части — по N URL. Индекс: <code>{путь}-index.xml</code>'],
+                    ['k' => 'sitemap_split', 't' => 'checkbox', 'l' => 'Сегментация (index-sitemap)', 'd' => 'При превышении лимита основной URL отдаёт <code>&lt;sitemapindex&gt;</code>, части — по N URL. Индекс: <code>{путь}-index.xml</code>.'],
                     ['k' => 'sitemap_cache_ttl', 't' => 'number', 'l' => 'Кэш XML, секунд (0 = всегда перегенерировать)', 'min' => 0, 'max' => 86400],
                 ],
                 'robots.txt' => [
@@ -2093,6 +2326,37 @@ if (!function_exists('csc_seo_admin_fields_schema')) {
                 ],
             ],
         ];
+
+        $tabs['p16'] = [
+            'title' => '🤖 AI-intro (П16)',
+            'desc'  => 'Уникальные вводные тексты на каждый город: локальные варианты через <code>|||</code> (без API) + опциональная генерация через OpenAI-совместимый endpoint по wp-cron. Ротация — детерминированная по дате (свежесть контента).',
+            'sections' => [
+                'Включение' => [
+                    ['k' => 'ai_intro_enabled', 't' => 'checkbox', 'l' => 'AI-intro включён (использовать кэш-варианты вместо geo_intro_tpl)',
+                     'd' => 'Требует включённых «Гео-страниц» (П15). Fallback при пустом кэше — шаблон <code>geo_intro_tpl</code>.'],
+                    ['k' => 'ai_intro_rotate', 't' => 'checkbox', 'l' => 'Ротация вариантов по дате (для краулера страница постепенно обновляется)'],
+                    ['k' => 'ai_intro_auto', 't' => 'checkbox', 'l' => 'Фоновая генерация по wp-cron (раз в сутки, лимит городов за прогон ниже)'],
+                    ['k' => 'ai_intro_max_cities', 't' => 'number', 'l' => 'Макс. городов за cron-прогон (экономия квоты API)', 'min' => 1, 'max' => 200],
+                ],
+                'Локальные варианты (без API)' => [
+                    ['k' => 'ai_intro_local_variants', 't' => 'textarea', 'l' => 'Варианты intro через <code>|||</code>, токены <code>%city%</code>, <code>%price_from%</code>, <code>%sitename%</code>', 'rows' => 4],
+                ],
+                'API (OpenAI-совместимый chat/completions)' => [
+                    ['k' => 'ai_intro_api_url', 't' => 'text', 'l' => 'Endpoint URL', 'ph' => 'https://api.openai.com/v1/chat/completions', 'cls' => 'large-text code'],
+                    ['k' => 'ai_intro_api_key', 't' => 'text', 'l' => 'API-ключ', 'd' => 'Хранится в настройках плагина; запросы только server-side (wp_remote_post).'],
+                    ['k' => 'ai_intro_model', 't' => 'text', 'l' => 'Модель', 'ph' => 'gpt-4o-mini'],
+                    ['k' => 'ai_intro_lang', 't' => 'text', 'l' => 'Язык генерации', 'ph' => 'ru'],
+                    ['k' => 'ai_intro_words', 't' => 'number', 'l' => 'Целевая длина текста (слов)', 'min' => 20, 'max' => 120],
+                ],
+            ],
+        ];
+
+        // П17: поля городской AggregateRating — в существующую вкладку микроразметки
+        if (isset($tabs['jsonld']['sections']['Рейтинги и отзывы'])) {
+            $tabs['jsonld']['sections']['Рейтинги и отзывы'][] = ['k' => 'jsonld_rating_city', 't' => 'checkbox', 'l' => 'AggregateRating × город (П17): рейтинг из отзывов заказов города, перекрывает общий на гео-страницах'];
+            $tabs['jsonld']['sections']['Рейтинги и отзывы'][] = ['k' => 'jsonld_rating_min', 't' => 'number', 'l' => 'Мин. отзывов в городе для показа рейтинга', 'min' => 1, 'max' => 100];
+        }
+        $tabs['geo']['sections']['Перелинковка город↔город'][] = ['k' => 'rating_badge_geo', 't' => 'checkbox', 'l' => 'Видимый бейдж «★ рейтинг (N отзывов)» на гео-странице (микроразметка соответствует JSON-LD)'];
 
         return apply_filters('csc_seo_admin_fields_schema', $tabs);
     }
@@ -2346,6 +2610,27 @@ if (!function_exists('csc_seo_admin_page')) {
                     }
                 } else {
                     echo '<p class="description">🌍 Гео-страницы (П15) — выключены. Вкладка «Гео-страницы».</p>';
+                }
+                // П16/П17: диагностика AI-intro кэша и городских рейтингов.
+                $ai_cnt = 0;
+                if (!empty($s['ai_intro_enabled']) && is_array($s['ai_intro_cache'] ?? null)) {
+                    foreach ((array)$s['ai_intro_cache'] as $cv) {
+                        if (!empty($cv['variants'])) $ai_cnt++;
+                    }
+                    echo '<p>🤖 AI-intro (П16): <b>' . (int)$ai_cnt . '</b> городов в кэше вариантов'
+                        . (trim((string)($s['ai_intro_api_url'] ?? '')) !== '' ? ' · API подключён' : ' · только локальные генераторы')
+                        . (empty($s['ai_intro_auto']) ? ' · cron-прогон <b>выкл</b>' : ' · cron-прогон включён') . '.</p>';
+                    if (!empty($s['ai_intro_log'])) {
+                        echo '<details><summary>Журнал генерации (последние записи)</summary><pre style="max-height:180px;overflow:auto">'
+                            . esc_html((string)$s['ai_intro_log']) . '</pre></details>';
+                    }
+                } elseif (!empty($s['geo_pages_enabled'])) {
+                    echo '<p class="description">🤖 AI-intro (П16) — выключен; используется единый шаблон geo_intro_tpl. Вкладка «AI-intro».</p>';
+                }
+                if (!empty($s['jsonld_rating_city']) && !empty($s['geo_pages_enabled'])) {
+                    echo '<p>⭐ AggregateRating × город (П17): включён, мин. отзывов — <b>' . (int)($s['jsonld_rating_min'] ?? 3) . '</b>'
+                        . (function_exists('csc_get_all_orders') ? '' : ' · <span style="color:#d63638">источник csc_get_all_orders() не найден — рейтинг не будет рассчитан</span>')
+                        . '.</p>';
                 }
                 echo '<p><a class="button button-small" href="' . esc_url(add_query_arg(['page' => 'csc_seo_admin', 'tab' => 'meta'])) . '">Перейти к meta-настройкам</a></p>';
                 echo '</div>';
