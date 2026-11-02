@@ -559,6 +559,12 @@ if (!function_exists('csc_seo_json_ld')) {
             $area_src = trim((string)($s['business_area'] ?? ''));
             $area = $area_src !== '' ? array_map('trim', explode(',', $area_src)) : $cities;
             if ($area) {
+                // П15: на гео-ЧПУ areaServed сужается до текущего города (консистентно с Service-узлом).
+                $gcity_ld = function_exists('csc_seo_geo_current_city') ? csc_seo_geo_current_city() : '';
+                if ($gcity_ld && !empty($s['geo_pages_enabled']) && function_exists('csc_seo_geo_city_data')
+                    && ($gd = csc_seo_geo_city_data($gcity_ld))) {
+                    $area = [$gd['name']];
+                }
                 $business['areaServed'] = array_map(fn($c) => ['@type' => 'City', 'name' => $c], $area);
             }
             if (!empty($s['geo_lat']) && !empty($s['geo_lng'])) {
@@ -617,6 +623,22 @@ if (!function_exists('csc_seo_json_ld')) {
         }
 
         if ($kind === 'calculator') {
+            // П15: на гео-ЧПУ — Service узел с areaServed по городу.
+            $gcity = function_exists('csc_seo_geo_current_city') ? csc_seo_geo_current_city() : '';
+            $gdata = ($gcity && !empty($s['geo_pages_enabled']) && function_exists('csc_seo_geo_city_data'))
+                     ? csc_seo_geo_city_data($gcity) : [];
+            if ($gdata && !empty($s['jsonld_localbusiness'])) {
+                $gu = function_exists('csc_seo_geo_url') ? (csc_seo_geo_url($gcity) ?: '') : '';
+                $graph[] = [
+                    '@type'      => 'Service',
+                    'name'       => 'Услуги мастеров в ' . $gdata['name'],
+                    'url'        => $gu ?: get_permalink(),
+                    'serviceType'=> ['ремонт', 'монтаж', 'услуги мастера'],
+                    'areaServed' => [['@type' => 'City', 'name' => $gdata['name']]],
+                    'provider'   => ['@id' => rtrim(home_url('/'), '/') . '#business'],
+                ];
+            }
+
             // --- ServiceCatalog с Offer по каждой услуге ---
             if (!empty($s['jsonld_service_catalog'])) {
                 $sections = (array)csc_get_sections();
