@@ -408,7 +408,19 @@ if (!function_exists('csc_seo_meta_tags')) {
         $desc_map = ['calculator' => $s['calc_desc'], 'cabinet' => $s['cabinet_desc'], 'become_master' => $s['master_desc']];
         $desc = csc_seo_apply_tokens(trim((string)($desc_map[$kind] ?? '')));
 
+        // П15: на гео-запросе — уникальный городской шаблон geo_desc_tpl.
+        $geo_city = function_exists('csc_seo_geo_current_city') ? csc_seo_geo_current_city() : '';
+        $is_geo   = $geo_city && !empty($s['geo_pages_enabled'])
+                    && function_exists('csc_seo_geo_city_data') && csc_seo_geo_city_data($geo_city);
+        if ($is_geo) {
+            $gtpl = trim((string)($s['geo_desc_tpl'] ?? ''));
+            if ($gtpl !== '') {
+                $desc = csc_seo_apply_tokens(apply_filters('csc_seo_meta_text', $gtpl));
+            }
+        }
+
         $dmax = max(50, (int)($s['desc_max'] ?? 300));
+        if (!$is_geo) { // на гео-страницах description печатает отдельный хук geo_description
         echo '<!-- CSC SEO -->' . "
 ";
         if ($desc !== '') {
@@ -448,6 +460,7 @@ if (!function_exists('csc_seo_meta_tags')) {
                 echo '<meta name="' . esc_attr($name) . '" content="' . esc_attr($val) . '">' . "\n";
             }
         }
+        } // end if (!$is_geo)
     }
 }
 
@@ -463,6 +476,15 @@ if (!function_exists('csc_seo_open_graph')) {
 
         $url  = get_permalink();
         $s    = csc_seo_get_settings();
+        // П15: на гео-ЧПУ og:url/twitter:url должны указывать на городской URL.
+        if (!empty($s['geo_pages_enabled']) && function_exists('csc_seo_geo_current_city')
+            && function_exists('csc_seo_geo_url') && function_exists('csc_seo_geo_city_data')) {
+            $gc = csc_seo_geo_current_city();
+            if ($gc && csc_seo_geo_city_data($gc)) {
+                $gu = csc_seo_geo_url($gc);
+                if ($gu) $url = $gu;
+            }
+        }
         $title = wp_get_document_title();
         $desc_map = ['calculator' => $s['calc_desc'], 'cabinet' => $s['cabinet_desc'], 'become_master' => $s['master_desc']];
         $desc = csc_seo_apply_tokens(trim((string)($desc_map[$kind] ?? '')));
@@ -782,6 +804,34 @@ if (!function_exists('csc_seo_geo_current_city')) {
     }
 }
 
+/**
+ * Подмена main query для ЧПУ-гео-URL: /uslugi-{город}/ рендерится как
+ * страница калькулятора (тот же шорткод, тот же template), поэтому
+ * is_page/is_singular работают корректно и theme выводит page-шаблон.
+ */
+add_action('parse_request', 'csc_seo_geo_parse_request', 20);
+if (!function_exists('csc_seo_geo_parse_request')) {
+    function csc_seo_geo_parse_request($wp) {
+        $s = csc_seo_get_settings();
+        if (empty($s['geo_pages_enabled'])) return;
+        $city = get_query_var('csc_geo_city');
+        if (!$city || !csc_seo_geo_city_data($city)) return;
+        $pid = csc_seo_geo_calc_page_id();
+        if (!$pid) return;
+        // Переключаем запрос на страницу калькулятора, сохраняя csc_geo_city.
+        $wp->query_vars['page_id']         = $pid;
+        $wp->query_vars['pagename']        = '';
+        $wp->query_vars['name']            = '';
+        $wp->query_vars['post_type']       = 'page';
+        $wp->query_vars['error']           = '';
+        $GLOBALS['wp_query']->is_page      = true;
+        $GLOBALS['wp_query']->is_singular  = true;
+        $GLOBALS['wp_query']->is_home      = false;
+        $GLOBALS['wp_query']->is_front_page = false;
+        $GLOBALS['wp_query']->is_404       = false;
+    }
+}
+
 /** Данные активного города по slug: ['name'=>…, 'slug'=>…] или []. */
 if (!function_exists('csc_seo_geo_city_data')) {
     function csc_seo_geo_city_data($slug) {
@@ -836,18 +886,28 @@ if (!function_exists('csc_seo_geo_title_parts')) {
     }
 }
 
-// Гео-Description: отдельный токен-шаблон на город.
-add_action('wp_head', 'csc_seo_geo_description', 6);
+// Гео-Description: отдельный токен-шаблон на город (печатает meta description;
+// общий рендерер csc_seo_meta_tags на гео-запросе уступает ему — см. $is_geo).
+add_action('wp_head', 'csc_seo_geo_description', 5);
 if (!function_exists('csc_seo_geo_description')) {
     function csc_seo_geo_description() {
         $s = csc_seo_get_settings();
         if (empty($s['geo_pages_enabled']) || empty($s['meta_desc_enabled'])) return;
         $city = csc_seo_geo_current_city();
         if (!$city || !csc_seo_geo_city_data($city)) return;
+        // Если geo_desc_tpl пуст — fallback на общий calc_desc уже подавлен ($is_geo),
+        // поэтому генерируем описание из городского шаблона по умолчанию.
         $tpl = trim((string)($s['geo_desc_tpl'] ?? ''));
+        if ($tpl === '') {
+            $d = csc_seo_get_defaults();
+            $tpl = (string)($d['geo_desc_tpl'] ?? '');
+        }
         if ($tpl === '') return;
         $desc = wp_strip_all_tags(csc_seo_apply_tokens(apply_filters('csc_seo_meta_text', $tpl)));
-        echo '<meta name="description" content="' . esc_attr($desc) . '">' . "\n";
+        $dmax = max(50, (int)($s['desc_max'] ?? 300));
+        echo '<!-- CSC SEO GEO -->' . "\n";
+        echo '<meta name="description" content="' . esc_attr(mb_substr($desc, 0, $dmax)) . '">' . "\n";
+        csc_seo_log('geo description выведен: ' . $city);
     }
 }
 
@@ -2099,6 +2159,20 @@ if (!function_exists('csc_seo_admin_page')) {
                     . (!empty($s['sitemap_split']) ? '' : ' <span class="description">(активируется при включении сегментации)</span>') . '</p>';
                 if (!empty($s['geo_pages_enabled'])) {
                     echo '<p style="color:#2ea23e">🌍 Гео-страницы <b>включены</b>: ЧПУ <code>/' . esc_html(sanitize_title($s['geo_base_slug'] ?: 'uslugi')) . '-{город}/</code>, canonical self=' . (empty($s['geo_canonical_self']) ? 'нет (на query)' : 'да') . ', 301 query→ЧПУ=' . (empty($s['geo_redirect_query']) ? 'выкл' : 'ВКЛ') . '.</p>';
+                    // Быстрая диагностика: ссылка на первую активную гео-страницу.
+                    if (function_exists('csc_get_cities') && function_exists('csc_seo_geo_url')) {
+                        foreach ((array)csc_get_cities() as $gs => $gd) {
+                            if (!empty($gd['active'])) {
+                                $gurl = csc_seo_geo_url($gs);
+                                if ($gurl) {
+                                    echo ' <a href="' . esc_url($gurl) . '" target="_blank">Проверить: /' . esc_html(sanitize_title($gs)) . '</a>';
+                                }
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    echo '<p class="description">🌍 Гео-страницы (П15) — выключены. Вкладка «Гео-страницы».</p>';
                 }
                 echo '<p><a class=\"button button-small\" href=\"' . esc_url(add_query_arg(['page' => 'csc_seo_admin', 'tab' => 'meta'])) . '\">Перейти к meta-настройкам</a></p>';
                 echo '</div>';
