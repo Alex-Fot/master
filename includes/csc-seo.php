@@ -178,6 +178,25 @@ if (!function_exists('csc_seo_get_defaults')) {
             'geo_canonical_self'    => 1,   // canonical гео-страницы указывает на саму себя (ЧПУ)
             'geo_redirect_query'    => 0,   // 301 ?csc_city=slug → /uslugi-slug/ (вкл. после переиндексации)
             'geo_slug_prefer'       => 'cyr', // канон ЧПУ: 'cyr' = /uslugi-москва/, 'lat' = /uslugi-moskva/ (транслит)
+
+            // ── П16. AI-intro: уникальные вводные тексты на город ──
+            'ai_intro_enabled'      => 0,     // по выкл; включает ротацию вариантов + счётчик отзывов в SSR
+            'ai_intro_api_url'      => '',    // OpenAI-совместимый chat/completions endpoint (пусто = только локальные варианты)
+            'ai_intro_api_key'      => '',    // ключ (хранится в csc_seo_settings; не показывается повторно после сохранения)
+            'ai_intro_model'        => 'gpt-4o-mini',
+            'ai_intro_lang'         => 'ru',
+            'ai_intro_words'        => 45,    // целевая длина текста (слов)
+            'ai_intro_max_cities'   => 20,    // лимит городов за один cron-прогон (экономия квоты)
+            'ai_intro_rotate'       => 1,     // показывать вариант детерминированно по дате (свежесть контента)
+            'ai_intro_auto'         => 1,     // фоновая генерация по wp-cron (event csc_seo_ai_intro_daily)
+            'ai_intro_local_variants' => '',  // кастомные варианты через ||| (без API)
+            'ai_intro_cache'        => [],    // служебное: ['город-slug' => ['variants'=>[], 'generated'=>date]]
+            'ai_intro_log'          => '',    // служебное: журнал последних действий (read-only)
+
+            // ── П17. AggregateRating × город ──
+            'jsonld_rating_city'    => 1,     // городская AggregateRating из модуля отзывов (нужен ≥3 отзывов в городе)
+            'jsonld_rating_min'     => 3,     // минимальное число отзывов для вывода рейтинга
+            'rating_badge_geo'      => 0,     // видимый бейдж «★ 4.8 (N отзывов)» на гео-странице (SSR)
         ];
     }
 }
@@ -782,16 +801,23 @@ if (!function_exists('csc_seo_geo_rewrite_rules')) {
         // Совпадение slug только с реальными активными городами — без перехвата чужих URL.
         $slugs = [];
         foreach ((array)csc_get_cities() as $slug => $city) {
-            if (!empty($city['active'])) $slugs[] = preg_quote($slug, '#');
+            // Массовая канонизация: матчим и ключ города, и sanitize_title от него
+            // (ключи из CSV-импорта могут не быть sanitized), + транслит-алиасы.
+            $k = sanitize_title((string)$slug);
+            if (!empty($city['active']) && $k !== '') $slugs[$k] = true;
+            if (!empty($city['name'])) {
+                $n = sanitize_title((string)$city['name']);
+                if (!empty($city['active']) && $n !== '') $slugs[$n] = true;
+            }
         }
         if (!$slugs) return;
         // Совпадение с активными городами, в т.ч. транслитерированными slug (П15 канонизация).
         $alts = [];
-        foreach ($slugs as $sg) {
+        foreach (array_keys($slugs) as $sg) {
             $t = csc_seo_translit_slug($sg);
-            if ($t !== '' && $t !== $sg) $alts[] = preg_quote($t, '#');
+            if ($t !== '' && $t !== $sg) $alts[$t] = true;
         }
-        $all = array_values(array_unique(array_merge($slugs, $alts)));
+        $all = array_map(fn($x) => preg_quote($x, '#'), array_keys($slugs + $alts));
         add_rewrite_rule('^' . $base . '-(' . implode('|', $all) . ')/?$',
                          'index.php?' . csc_seo_geo_page_param() . '=$matches[1]', 'top');
     }
@@ -892,13 +918,28 @@ if (!function_exists('csc_seo_geo_city_data')) {
         if (!$slug || !function_exists('csc_get_cities')) return [];
         $cities = (array)csc_get_cities();
         $slug   = sanitize_title($slug);
+        if (!$slug) return [];
         if (isset($cities[$slug]) && !empty($cities[$slug]['active'])) {
             return ['slug' => $slug, 'name' => (string)($cities[$slug]['name'] ?? $slug)];
         }
-        // Канонизация кириллических slug: поиск по транслит-варианту ключа города.
+        // Массовая канонизация: ключи из CSV могут не быть sanitized — сверяем sanitize_title(ключ).
         foreach ($cities as $key => $city) {
-            if (!empty($city['active']) && csc_seo_translit_slug((string)$key) === $slug) {
+            if (empty($city['active'])) continue;
+            if (sanitize_title((string)$key) === $slug) {
+                return ['slug' => $slug, 'name' => (string)($city['name'] ?? $key)];
+            }
+            if (!empty($city['name']) && sanitize_title((string)$city['name']) === $slug) {
+                return ['slug' => $slug, 'name' => (string)($city['name'])];
+            }
+        }
+        // Канонизация кириллических slug: поиск по транслит-варианту ключа/имени города.
+        foreach ($cities as $key => $city) {
+            if (empty($city['active'])) continue;
+            if (csc_seo_translit_slug(sanitize_title((string)$key)) === $slug) {
                 return ['slug' => sanitize_title((string)$key), 'name' => (string)($city['name'] ?? $key)];
+            }
+            if (!empty($city['name']) && csc_seo_translit_slug(sanitize_title((string)$city['name'])) === $slug) {
+                return ['slug' => sanitize_title((string)$key ?: (string)$city['name']), 'name' => (string)($city['name'])];
             }
         }
         return [];
@@ -1051,11 +1092,23 @@ if (!function_exists('csc_seo_geo_landing_content')) {
         $data = csc_seo_geo_city_data($city);
         if (!$data) return $content;
         $h1    = wp_strip_all_tags(csc_seo_apply_tokens(apply_filters('csc_seo_meta_text', (string)($s['geo_h1_tpl'] ?? 'Услуги в %city%'))));
-        $intro = trim((string)($s['geo_intro_tpl'] ?? ''));
+        $intro = csc_seo_geo_intro_text($data, $s); // П16: AI-варианты/ротация; fallback — geo_intro_tpl
         $html  = '<div id="csc-geo-landing" style="max-width:900px;margin:0 auto;padding:8px 16px">';
         $html .= '<h1 class="screen-reader-text">' . esc_html($h1) . '</h1>';
         if ($intro !== '') {
             $html .= '<p>' . esc_html(csc_seo_apply_tokens(apply_filters('csc_seo_meta_text', $intro))) . '</p>';
+        }
+        // П17: видимый бейдж рейтинга на гео-странице (соответствует AggregateRating в JSON-LD).
+        if (!empty($s['rating_badge_geo']) && function_exists('csc_seo_city_rating')) {
+            $cr = csc_seo_city_rating($data['slug']);
+            if ($cr) {
+                $html .= '<p class="csc-geo-rating" itemprop="aggregateRating" itemscope itemtype="https://schema.org/AggregateRating">'
+                       . '★ <b>' . esc_html((string)$cr['ratingValue']) . '</b> '
+                       . '<span>(' . (int)$cr['reviewCount'] . ' отзывов)</span>'
+                       . '<meta itemprop="ratingValue" content="' . esc_attr((string)$cr['ratingValue']) . '">'
+                       . '<meta itemprop="reviewCount" content="' . esc_attr((string)$cr['reviewCount']) . '">'
+                       . '<meta itemprop="bestRating" content="5"></p>';
+            }
         }
         if (!empty($s['geo_crosslinks']) && function_exists('csc_get_cities')) {
             $max   = max(1, (int)($s['geo_cross_max'] ?? 12));
