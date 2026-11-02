@@ -1027,10 +1027,18 @@ if (!function_exists('csc_seo_build_sitemap_xml')) {
             }
         }
         if ($calc_url && !empty($s['sitemap_items'])) {
+            // П15: на гео-ЧПУ якоря услуг относятся к городской странице.
+            $gbase  = '';
+            $gcity  = function_exists('csc_seo_geo_current_city') ? csc_seo_geo_current_city() : '';
+            if (!empty($s['geo_pages_enabled']) && $gcity && function_exists('csc_seo_geo_city_data')
+                && function_exists('csc_seo_geo_url') && csc_seo_geo_city_data($gcity)) {
+                $gbase = csc_seo_geo_url($gcity) ?: '';
+            }
             foreach ((array)csc_get_items() as $iid => $item) {
                 if (count($urls) >= $max) break;
                 if (!empty($s['ssr_only_available']) && empty($item['is_available'])) continue;
-                $urls[] = ['loc' => $calc_url . '#item-' . $iid, 'lastmod' => $now, 'changefreq' => 'weekly', 'priority' => '0.6'];
+                $anchor_base = $gbase !== '' ? $gbase : $calc_url;
+                $urls[] = ['loc' => $anchor_base . '#item-' . $iid, 'lastmod' => $now, 'changefreq' => 'weekly', 'priority' => '0.6'];
             }
         }
         if ($calc_url && !empty($s['sitemap_cities']) && function_exists('csc_get_cities')) {
