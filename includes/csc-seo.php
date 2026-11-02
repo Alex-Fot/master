@@ -177,6 +177,7 @@ if (!function_exists('csc_seo_get_defaults')) {
             'geo_sitemap'           => 1,   // ЧПУ гео-URL в XML-карту (взамен ?csc_city=)
             'geo_canonical_self'    => 1,   // canonical гео-страницы указывает на саму себя (ЧПУ)
             'geo_redirect_query'    => 0,   // 301 ?csc_city=slug → /uslugi-slug/ (вкл. после переиндексации)
+            'geo_slug_prefer'       => 'cyr', // канон ЧПУ: 'cyr' = /uslugi-москва/, 'lat' = /uslugi-moskva/ (транслит)
         ];
     }
 }
@@ -784,8 +785,39 @@ if (!function_exists('csc_seo_geo_rewrite_rules')) {
             if (!empty($city['active'])) $slugs[] = preg_quote($slug, '#');
         }
         if (!$slugs) return;
-        add_rewrite_rule('^' . $base . '-(' . implode('|', $slugs) . ')/?$',
+        // Совпадение с активными городами, в т.ч. транслитерированными slug (П15 канонизация).
+        $alts = [];
+        foreach ($slugs as $sg) {
+            $t = csc_seo_translit_slug($sg);
+            if ($t !== '' && $t !== $sg) $alts[] = preg_quote($t, '#');
+        }
+        $all = array_values(array_unique(array_merge($slugs, $alts)));
+        add_rewrite_rule('^' . $base . '-(' . implode('|', $all) . ')/?$',
                          'index.php?' . csc_seo_geo_page_param() . '=$matches[1]', 'top');
+    }
+}
+
+/** Кириллица → латиница для URL-slug (ГОСТ-подобная таблица). Пусто, если некириллический вход. */
+if (!function_exists('csc_seo_translit_slug')) {
+    function csc_seo_translit_slug($s) {
+        static $map = null;
+        if ($map === null) {
+            $map = [
+                'а'=>'a','б'=>'b','в'=>'v','г'=>'g','д'=>'d','е'=>'e','ё'=>'yo','ж'=>'zh','з'=>'z',
+                'и'=>'i','й'=>'y','к'=>'k','л'=>'l','м'=>'m','н'=>'n','о'=>'o','п'=>'p','р'=>'r',
+                'с'=>'s','т'=>'t','у'=>'u','ф'=>'f','х'=>'h','ц'=>'ts','ч'=>'ch','ш'=>'sh','щ'=>'shch',
+                'ъ'=>'','ы'=>'y','ь'=>'','э'=>'e','ю'=>'yu','я'=>'ya',
+            ];
+        }
+        // Байтовый strtr корректно работает с многобайтовыми подстроками UTF-8 и
+        // не требует расширений mbstring/iconv (их может не быть на хостинге).
+        $s = strtolower((string)$s);                       // ASCII-часть
+        $s = str_replace(['А','Е','Ё','Ж','З','И','Й','К','Л','М','Н','О','П','Р','С','Т','У','Ф','Х','Ц','Ч','Ш','Щ','Ъ','Ы','Ь','Э','Ю','Я','Б','В','Г','Д'],
+                         ['a','e','yo','zh','z','i','y','k','l','m','n','o','p','r','s','t','u','f','h','ts','ch','sh','shch','','y','','e','yu','ya','b','v','g','d'],
+                         $s);                              // кириллица (верхний регистр)
+        $s = strtr($s, $map);                              // кириллица (нижний регистр)
+        $s = preg_replace('/[^a-z0-9]+/', '-', $s);
+        return trim((string)$s, '-');
     }
 }
 
@@ -854,7 +886,7 @@ if (!function_exists('csc_seo_geo_parse_request')) {
     }
 }
 
-/** Данные активного города по slug: ['name'=>…, 'slug'=>…] или []. */
+/** Данные активного города по slug (в т.ч. транслит): ['name'=>…, 'slug'=>…] или []. */
 if (!function_exists('csc_seo_geo_city_data')) {
     function csc_seo_geo_city_data($slug) {
         if (!$slug || !function_exists('csc_get_cities')) return [];
@@ -863,18 +895,34 @@ if (!function_exists('csc_seo_geo_city_data')) {
         if (isset($cities[$slug]) && !empty($cities[$slug]['active'])) {
             return ['slug' => $slug, 'name' => (string)($cities[$slug]['name'] ?? $slug)];
         }
+        // Канонизация кириллических slug: поиск по транслит-варианту ключа города.
+        foreach ($cities as $key => $city) {
+            if (!empty($city['active']) && csc_seo_translit_slug((string)$key) === $slug) {
+                return ['slug' => sanitize_title((string)$key), 'name' => (string)($city['name'] ?? $key)];
+            }
+        }
         return [];
     }
 }
 
-/** ЧПУ-ссылка городской страницы. */
+/** ЧПУ-ссылка городской страницы (slug канонизируется по geo_slug_prefer). */
 if (!function_exists('csc_seo_geo_url')) {
     function csc_seo_geo_url($slug) {
         $s    = csc_seo_get_settings();
         $base = sanitize_title($s['geo_base_slug'] ?: 'uslugi');
         $calc = csc_seo_find_shortcode_page_url('service_calculator');
         if (!$calc) return '';
-        return home_url('/' . $base . '-' . sanitize_title($slug) . '/');
+        $slug  = sanitize_title((string)$slug);
+        $prefer = ($s['geo_slug_prefer'] ?? 'cyr') === 'lat' ? 'lat' : 'cyr';
+        if ($prefer === 'lat') {
+            $t = csc_seo_translit_slug($slug);
+            if ($t !== '') $slug = $t;
+        } else {
+            // кириллица как канон: транслитный вход → обратно к ключу города
+            $data = csc_seo_geo_city_data($slug);
+            if (!empty($data['slug'])) $slug = $data['slug'];
+        }
+        return home_url('/' . $base . '-' . $slug . '/');
     }
 }
 
@@ -948,7 +996,35 @@ if (!function_exists('csc_seo_geo_canonical')) {
         if (!empty($s['geo_canonical_self'])) {
             return csc_seo_geo_url($city) ?: $url;              // canonical на саму гео-страницу
         }
-        return add_query_arg('csc_city', $city, $calc);          // консервативно: старый URL
+        // Консервативно: старый query-URL (slug канонизирован к ключу города, транслит → кириллица).
+        $data = csc_seo_geo_city_data($city);
+        return add_query_arg('csc_city', !empty($data['slug']) ? $data['slug'] : $city, $calc);
+    }
+}
+
+// П15 канонизация slug: транслитный ЧПУ /uslugi-moskva/ → 301 на основной /uslugi-москва/
+// (чтобы не плодить дубли контента при geo_canonical_self=0). Настройка geo_slug_prefer:
+// 'cyr' (по умолчанию) — канон кириллический; 'lat' — наоборот, канон транслит.
+add_action('template_redirect', 'csc_seo_geo_slug_canonicalize', 1);
+if (!function_exists('csc_seo_geo_slug_canonicalize')) {
+    function csc_seo_geo_slug_canonicalize() {
+        $s = csc_seo_get_settings();
+        if (empty($s['geo_pages_enabled'])) return;
+        $raw = get_query_var('csc_geo_city');
+        if (!$raw) return;
+        $data = csc_seo_geo_city_data($raw);
+        if (!$data) return;
+        $prefer   = ($s['geo_slug_prefer'] ?? 'cyr') === 'lat' ? 'lat' : 'cyr';
+        $canon    = $data['slug'];                       // канонический slug города (ключ csc_get_cities)
+        $want     = $prefer === 'lat' ? csc_seo_translit_slug($canon) : $canon;
+        $got      = sanitize_title((string)$raw);
+        if ($want === '' || $got === $want) return;      // уже канонический URL
+        $target = csc_seo_geo_url($want);
+        if (!$target) return;
+        $q = $_GET; unset($q[$GLOBALS['wp']->query_vars['csc_geo_city'] ?? 'csc_geo_city']);
+        if ($q) $target = add_query_arg(array_map('rawurlencode', array_map('strval', $q)), $target);
+        wp_redirect(esc_url_raw($target), 301);
+        exit;
     }
 }
 if (!function_exists('csc_seo_geo_canonical_compat')) {
@@ -1947,6 +2023,10 @@ if (!function_exists('csc_seo_admin_fields_schema')) {
                 'Перелинковка город↔город' => [
                     ['k' => 'geo_crosslinks', 't' => 'checkbox', 'l' => 'Блок «Мы работаем также в городах» на гео-странице'],
                     ['k' => 'geo_cross_max', 't' => 'number', 'l' => 'Макс. перекрёстных ссылок', 'min' => 1, 'max' => 100],
+                    ['k' => 'geo_slug_prefer', 't' => 'select', 'l' => 'Канонический вид ЧПУ-slug города',
+                     'opts' => ['cyr' => 'Кириллица: /uslugi-москва/ (транслитные URL → 301 на них)',
+                                 'lat' => 'Транслит: /uslugi-moskva/ (кирилличные URL → 301 на них)'],
+                     'd' => 'Оба варианта принимаются rewrite-правилами; этот переключатель задаёт, какой URL считается основным (canonical, sitemap, og:url). Смена канона = массовые 301 — делайте после переиндексации.'],
                 ],
             ],
         ];
