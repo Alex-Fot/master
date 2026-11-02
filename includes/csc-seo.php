@@ -197,6 +197,13 @@ if (!function_exists('csc_seo_get_defaults')) {
             'jsonld_rating_city'    => 1,     // городская AggregateRating из модуля отзывов (нужен ≥3 отзывов в городе)
             'jsonld_rating_min'     => 3,     // минимальное число отзывов для вывода рейтинга
             'rating_badge_geo'      => 0,     // видимый бейдж «★ 4.8 (N отзывов)» на гео-странице (SSR)
+            'jsonld_rating_external'=> 0,     // П18: привлекать внешние плагины отзывов (адаптеры/фильтр csc_seo_city_rating_source)
+            'geo_rating_fallback'   => 0,     // П18: ручной фолбэк-рейтинг, только если реальных отзывов в городе нет вовсе
+            'geo_rating_fallback_value' => 5, // среднее значение фолбэка (1..5)
+            'geo_rating_fallback_count' => 1, // число отзывов фолбэка
+            // ── П18. Мультиязычные шаблоны intro ──
+            'ai_intro_i18n'         => [],    // карта {lang: {city_slug|'*': [варианты]}}; приоритет над ai_intro_cache
+            'ai_intro_default_lang' => 'ru',  // язык по умолчанию (fallback при отсутствии перевода)
         ];
     }
 }
@@ -1233,11 +1240,37 @@ if (!function_exists('csc_seo_schedule_ai_intro')) {
     }
 }
 
+/** Определить текущий язык: WPML/Polylang → ai_intro_default_lang. */
+if (!function_exists('csc_seo_current_lang')) {
+    function csc_seo_current_lang() {
+        $s = csc_seo_get_settings();
+        $lang = '';
+        if (defined('ICL_LANGUAGE_CODE')) $lang = (string)ICL_LANGUAGE_CODE;              // WPML
+        elseif (function_exists('pll_current_language') && ($l = pll_current_language())) $lang = (string)$l; // Polylang
+        return $lang ?: (string)($s['ai_intro_default_lang'] ?? 'ru');
+    }
+}
+
 /** Получить intro-текст для города: кэш-варианты (ротация) → geo_intro_tpl. */
 if (!function_exists('csc_seo_geo_intro_text')) {
     function csc_seo_geo_intro_text(array $data, array $s) {
         $cache = isset($s['ai_intro_cache']) && is_array($s['ai_intro_cache']) ? $s['ai_intro_cache'] : [];
         $slug  = (string)($data['slug'] ?? '');
+        // ── П18: мультиязычные варианты (приоритет над основным кэшем) ──
+        if (!empty($s['ai_intro_enabled']) && !empty($s['ai_intro_i18n']) && is_array($s['ai_intro_i18n'])) {
+            $lang = function_exists('csc_seo_current_lang') ? csc_seo_current_lang() : ($s['ai_intro_default_lang'] ?? 'ru');
+            $pick = function ($lang) use (&$s, $slug) {
+                $i = $s['ai_intro_i18n'];
+                $vars = array_values(array_filter((array)($i[$lang][$slug] ?? $i[$lang]['*'] ?? []), 'is_string'));
+                return $vars;
+            };
+            $vars = $pick($lang);
+            if (!$vars && !empty($s['ai_intro_default_lang'])) $vars = $pick((string)$s['ai_intro_default_lang']);
+            if ($vars) {
+                $idx = !empty($s['ai_intro_rotate']) ? ((int)gmdate('z') % count($vars)) : (crc32($slug . $lang) % count($vars));
+                return $vars[$idx];
+            }
+        }
         if (!empty($s['ai_intro_enabled']) && !empty($cache[$slug]['variants'])) {
             $vars = array_values(array_filter((array)$cache[$slug]['variants'], 'is_string'));
             if ($vars) {
@@ -1254,12 +1287,64 @@ if (!function_exists('csc_seo_geo_intro_text')) {
 }
 
 // ============================================================
-// П17. AggregateRating × город — источник оценок: модуль отзывов (csc-master-ratings)
-// + заказы с полем city. Кэш 5 мин (transient).
+// П17. AggregateRating × город — источники оценок (конвейер фильтров):
+//   1) внутренний модуль отзывов плагина (заказы с полем city + review.rating);
+//   2) внешний плагин отзывов (WP Review / Site Reviews / TIO Comments) — через фильтр
+//      'csc_seo_city_rating_source' (см. csc_seo_external_review_sources());
+//   3) ручной/фолбэк-рейтинг из настроек geo_rating_fallback.
+// Источники объединяются взвешенно (по числу отзывов). Кэш 5 мин (transient).
 // ============================================================
+if (!function_exists('csc_seo_external_review_sources')) {
+    /**
+     * Адаптеры внешних плагинов отзывов. Каждый возвращает
+     * ['ratingValue'=>float,'reviewCount'=>int]|null для города $city_slug.
+     * Расширение без правок ядра: add_filter('csc_seo_city_rating_source', fn, 10, 2).
+     */
+    function csc_seo_external_review_sources($city_slug) {
+        $best = null;
+        // --- Site Reviews (premiumtrade) ---
+        if (function_exists('site_reviews')) {
+            $rows = (array) site_reviews('', 100, ['type' => 'post', 'filters' => []]);
+            // Точная привязка к городу специфична для каждого сайта → отдаём агрегат фильтрам.
+        }
+        // --- WP Review (wpdevart) ---
+        if (class_exists('\WP_Review')) { /* интеграция через фильтр ниже */ }
+        // --- Универсальный путь: отзывы в комментариях с мета-полем csc_city ---
+        $res = apply_filters('csc_seo_city_rating_source', null, $city_slug);
+        if (is_array($res) && isset($res['ratingValue'], $res['reviewCount']) && (int)$res['reviewCount'] > 0) {
+            $best = ['ratingValue' => (float)$res['ratingValue'], 'reviewCount' => (int)$res['reviewCount']];
+        }
+        return $best;
+    }
+}
+if (!function_exists('csc_seo_wpcf_comment_rating_source')) {
+    /**
+     * Встроенный адаптер: отзывы на основе комментариев WP с метаполем csc_city
+     * (подходит для TIO Comments / кастомных форм с рейтингом в мете).
+     */
+    add_filter('csc_seo_city_rating_source', 'csc_seo_wpcf_comment_rating_source', 10, 2);
+    function csc_seo_wpco_placeholder_do_not_use() {} // no-op guard
+    function csc_seo_wpcf_comment_rating_source($carry, $city_slug) {
+        if (is_array($carry)) return $carry; // приоритет уже отдан другому источнику
+        global $wpdb;
+        $q = $wpdb->get_row($wpdb->prepare(
+            "SELECT AVG(CAST(cm.meta_value AS DECIMAL(3,1))) r, COUNT(*) c
+               FROM {$wpdb->comments} cl
+               JOIN {$wpdb->commentmeta} cm ON cm.comment_id = cl.comment_ID AND cm.meta_key = 'csc_rating'
+               JOIN {$wpdb->commentmeta} cc ON cc.comment_id = cl.comment_ID AND cc.meta_key = 'csc_city'
+              WHERE cl.comment_approved = '1' AND cc.meta_value = %s",
+            $city_slug
+        ));
+        if ($q && (int)$q->c > 0) {
+            return ['ratingValue' => round((float)$q->r, 1), 'reviewCount' => (int)$q->c];
+        }
+        return $carry;
+    }
+}
 if (!function_exists('csc_seo_city_rating')) {
     /**
-     * Рейтинг по городу: средневзвешенный по всем отзывам заказов, у которых city == slug.
+     * Рейтинг по городу: объединение внутреннего модуля отзывов и внешних источников,
+     * затем фолбэк из настроек. filter: csc_seo_city_rating($result, $city_slug).
      * @return array|null ['ratingValue'=>float,'reviewCount'=>int] или null если отзывов < min
      */
     function csc_seo_city_rating($city_slug) {
@@ -1271,6 +1356,7 @@ if (!function_exists('csc_seo_city_rating')) {
         if (is_array($cached)) {
             return $cached ? $cached : null;
         }
+        // --- Источник 1: внутренний модуль (заказы + review.rating) ---
         $sum = 0; $cnt = 0;
         if (function_exists('csc_get_all_orders')) {
             foreach ((array)csc_get_all_orders() as $order) {
@@ -1280,10 +1366,21 @@ if (!function_exists('csc_seo_city_rating')) {
                 if ($r >= 1 && $r <= 5) { $sum += $r; $cnt++; }
             }
         }
+        // --- Источник 2: внешние плагины отзывов (адаптеры/фильтр) ---
+        if (!empty($s['jsonld_rating_external'])) {
+            $ext = csc_seo_external_review_sources($city_slug);
+            if ($ext) { $sum += $ext['ratingValue'] * $ext['reviewCount']; $cnt += $ext['reviewCount']; }
+        }
         $res = null;
         if ($cnt >= $min) {
             $res = ['ratingValue' => round($sum / $cnt, 1), 'reviewCount' => $cnt];
+        } elseif (!empty($s['geo_rating_fallback']) && $cnt === 0) {
+            // --- Источник 3: ручной фолбэк (только когда реальных отзывов нет вовсе) ---
+            $fr = (float)($s['geo_rating_fallback_value'] ?? 5);
+            $fc = max(1, (int)($s['geo_rating_fallback_count'] ?? 1));
+            if ($fr >= 1 && $fr <= 5) $res = ['ratingValue' => round($fr, 1), 'reviewCount' => $fc];
         }
+        $res = apply_filters('csc_seo_city_rating', $res, $city_slug);
         // transient не хранит null → кэшируем пустой массив как маркер «нет рейтинга»
         set_transient($cache_key, is_array($res) ? $res : [], 5 * MINUTE_IN_SECONDS);
         return $res;
@@ -2360,6 +2457,28 @@ if (!function_exists('csc_seo_admin_fields_schema')) {
         if (isset($tabs['jsonld']['sections']['Рейтинги и отзывы'])) {
             $tabs['jsonld']['sections']['Рейтинги и отзывы'][] = ['k' => 'jsonld_rating_city', 't' => 'checkbox', 'l' => 'AggregateRating × город (П17): рейтинг из отзывов заказов города, перекрывает общий на гео-страницах'];
             $tabs['jsonld']['sections']['Рейтинги и отзывы'][] = ['k' => 'jsonld_rating_min', 't' => 'number', 'l' => 'Мин. отзывов в городе для показа рейтинга', 'min' => 1, 'max' => 100];
+            $tabs['jsonld']['sections']['Рейтинги и отзывы'][] = ['k' => 'jsonld_rating_external', 't' => 'checkbox', 'l' => 'П18: внешние плагины отзывов как источник оценок', 'd' => 'Встроенный адаптер: комментарии WP с метаполями <code>csc_rating</code>/<code>csc_city</code>. Свои адаптеры: <code>add_filter(\'csc_seo_city_rating_source\', fn, 10, 2)</code> (возвращает <code>[\'ratingValue\'=>..,\'reviewCount\'=>..]</code>). Источники объединяются взвешенно.'];
+            $tabs['jsonld']['sections']['Рейтинги и отзывы'][] = ['k' => 'geo_rating_fallback', 't' => 'checkbox', 'l' => 'П18: ручной фолбэк-рейтинг (только если в городе нет ни одного реального отзыва)', 'd' => '⚠️ Google трактует вымышленные оценки как спам разметки — использовать осторожно и по возможности заменять реальными отзывами.'];
+            $tabs['jsonld']['sections']['Рейтинги и отзывы'][] = ['k' => 'geo_rating_fallback_value', 't' => 'slider', 'l' => 'Фолбэк: среднее значение (1–5, шаг 0.1)', 'min' => 1, 'max' => 5];
+            $tabs['jsonld']['sections']['Рейтинги и отзывы'][] = ['k' => 'geo_rating_fallback_count', 't' => 'number', 'l' => 'Фолбэк: число отзывов', 'min' => 1, 'max' => 999];
+        }
+        // ── П18. Мультиязычные intro-шаблоны (вкладка AI-intro = 'p16') ──
+        if (isset($tabs['p16']) && isset($tabs['p16']['sections'])) {
+            $i18n = $s['ai_intro_i18n'] ?? [];
+            $rows_txt = '';
+            foreach ((array)$i18n as $lang => $bycity) {
+                foreach ((array)$bycity as $slug => $vars) {
+                    foreach ((array)$vars as $v) {
+                        if (is_string($v) && $v !== '') $rows_txt .= $lang . '|' . $slug . '|' . $v . "\n";
+                    }
+                }
+            }
+            $tabs['p16']['sections']['Мультиязычность (П18)'] = [
+                ['k' => 'ai_intro_default_lang', 't' => 'text', 'l' => 'Язык по умолчанию (fallback)', 'ph' => 'ru'],
+                ['k' => 'ai_intro_i18n_raw', 't' => 'textarea', 'l' => 'Переведённые варианты intro', 'rows' => 8,
+                 'd' => 'Формат: <code>язык|slug_города|текст</code> (по строке на вариант; <code>*</code> вместо slug = универсальный вариант для языка). Язык определяется автоматически по WPML/Polylang. Сохраняется в карту <code>ai_intro_i18n</code>.'],
+            ];
+            $GLOBALS['csc_seo_i18n_preview'] = $rows_txt; // предпросмотр для рендера поля
         }
         $tabs['geo']['sections']['Перелинковка город↔город'][] = ['k' => 'rating_badge_geo', 't' => 'checkbox', 'l' => 'Видимый бейдж «★ рейтинг (N отзывов)» на гео-странице (микроразметка соответствует JSON-LD)'];
 
@@ -2374,7 +2493,15 @@ if (!function_exists('csc_seo_sanitize_field')) {
             case 'checkbox':
                 return !empty($raw) ? 1 : 0;
             case 'number':
-                return is_numeric($raw) ? (int)$raw : (int)$cur;
+                return is_numeric($raw) ? (floatval($raw) === floatval((int)$raw) ? (int)$raw : (float)$raw) : $cur;
+            case 'slider': // П18: дробные числовые поля (например, step="0.1")
+                if ($raw === null || $raw === '') return $cur;
+                $v = (float)$raw;
+                $mn = apply_filters('csc_seo_sanitize_min', null, $key);
+                $mx = apply_filters('csc_seo_sanitize_max', null, $key);
+                if (is_numeric($mn)) $v = max((float)$mn, $v);
+                if (is_numeric($mx)) $v = min((float)$mx, $v);
+                return round($v, 2);
             case 'url':
                 return esc_url_raw((string)$raw);
             case 'email':
@@ -2410,6 +2537,7 @@ if (!function_exists('csc_seo_sanitize_field')) {
 /** Рендер одного поля формы. */
 if (!function_exists('csc_seo_render_field')) {
     function csc_seo_render_field($f, $val) {
+        $key  = (string)$f['k']; // П18: ключ поля для виртуальных значений
         $name = 'csc_seo[' . $f['k'] . ']';
         $id   = 'csc_seo_' . $f['k'];
         $lbl  = '<label for="' . esc_attr($id) . '">' . $f['l'] . '</label>'; // доверяем только внутренним меткам схемы
@@ -2421,12 +2549,23 @@ if (!function_exists('csc_seo_render_field')) {
                 break;
             case 'textarea':
             case 'multiline':
-                echo '<textarea class="large-text code" rows="' . (int)($f['rows'] ?? 3) . '" id="' . esc_attr($id) . '" name="' . esc_attr($name) . '">' . esc_textarea((string)$val) . '</textarea>';
+                // П18: виртуальные поля (например, ai_intro_i18n_raw) получают значение из GLOBALS-предпросмотра.
+                if ($key === 'ai_intro_i18n_raw') {
+                    $val = !empty($GLOBALS['csc_seo_i18n_preview']) ? (string)$GLOBALS['csc_seo_i18n_preview'] : '';
+                } else {
+                    $val = (string)$val;
+                }
+                echo '<textarea class="large-text code" rows="' . (int)($f['rows'] ?? 3) . '" id="' . esc_attr($id) . '" name="' . esc_attr($name) . '">' . esc_textarea($val) . '</textarea>';
                 break;
             case 'number':
                 echo '<input type="number" class="small-text" id="' . esc_attr($id) . '" name="' . esc_attr($name) . '" value="' . esc_attr((string)(int)$val) . '"'
                    . (isset($f['min']) ? ' min="' . (int)$f['min'] . '"' : '')
                    . (isset($f['max']) ? ' max="' . (int)$f['max'] . '"' : '') . '>';
+                break;
+            case 'slider': // П18: дробное число (шаг 0.1 и т.п.)
+                echo '<input type="number" step="0.1" class="small-text" id="' . esc_attr($id) . '" name="' . esc_attr($name) . '" value="' . esc_attr((string)(float)$val) . '"'
+                   . (isset($f['min']) ? ' min="' . esc_attr((string)(float)$f['min']) . '"' : '')
+                   . (isset($f['max']) ? ' max="' . esc_attr((string)(float)$f['max']) . '"' : '') . '>';
                 break;
             case 'select':
                 echo '<select id="' . esc_attr($id) . '" name="' . esc_attr($name) . '">';
@@ -2495,6 +2634,21 @@ if (!function_exists('csc_seo_admin_page')) {
                 foreach ($tabs_now[$post_tab]['sections'] as $fields) {
                     foreach ($fields as $f) {
                         if (empty($f['k'])) continue;
+                        // П18: виртуальное поле мультиязычных intro — парсим pipe-формат в карту ai_intro_i18n.
+                        if ($f['k'] === 'ai_intro_i18n_raw') {
+                            $map = [];
+                            foreach (preg_split('/\R/', (string)($in['ai_intro_i18n_raw'] ?? '')) as $line) {
+                                $parts = explode('|', $line, 3);
+                                if (count($parts) < 3) continue;
+                                $lg = strtolower(sanitize_text_field(trim($parts[0])));
+                                $sl = sanitize_text_field(trim($parts[1]));
+                                $tx = trim($parts[2]);
+                                if ($lg === '' || $sl === '' || $tx === '') continue;
+                                $map[$lg][$sl][] = $tx;
+                            }
+                            $new['ai_intro_i18n'] = $map;
+                            continue;
+                        }
                         $new[$f['k']] = csc_seo_sanitize_field($f['t'], $f['k'], $in[$f['k']] ?? null, $cur[$f['k']] ?? null);
                     }
                 }
