@@ -2253,7 +2253,6 @@ if (!function_exists('csc_seo_admin_page')) {
                 } else {
                     echo '<p style="color:#2ea23e"><b>✅ Замечаний нет — каталог оптимизирован.</b></p>';
                 }
-<<<<<<< HEAD
                 // П14-диагностика: режим XML-карты (единая/сегментация) и адрес индексной карты.
                 $split_mode = !empty($s['sitemap_split']) ? 'сегментированная' : 'единая';
                 $city_cnt   = function_exists('csc_get_cities') ? count(array_filter((array)csc_get_cities(), function ($c) { return !empty($c['active']); })) : 0;
@@ -2285,10 +2284,7 @@ if (!function_exists('csc_seo_admin_page')) {
                 } else {
                     echo '<p class="description">🌍 Гео-страницы (П15) — выключены. Вкладка «Гео-страницы».</p>';
                 }
-                echo '<p><a class=\"button button-small\" href=\"' . esc_url(add_query_arg(['page' => 'csc_seo_admin', 'tab' => 'meta'])) . '\">Перейти к meta-настройкам</a></p>';
-=======
                 echo '<p><a class="button button-small" href="' . esc_url(add_query_arg(['page' => 'csc_seo_admin', 'tab' => 'meta'])) . '">Перейти к meta-настройкам</a></p>';
->>>>>>> g/main
                 echo '</div>';
             }
             ?>
