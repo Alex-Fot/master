@@ -2189,7 +2189,7 @@ if (!function_exists('csc_seo_admin_fields_schema')) {
                     ['k' => 'sitemap_changefreq', 't' => 'checkbox', 'l' => 'Элемент changefreq'],
                     ['k' => 'sitemap_priority', 't' => 'checkbox', 'l' => 'Элемент priority'],
                     ['k' => 'sitemap_max_urls', 't' => 'number', 'l' => 'Лимит URL в карте', 'min' => 100, 'max' => 50000],
-                    ['k' => 'sitemap_split', 't' => 'checkbox', 'l' => 'Сегментация (index-sitemap): при превышении лимита <code>' . 'основной URL отдаёт &lt;sitemapindex&gt;, части — по N URL. Индекс: <code>{путь}-index.xml</code>'],
+                    ['k' => 'sitemap_split', 't' => 'checkbox', 'l' => 'Сегментация (index-sitemap)', 'd' => 'При превышении лимита основной URL отдаёт <code>&lt;sitemapindex&gt;</code>, части — по N URL. Индекс: <code>{путь}-index.xml</code>.'],
                     ['k' => 'sitemap_cache_ttl', 't' => 'number', 'l' => 'Кэш XML, секунд (0 = всегда перегенерировать)', 'min' => 0, 'max' => 86400],
                 ],
                 'robots.txt' => [
@@ -2332,7 +2332,7 @@ if (!function_exists('csc_seo_admin_fields_schema')) {
                 'Включение' => [
                     ['k' => 'ai_intro_enabled', 't' => 'checkbox', 'l' => 'AI-intro включён (использовать кэш-варианты вместо geo_intro_tpl)',
                      'd' => 'Требует включённых «Гео-страниц» (П15). Fallback при пустом кэше — шаблон <code>geo_intro_tpl</code>.'],
-                    ['k' => 'ai_intro_rotate', 't' => 'checkbox', 'l' => 'Ротация вариантов по дате (для краулера страница постепенно обновляется)'),
+                    ['k' => 'ai_intro_rotate', 't' => 'checkbox', 'l' => 'Ротация вариантов по дате (для краулера страница постепенно обновляется)'],
                     ['k' => 'ai_intro_auto', 't' => 'checkbox', 'l' => 'Фоновая генерация по wp-cron (раз в сутки, лимит городов за прогон ниже)'],
                     ['k' => 'ai_intro_max_cities', 't' => 'number', 'l' => 'Макс. городов за cron-прогон (экономия квоты API)', 'min' => 1, 'max' => 200],
                 ],
