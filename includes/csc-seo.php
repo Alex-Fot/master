@@ -178,8 +178,6 @@ if (!function_exists('csc_seo_get_defaults')) {
             'geo_canonical_self'    => 1,   // canonical гео-страницы указывает на саму себя (ЧПУ)
             'geo_redirect_query'    => 0,   // 301 ?csc_city=slug → /uslugi-slug/ (вкл. после переиндексации)
             'geo_slug_prefer'       => 'cyr', // канон ЧПУ: 'cyr' = /uslugi-москва/, 'lat' = /uslugi-moskva/ (транслит)
-=======
->>>>>>> g/main
         ];
     }
 }
@@ -762,10 +760,7 @@ if (!function_exists('csc_seo_query_vars')) {
     function csc_seo_query_vars($vars) {
         $vars[] = 'csc_sitemap';
         $vars[] = 'csc_sitemap_index';
-<<<<<<< HEAD
         $vars[] = 'csc_geo_city';
-=======
->>>>>>> g/main
         return $vars;
     }
 }
@@ -1255,7 +1250,6 @@ if (!function_exists('csc_seo_collect_sitemap_urls')) {
             }
         }
         if ($calc_url && !empty($s['sitemap_cities']) && function_exists('csc_get_cities')) {
-<<<<<<< HEAD
             $geo_on = !empty($s['geo_pages_enabled']);
             foreach ((array)csc_get_cities() as $slug => $city) {
                 if (!empty($city['active'])) {
@@ -1264,10 +1258,6 @@ if (!function_exists('csc_seo_collect_sitemap_urls')) {
                         $gu = csc_seo_geo_url($slug);
                         if ($gu) { $urls[] = ['loc' => $gu, 'lastmod' => $now, 'changefreq' => 'daily', 'priority' => '0.9']; continue; }
                     }
-=======
-            foreach ((array)csc_get_cities() as $slug => $city) {
-                if (!empty($city['active'])) {
->>>>>>> g/main
                     $urls[] = ['loc' => add_query_arg('csc_city', $slug, $calc_url), 'lastmod' => $now, 'changefreq' => 'daily', 'priority' => '0.9'];
                 }
             }
