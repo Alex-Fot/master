@@ -383,8 +383,76 @@ if (!function_exists('csc_migrate_orders_to_table')) {
 }
 
 // ============================================================
-// ЗАЩИТА ДИРЕКТОРИИ ЗАГРУЗОК ОТ ИСПОЛНЕНИЯ PHP
+// ЗАЩИТА ДИРЕКТОРИЙ ЗАГРУЗОК ОТ ИСПОЛНЕНИЯ PHP / ЧТЕНИЯ СПИСКОВ
 // ============================================================
+
+/**
+ * Исправление 403 (Apache «Отсутствует индексный файл, или директория недоступна
+ * для чтения»): подпапки wp-content/uploads/csc-uploads/* создаются в рантайме
+ * (tiles/, masters/{city}/{type}/, reviews/{order}/) и раньше не получали ни
+ * index.php, ни .htaccess — при Options -Indexes на сервере любой запрос к
+ * такой директории отдавал страницу ошибки Apache 403. Теперь каждая
+ * поддиректория обеспечивается заглушкой index.php и безопасным .htaccess
+ * (запрет исполнения PHP + запрет листинга; отдача изображений разрешена).
+ */
+if (!function_exists('csc_ensure_dir_guarded')) {
+    function csc_ensure_dir_guarded($dir) {
+        if (!$dir) return false;
+        if (!file_exists($dir)) {
+            wp_mkdir_p($dir);
+        }
+        if (!wp_is_writable($dir)) return false;
+
+        $index_file = $dir . '/index.php';
+        if (!file_exists($index_file)) {
+            @file_put_contents($index_file, '<?php // Silence is golden.');
+        }
+
+        $ht = $dir . '/.htaccess';
+        if (!file_exists($ht)) {
+            @file_put_contents($ht, "# Защита директории CSC: запрет исполнения PHP и листинга\n"
+                . "<FilesMatch \"\\.(php|phtml|php3|php4|php5|phps)$\">\n"
+                . "    Order Deny,Allow\n"
+                . "    Deny from all\n"
+                . "</FilesMatch>\n"
+                . "Options -Indexes\n");
+        }
+        return true;
+    }
+}
+
+/**
+ * Рекурсивно обходит дерево wp-content/uploads/csc-uploads и досевает защиту
+ * во все существующие поддиректории (в т.ч. tiles/<z>, masters/..., reviews/...).
+ * Пропускает директории, где index.php уже есть. Выполняется раз в сутки.
+ */
+if (!function_exists('csc_backfill_upload_guards')) {
+    function csc_backfill_upload_guards() {
+        $upload_dir = wp_upload_dir();
+        $base = $upload_dir['basedir'] . '/csc-uploads';
+        if (!is_dir($base)) return;
+
+        try {
+            $it = new RecursiveIteratorIterator(
+                new RecursiveDirectoryIterator($base, FilesystemIterator::SKIP_DOTS),
+                RecursiveIteratorIterator::SELF_FIRST
+            );
+            $count = 0;
+            foreach ($it as $item) {
+                if ($item->isDir() && $count < 2000) {
+                    $d = $item->getPathname();
+                    if (!file_exists($d . '/index.php')) {
+                        csc_ensure_dir_guarded($d);
+                        $count++;
+                    }
+                }
+            }
+        } catch (Throwable $e) {
+            // тихий отказ — защита не критична для основного функционала
+        }
+    }
+}
+
 function csc_protect_uploads_dir() {
     $upload_dir = wp_upload_dir();
     $csc_dir = $upload_dir['basedir'] . '/csc-uploads';
@@ -397,7 +465,7 @@ function csc_protect_uploads_dir() {
     if (wp_is_writable($csc_dir)) {
         $htaccess_file = $csc_dir . '/.htaccess';
         if (!file_exists($htaccess_file)) {
-            file_put_contents($htaccess_file, "# Запрет исполнения PHP в директории загрузок CSC\n<FilesMatch \"\.(php|phtml|php3|php4|php5|phps)$\">\n    Order Deny,Allow\n    Deny from all\n</FilesMatch>\nOptions -Indexes\n");
+            file_put_contents($htaccess_file, "# Запрет исполнения PHP в директории загрузок CSC\n<FilesMatch \"\\.(php|phtml|php3|php4|php5|phps)$\">\n    Order Deny,Allow\n    Deny from all\n</FilesMatch>\nOptions -Indexes\n");
         }
 
         $index_file = $csc_dir . '/index.php';
@@ -406,12 +474,16 @@ function csc_protect_uploads_dir() {
         }
     }
 
+    // ДОБАВЛЕНО (исправление 403): досеваем index.php/.htaccess во ВСЕ подпапки,
+    // включая ранее созданные tiles/, masters/, reviews/ без защиты.
+    csc_backfill_upload_guards();
+
     // Директория для бэкапов (УЛУЧШЕНИЕ №9)
     $backup_dir = $upload_dir['basedir'] . '/csc-backups';
     if (!file_exists($backup_dir)) {
         wp_mkdir_p($backup_dir);
     }
-    
+
     if (wp_is_writable($backup_dir)) {
         $backup_htaccess = $backup_dir . '/.htaccess';
         if (!file_exists($backup_htaccess)) {
@@ -423,6 +495,13 @@ function csc_protect_uploads_dir() {
         }
     }
 }
+
+add_action('csc_daily_guard_backfill', 'csc_backfill_upload_guards');
+add_action('init', function () {
+    if (!wp_next_scheduled('csc_daily_guard_backfill')) {
+        wp_schedule_event(time() + 60, 'daily', 'csc_daily_guard_backfill');
+    }
+}, 20);
 
 // ============================================================
 // ПОДКЛЮЧЕНИЕ МОДУЛЕЙ
