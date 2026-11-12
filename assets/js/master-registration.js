@@ -454,14 +454,19 @@ function createMap() {
             maxBoundsViscosity: 1.0
         });
 
-        const restUrl = CONFIG.restUrl || (window.location.origin + '/wp-json/csc/v1/');
-        
-        const tileLayer = L.tileLayer(restUrl + 'map-tile/{z}/{x}/{y}', {
-            attribution: '&copy; OpenStreetMap contributors',
+        // ЕДИНЫЙ КОД КАРТЫ (как во всех остальных модулях плагина — кабинет мастера,
+        // карта зон мастеров): прямые тайлы OpenStreetMap.
+        // Прежний серверный REST-прокси /wp-json/csc/v1/map-tile/ грузил каждый тайл
+        // через PHP blocking-запрос с синхронной записью на диск — при 20-30 тайлах на
+        // экран это блокировало очередь запросов сайта и карта прогружалась крайне
+        // медленно. Прокси остаётся зарегистрированным как резервный endpoint.
+        const tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
             maxZoom: 19,
             minZoom: 2
         });
 
+        // Резерв: если OSM недоступен (блокировка провайдером и т.п.) — ArcGIS.
         let fallbackUsed = false;
         tileLayer.on('tileerror', function() {
             if (!fallbackUsed) {
